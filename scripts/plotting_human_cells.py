@@ -490,14 +490,14 @@ def plot_sig_props(props, grouped=False, drop_zero_state_cols=True, title=None, 
 
 
 if plot_state == True:
-    
+    trials = 'all_minus_explore'
     path = '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans/derivatives/group/state_tuning'
     #file = 'pval_for_perms200_state_consistency_residualised_repeats_excl_gridwise_qc_pct_neurons.csv'
-    file = 'pval_for_perms200_state_consistency_late_repeats_excl_gridwise_qc_pct_neurons.csv'
+    file = f'pval_for_perms200_state_consistency_{trials}_repeats_excl_gridwise_qc_pct_neurons.csv'
             
     pval_df = pd.read_csv(f"{path}/{file}")
     
-    title = 'late repeats'
+    title = trials
     mc.plotting.results.plot_results_per_roi_and_prefstate(pval_df, title)
     
     sig_state_cells = pval_df[pval_df['p_perm']<0.05]
@@ -566,7 +566,7 @@ if plot_state == True:
             
         # AVERAGE OVER THE SAME GRIDS!!
         # for i, unique_task_idx in enumerate(idx_unique_grid): 
-        #import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         for t_idx, target_cell in enumerate(target_cells):
             avg_corr = avg_corr_target_cells[t_idx]
             for curr_neuron in data_norm[f"sub-{sesh}"]['normalised_neurons']:

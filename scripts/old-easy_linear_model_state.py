@@ -38,6 +38,51 @@ def get_data(sub, trials):
     # import pdb; pdb.set_trace()
     return data_norm, data_folder 
 
+def f_test_state_main_effect(res, state_terms=('A', 'B', 'C', 'D')):
+    names = res.model.exog_names
+    C = np.zeros((len(state_terms), len(names)))
+    for row, name in enumerate(state_terms):
+        col = names.index(name)
+        C[row, col] = 1.0
+    return res.f_test(C)
+
+
+def compute_perm_pvalues_groupby(df):
+    group_cols = ["session", "neuron", "roi", "model", "term"]
+
+    real  = df[df["permuted"] == False].copy()
+    perms = df[df["permuted"] == True].copy()
+
+    perm_groups = perms.groupby(group_cols)
+
+    real["p_perm_t"] = np.nan
+    real["p_perm_F"] = np.nan
+
+    for key, real_row in real.groupby(group_cols):
+        # key is a tuple (session, neuron, roi, model, term)
+        if key not in perm_groups.groups:
+            continue
+
+        perm_group = perm_groups.get_group(key)
+
+        t_real = real_row["t"].iloc[0]
+        F_real = real_row["F"].iloc[0]
+
+        t_perm = perm_group["t"].to_numpy()
+        F_perm = perm_group["F"].to_numpy()
+
+        p_t = (np.sum(np.abs(t_perm) >= abs(t_real)) + 1) / (len(t_perm) + 1)
+        p_F = (np.sum(F_perm >= F_real) + 1) / (len(F_perm) + 1)
+
+        # assign same p-values to that real row (usually just 1 row anyway)
+        real.loc[real_row.index, "p_perm_t"] = p_t
+        real.loc[real_row.index, "p_perm_F"] = p_F
+
+    return real
+
+
+
+
 def make_long_df(
     neuron: np.ndarray,
     beh_df: pd.DataFrame
@@ -150,8 +195,24 @@ def make_long_df(
     df_long["C_rep"] = df_long["C"].astype("float32") * df_long["rep_c"].astype("float32")
     df_long["D_rep"] = df_long["D"].astype("float32") * df_long["rep_c"].astype("float32")
 
+    # import pdb; pdb.set_trace()
+    # CENTRE ALL VARIABLES!!! y and states etc.
+    
     return df_long
 
+
+# def nested_f_test(res_full, k_full, res_reduced, k_reduced):
+#     """Classic nested-model F-test from two OLS fits.
+#     res_* are statsmodels results; k_* are number of regressors in each model."""
+#     sse_full = float(np.sum(res_full.resid**2))
+#     sse_red  = float(np.sum(res_reduced.resid**2))
+#     df1 = int(k_full - k_reduced)
+#     df2 = int(res_full.df_resid)
+#     if df1 <= 0 or df2 <= 0 or sse_full <= 0:
+#         return np.nan, np.nan
+#     F = ((sse_red - sse_full) / df1) / (sse_full / df2)
+#     p = stats.f.sf(F, df1, df2)
+#     return F, p
 
 
 def determine_roi(n):
@@ -173,7 +234,7 @@ def determine_roi(n):
 
 
 
-def run_linear_models(df, session, neuron_id, roi, permute = False, rng_object = None, no_perms = None):
+def run_linear_models(df, session, neuron_id, roi, permute_state = False, rng_object = None):
     result_rows = [] 
     # now, fit the full model with interaction terms.
     # get one p-value per regressor -> for group stats
@@ -181,35 +242,54 @@ def run_linear_models(df, session, neuron_id, roi, permute = False, rng_object =
     # import pdb; pdb.set_trace()
     y = df["y"].to_numpy(float)
     y = stats.zscore(y)
-
-    if permute == True:
-        # do the circular shift per repeat on the data.
+    import pdb; pdb.set_trace()
+    
+    
+    if permute_state == True:
+        # do the circular shift per repeat instead.
         n_bins = 360
-        n_repeats = y.size // n_bins       # e.g. 120
-        y_2d = y.reshape(n_repeats, n_bins) # shape (n_repeats, 360)
-        shifts = rng_object.integers(n_bins, size=n_repeats)
-        shifted = np.empty_like(y_2d)
-        for r in range(n_repeats):
-            shifted[r] = np.roll(y_2d[r], shifts[r])
-        y = shifted.reshape(-1)
+        
+        # shift the state columns
+        for s_col in cols_m1[:4]:
+            X_m1[s_col] = rng_object.permutation(X_m1[s_col])
+            
+            # shift = np.random.randint(1, len(X_m1))
+            # X_m1[s_col] = np.roll(X_m1[s_col].to_numpy(), shift)
+    # else:
+    #     shift = 'None'
+    # 
+    
+    
 
     # Model 1 (main effects): y ~ A+B+C+D + rep_c + correct (no intercept)
     # cols_m1 = ["A","B", "C", "D","rep_c","correct"]
     # don't include "correct" as some subjects are just 100% correct after the explore trial.
     cols_m1 = ["A","B", "C", "D","rep_c"]
+    
     X_m1 = df[cols_m1].astype(float)
-    # DONT demean abcd, but demean the data!!!
-    # this is because if I 0-centre ABCD, the model is rank-defficient
+    
+    
 
     res1 = sm.OLS(y, X_m1).fit(cov_type="HC3")
     
     # beta = np.linalg.pinv(X_m1) @ y
     # is the same as res1.params
     
+    # DONT demean abcd, but demean the data!!!
+    # otherwise the results will be complete nonsense.
+
+    #########
+    ########
+
     # State main effect.
+    # look at feat fsl website for main effect of state (F test)
+    # make three contrasts [1 0 0] [0 1 0] and [0 0 1] and enter all three contrasts into an F-test
+
+    # this is according to the FSL website:
     # This corresponds to creating four separate T-contrasts 
     # [1 0 0 0 0 0], [0 1 0 0 0 0], [0 0 1 0 0 0], [0 0 0 1 0 0]
     f_res = res1.f_test('A = B = C = D = 0')
+    # the same as f_res = f_test_state_main_effect(res1)
     # import pdb; pdb.set_trace()
     # per-regressor rows (M1)
     for term in cols_m1:
@@ -221,16 +301,34 @@ def run_linear_models(df, session, neuron_id, roi, permute = False, rng_object =
             "p":    float(res1.pvalues.get(term, np.nan)),
             "F":    f_res.fvalue,
             "p_F": f_res.pvalue,
-            "permuted": permute
+            "permuted": permute_state
         })
     
     # Model 2 (with interaction): y ~ A+B+C+D + correct + (A_rep+B_rep+C_rep+D_rep)
     # exclude rep_c here because the interactions would be a linear combination of it.
     # cols_m2 = ["A","B","C","D","correct","A_rep","B_rep","C_rep","D_rep"]
     cols_m2 = ["A","B","C","D","A_rep","B_rep","C_rep","D_rep"]
-    X_m2 = df[cols_m2].astype(float)      
+    X_m2 = df[cols_m2].astype(float)
+    
+    
+    # if permute_state == True:
+    #     # shift the state columns
+    #     for srep_col in cols_m2[-4:]:
+    #         X_m2[srep_col] = rng_object.permutation(X_m2[srep_col])
+    
+            
+            
+    # if permute_state == True:
+    #     # TRUELY RANDOMISE HERE!!!
+    #     # shift the repeate x state columns
+    #     for srep_col in cols_m2[-4:]:
+    #         shift = np.random.randint(1, len(X_m2))
+    #         X_m2[srep_col] = np.roll(X_m2[srep_col].to_numpy(), shift)
+    # else:
+    #     shift = 'None'
+            
     res2 = sm.OLS(y, X_m2).fit(cov_type="HC3")
-
+    
     # Main effect State Repeats
     f_res_int = res2.f_test('A_rep = B_rep = C_rep = D_rep = 0')
 
@@ -243,43 +341,59 @@ def run_linear_models(df, session, neuron_id, roi, permute = False, rng_object =
             "p":    float(res2.pvalues.get(term, np.nan)),
             "F":    f_res_int.fvalue,
             "p_F": f_res_int.pvalue,
-            "permuted": permute
+            "permuted": permute_state
         })
 
     return result_rows
 
-
-
-
-def run_single_neuron(neuron_name, sesh, neuron_data, beh_df, perms = False, no_perms = None):
+def run_single_neuron(neuron_name, sesh, neuron_data, beh_df, perms = False):
     df = make_long_df(neuron_data, beh_df)
+    # import pdb; pdb.set_trace()
+    # # I think I need to do the circular shuffling here
+    # # do 1 circular shift per repeat.
+    # # if perms == True:
+        
+        
+    
+    
+
     roi = determine_roi(neuron_name)
     neuron_results_rows = []
+    # think about how to run the permutations and how to store this!!!
     if perms == True:
         seed = (hash(neuron_name) % 2**32)
         rng = np.random.default_rng(seed = seed)
-        for i in range(no_perms):
-            results = run_linear_models(df, sesh, neuron_name, roi, permute=perms, rng_object = rng, no_perms = no_perms)
+        for i in range(500):
+            results = run_linear_models(df, sesh, neuron_name, roi, permute_state=perms, rng_object = rng)
             neuron_results_rows.extend(results)
             if (i + 1) % 100 == 0:
                 print(f"[{neuron_name}] finished permutation {i + 1}/500", flush=True)
-    else:      
-        results = run_linear_models(df, sesh, neuron_name, roi, permute=perms)
+
+        # no_perms = np.array(range(0,200))
+        # results = Parallel(n_jobs=3)(delayed(run_linear_models)(df, sesh, n, roi, permute_state=perms) for p in tqdm(no_perms))
+        # for r in results:
+        #     all_result_rows.extend(r)
+        # # not sure if this is crrect.
+    else:
+        # import pdb; pdb.set_trace()        
+        results = run_linear_models(df, sesh, neuron_name, roi, permute_state=perms)
         neuron_results_rows.extend(results)
     return neuron_results_rows
     
     
-def compute_state_lin_mod_all(sessions, trials, perms = False, no_perms= None, save_all=False):
+def compute_state_lin_mod_all(sessions, trials, perms = False, save_all=False):
     all_result_rows = []
     for sesh in sessions:
+        # # first step: load data of a single neuron.
+        
         # # I THINK that session 50, 05 elect36 left insular, is an A state-neuron. look at that one first.
         # # '50_05-05-elec36-LINS'
         # sesh = 50
         # trials = 'all_minus_explore'
-
-        # first step: load data of a single neuron.
+        # load data
         data_raw, source_dir = get_data(sesh, trials=trials)
         group_dir_state = f"{source_dir}/group/state_tuning"
+        # import pdb; pdb.set_trace()
         # if this session doesn't exist, skip
         if not data_raw:
             print(f"no raw data found for {sesh}, so skipping")
@@ -290,29 +404,31 @@ def compute_state_lin_mod_all(sessions, trials, perms = False, no_perms= None, s
         behaviour = data[f"sub-{sesh:02}"]['beh'].copy()
         neurons = data[f"sub-{sesh:02}"]['normalised_neurons'].copy()
         
-        neuron_results_rows = Parallel(n_jobs =-1)(delayed(run_single_neuron)(neuron_name = n, sesh = sesh, neuron_data = neurons[n].to_numpy(),beh_df =  behaviour, perms = perms, no_perms=no_perms) for n in neurons)
-        for r_n in neuron_results_rows:
-            all_result_rows.extend(r_n)
+        # # estimates_combined_model_rdms = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(stacked_model_RDMs, d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {combo_model_name}"))
+        # neuron_results_rows = Parallel(n_jobs =-1)(delayed(run_single_neuron)(neuron_name = n, sesh = sesh, neuron_data = neurons[n].to_numpy(),beh_df =  behaviour, perms = perms) for n in neurons)
+    
+        # for r_n in neuron_results_rows:
+        #     all_result_rows.extend(r_n)
             
-        # # import pdb; pdb.set_trace()
-        # # 
-        # for n in neurons:
-        #     neuron_results_rows = run_single_neuron(neuron_name = n, sesh = sesh, neuron_data = neurons[n].to_numpy(),beh_df =  behaviour, perms = perms, no_perms=no_perms)
-        #     all_result_rows.extend(neuron_results_rows)
-        #     df = make_long_df(neurons[n].to_numpy(), behaviour)
-        #     roi = determine_roi(n)
+        # import pdb; pdb.set_trace()
+        # 
+        for n in neurons:
+            neuron_results_rows = run_single_neuron(neuron_name = n, sesh = sesh, neuron_data = neurons[n].to_numpy(),beh_df =  behaviour)
+            all_result_rows.extend(neuron_results_rows)
+            df = make_long_df(neurons[n].to_numpy(), behaviour)
+            roi = determine_roi(n)
             
-        #     # think about how to run the permutations and how to store this!!!
-        #     if perms == True:
-        #         # no_perms = np.array(range(0,200))
-        #         results = Parallel(n_jobs=3)(delayed(run_linear_models)(df, sesh, n, roi, permute=perms) for p in tqdm(range(no_perms)))
-        #         for r in results:
-        #             all_result_rows.extend(r)
-        #         # not sure if this is crrect.
-        #     else:
-        #         # import pdb; pdb.set_trace()        
-        #         results = run_linear_models(df, sesh, n, roi, permute=perms)
-        #         all_result_rows.extend(results)
+            # think about how to run the permutations and how to store this!!!
+            if perms == True:
+                no_perms = np.array(range(0,200))
+                results = Parallel(n_jobs=3)(delayed(run_linear_models)(df, sesh, n, roi, permute_state=perms) for p in tqdm(no_perms))
+                for r in results:
+                    all_result_rows.extend(r)
+                # not sure if this is crrect.
+            else:
+                # import pdb; pdb.set_trace()        
+                results = run_linear_models(df, sesh, n, roi, permute_state=perms)
+                all_result_rows.extend(results)
 
     # 
     results_df = pd.DataFrame(all_result_rows, columns=["session","neuron","roi","model","term","beta","t","p","F","p_F", "permuted"])
@@ -330,7 +446,6 @@ def compute_state_lin_mod_all(sessions, trials, perms = False, no_perms= None, s
         results_df.to_csv(name_result)
 
     import pdb; pdb.set_trace()
-    
     # to combine them
     # perm_path = '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans/derivatives/group/state_lin_regs/perm_state_rep_int_all_correct.csv'
     # perm_df = pd.read_csv(perm_path)
@@ -343,7 +458,9 @@ def compute_state_lin_mod_all(sessions, trials, perms = False, no_perms= None, s
     # empirical_with_perm_p = compute_perm_pvalues(combined_df)
     # emp_sig_path = '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans/derivatives/group/state_lin_regs/sign_state_rep_int_all_correct.csv'
     # empirical_with_perm_p.to_csv(emp_sig_path)
-
+    
+    
+    
     print(f"saved cross-validated state tuning values in {name_result}")  
             
         
@@ -351,5 +468,9 @@ def compute_state_lin_mod_all(sessions, trials, perms = False, no_perms= None, s
 if __name__ == "__main__":
     # trials can be 'all', 'all_correct', 'early', 'late', 'all_minus_explore', 'residualised'
     # they can also be: 'first_correct', 'one_correct', ... 'nine_correct'
-    compute_state_lin_mod_all(sessions=list(range(1,64)), trials = 'all_correct', perms = True, no_perms = 300, save_all = True)
+    # NOTE: if you do per-repeat estimates, use every grid! grid mean will be super unreliable anyways
+    compute_state_lin_mod_all(sessions=list(range(1,64)), trials = 'all_correct', perms = False, save_all = True)
     # compute_state_lin_mod_all(sessions=list(range(1,5)), trials = 'all_minus_explore', perms = True, save_all = True)
+    
+    # compute_state_lin_mod_all(sessions=list(range(0,3)), trials = 'all_minus_explore', save_all = False)
+    

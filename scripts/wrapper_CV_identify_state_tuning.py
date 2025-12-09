@@ -457,7 +457,8 @@ def compute_state_tunings(sessions, trials = 'all_minus_explore', no_perms = Non
             #no_perms = np.random.default_rng(123)
             # perms = permute_locations(data[f"sub-{sesh:02}"]['locations'], data[f"sub-{sesh:02}"]['beh'], no_perms = no_perms)
             if sparsity_c:
-                include_these_cells = Path(f"{group_dir_state}/included_cells_{trials}_reps_{sparsity_c}_pct.txt").read_text().splitlines()
+                include_these_cells = Path("/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans/derivatives/group/state_tuning/included_cells_all_minus_explore_reps_gridwise_qc_pct.txt").read_text().splitlines()
+                # include_these_cells = Path(f"{group_dir_state}/included_cells_{trials}_reps_{sparsity_c}_pct.txt").read_text().splitlines()
 
         else:
             perms = 1
@@ -589,7 +590,7 @@ if __name__ == "__main__":
     # trials can be 'all', 'all_correct', 'early', 'late', 'all_minus_explore', 'residualised'
     # they can also be: 'first_correct', 'one_correct', ... 'nine_correct'
     # NOTE: if you do per-repeat estimates, use every grid! grid mean will be super unreliable anyways
-    compute_state_tunings(sessions=list(range(0,64)), trials = 'late', no_perms = 150, sparsity_c = 'gridwise_qc', save_all=True, only_BCD = False)
+    compute_state_tunings(sessions=list(range(0,64)), trials = 'all_correct', no_perms = None, sparsity_c = 'gridwise_qc', save_all=True, only_BCD = False)
     
     
     # compute_state_tunings(sessions=list(range(0,64)), trials = 'all_minus_explore', no_perms = None, sparsity_c = 'gridwise_qc', save_all=True, only_BCD = False)

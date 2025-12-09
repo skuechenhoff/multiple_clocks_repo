@@ -46,6 +46,7 @@ result_name = config.get("name")
 fwhm = config.get("fwhm", 5)
 today_str = date.today().strftime("%d-%m-%Y")
 
+f_tests = config.get("f_test", False)
 
 # Subjects
 if len (sys.argv) > 1:
@@ -58,6 +59,65 @@ subjects = [f"sub-{subj_no}"]
 print(f"Now running univariate state estimation based on subj GLM {regression_version} for subj {subj_no}")
 
 states = ["A", "B", "C", "D"]
+
+
+def f_test(idx_regs, X, Y_valid, valid_vox, X_pinv, betas_masked, state_to_row):  
+    # 1) Dimensions
+    n_cond = X.shape[0]      # number of conditions / time points
+    n_reg  = X.shape[1]      # number of regressors (including states, nuisance, etc.)
+
+    # 2) main effect indices already defined outside of the function as idx_regs
+    q = len(idx_regs)                                   # q = constraints
+    
+    # 3) Compute residuals and SSE for the full model (voxelwise)
+    #    Use hat matrix: H = X X^+ ; M = I - H
+    H_full = X @ X_pinv                                  # (n_cond, n_cond)
+    M_full = np.eye(n_cond) - H_full                     # residual-forming matrix
+    
+    res_full = M_full @ Y_valid                          # (n_cond, n_valid_vox)
+    SSE_full = np.sum(res_full**2, axis=0)               # (n_valid_vox,)
+    
+    # Degrees of freedom for residuals (use matrix rank in case of near-collinearity)
+    rank_X = np.linalg.matrix_rank(X)
+    df2 = n_cond - rank_X
+    
+    # 4) Precompute (X'X)^(-1) using X_pinv
+    #    For full-column-rank X, (X'X)^(-1) = X^+ X^{+T}
+    XtX_inv = X_pinv @ X_pinv.T                          # (n_reg, n_reg)
+    
+    # 5) Build R matrix that picks out A,B,C,D from beta
+    R = np.zeros((q, n_reg))                             # (4, n_reg)
+    for k, idx in enumerate(idx_regs):
+        R[k, idx] = 1.0
+    
+    # 6) Precompute C = [R (X'X)^(-1) R']^(-1), same for all voxels
+    C = np.linalg.pinv(R @ XtX_inv @ R.T)                # (q, q)
+    
+    # 7) Extract betas for combined regressors only (voxelwise)
+    B_state = betas_masked[idx_regs][:, valid_vox]      # (q, n_valid_vox)
+    
+    # 8) Numerator of F: (Rβ)' C (Rβ) / q  (vectorized over voxels)
+    tmp = C @ B_state                                    # (q, n_valid_vox)
+    numerator = np.sum(B_state * tmp, axis=0) / q        # (n_valid_vox,)
+    
+    # 9) Denominator: sigma^2_hat = SSE_full / df2
+    sigma2 = SSE_full / df2                              # (n_valid_vox,)
+    F_valid = numerator / sigma2                         # (n_valid_vox,)
+    
+    # 10) Put F back into full-volume shape
+    
+    # First in masked voxel-space
+    F_masked = np.full(n_mask_vox, np.nan)
+    F_masked[valid_vox] = F_valid
+
+    # Then into the full 3D volume
+    F_full_flat = np.full(n_vox_total, np.nan)
+    F_full_flat[mask] = F_masked
+    F_vol = F_full_flat.reshape(mask_3d.shape)
+    
+    return F_vol
+
+
 for sub in subjects:
     data_dir = f"/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/{sub}"
     if os.path.isdir(data_dir):
@@ -131,7 +191,8 @@ for sub in subjects:
     betas_full_flat[:, mask] = betas_masked
     # and in the complete volume
     beta_vols = betas_full_flat.reshape(n_reg, *mask_3d.shape)
-
+        
+        
     # then save everything
     affine = mask_file.affine  # from your original data
     header = mask_file.header
@@ -158,13 +219,61 @@ for sub in subjects:
         nifti_smooth = nilearn.image.new_img_like(beta_img, np_nifti_smooth)
         nifti_smooth.to_filename(out_file)
         
+    
+    if f_tests == True:
+        # 2) Build indices for the state regressors A,B,C,D
+        idx_A = state_to_row['A']
+        idx_B = state_to_row['B']
+        idx_C = state_to_row['C']
+        idx_D = state_to_row['D']
+
+        # F-test main effect all states: h0 = A-B-C-D =0
+        idx_all_states = np.array([idx_A, idx_B, idx_C, idx_D]) 
+        F_all_states_vols = f_test(idx_all_states)
+        
+        F_img = nib.Nifti1Image(F_all_states_vols, affine=affine, header=header)
+        out_name = f"{sub}_F_all_states_univ_glmbase_{regression_version}.nii.gz"
+        F_img.to_filename(os.path.join(results_dir, out_name))
+        
+        print("Smoothing:", out_name)
+        nifti_smooth = nilearn.image.smooth_img(F_img, fwhm)
+        # then divide by smoothed mask to get rid of bleeding
+        np_nifti_smooth = nifti_smooth.get_fdata() / smooth_mask.get_fdata()
+        np_nifti_smooth[mask_file.get_fdata() == 0.] = 0
+        # save with a simple modified name
+        out_file = os.path.join(smooth_dir, f"smooth_fwhm{fwhm}_{out_name}")
+    
+        nifti_smooth = nilearn.image.new_img_like(F_img, np_nifti_smooth)
+        nifti_smooth.to_filename(out_file)
+        
+        # F-test main effect h0 = B-C-D = 0:
+        idx_states_BCD = np.array([idx_B, idx_C, idx_D])   # the ones we test jointly
+        F_states_BCD_vols = f_test(idx_states_BCD)
+        
+        F_img = nib.Nifti1Image(F_states_BCD_vols, affine=affine, header=header)
+        out_name = f"{sub}_F_states_BCD_univ_glmbase_{regression_version}.nii.gz"
+        F_img.to_filename(os.path.join(results_dir, out_name))
+        
+        print("Smoothing:", out_name)
+        nifti_smooth = nilearn.image.smooth_img(F_img, fwhm)
+        # then divide by smoothed mask to get rid of bleeding
+        np_nifti_smooth = nifti_smooth.get_fdata() / smooth_mask.get_fdata()
+        np_nifti_smooth[mask_file.get_fdata() == 0.] = 0
+        # save with a simple modified name
+        out_file = os.path.join(smooth_dir, f"smooth_fwhm{fwhm}_{out_name}")
+    
+        nifti_smooth = nilearn.image.new_img_like(F_img, np_nifti_smooth)
+        nifti_smooth.to_filename(out_file)
+
+
 
     # --- SETTINGS SUMMARY (per subject) ---
     summary = {
         "subject": sub,
         "regression_version": regression_version,
         "data_dir": data_dir,
-        "results_dir": results_dir
+        "results_dir": results_dir,
+        "f_tests": f_tests
     }
     
     print("\n=== SETTINGS SUMMARY ===")

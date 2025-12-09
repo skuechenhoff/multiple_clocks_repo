@@ -119,7 +119,7 @@ def load_data(subs):
 
 def plot_all(model_name_string, sub_list, perms_locs=None, perms_time=None, plot_cells_corr_higher_than=0.05, save=False):
     results, subjects = load_result_dirs(model_name_string, subs=sub_list, perms_locs=perms_locs, perms_time=perms_time)
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     if perms_locs:
         task_perm_results=results['perm_locs']
     else:

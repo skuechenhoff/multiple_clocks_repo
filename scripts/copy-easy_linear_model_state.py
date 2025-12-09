@@ -347,7 +347,6 @@ def compute_state_lin_mod_all(sessions, trials, perms = False, no_perms= None, s
     print(f"saved cross-validated state tuning values in {name_result}")  
             
         
-
 if __name__ == "__main__":
     # trials can be 'all', 'all_correct', 'early', 'late', 'all_minus_explore', 'residualised'
     # they can also be: 'first_correct', 'one_correct', ... 'nine_correct'

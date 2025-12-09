@@ -105,6 +105,7 @@ def filter_data(data, session, rep_filter):
             filtered_data[f"sub-{session:02}"]['normalised_neurons'][neuron] = data[f"sub-{session:02}"]['normalised_neurons'][neuron][data[f"sub-{session:02}"]['beh']['rep_correct'].isin([6,7,8,9,10])& data[f"sub-{session:02}"]['beh']['correct']== 1].reset_index(drop = True)    
 
     elif rep_filter == 'all_minus_explore' or rep_filter == 'residualised':
+        # import pdb; pdb.set_trace()
         # exclude aanything where both 'rep_correct' == 0 and 'correct' == 0
         keep_mask = data[f"sub-{session:02}"]['beh'][['correct','rep_correct']].ne(0).any(axis=1)
         

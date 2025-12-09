@@ -1,5 +1,5 @@
 {
-  "regression_version": "all-rews-split_buttons",
+  "regression_version": "all_paths-stickrews-split_buttons",
   "name": "state_univ_rewards",
   "fwhm": 5,
   "f_test": true
