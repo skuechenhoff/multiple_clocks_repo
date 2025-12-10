@@ -97,8 +97,9 @@ for sub in subjects:
     models['A-state'] = np.zeros((len(states), len(beh_df)))
     
     for s_i, state in enumerate(states):
+        # import pdb; pdb.set_trace()
         if state == 'A':
-            models['A-state'][s_i][beh_df['state'] == state] = 1
+            models['A-state'][s_i][(beh_df['state'] == state)& (beh_df['time_bin_type'] == 'reward')] = 1
         models['state'][s_i][beh_df['state'] == state] = 1
     
     for key in ["location", "curr_rew", "next_rew", "two_next_rew", "three_next_rew", "l2_norm"]:
@@ -153,20 +154,27 @@ for sub in subjects:
         
         
         if plot_RDMs == True:
-            ev_array = np.zeros((int(len(EVs[model])/2), len(models[model])))
+            #ev_array = np.zeros((int(len(EVs[model])/2), len(models[model])))
+            ev_array = np.zeros((int(len(EVs[model])), len(models[model])))
             idx = -1
             y_labels = []
             for ev in EVs[model]:
-                if ev.endswith('reward'):
-                    idx = idx +1
-                    y_labels.append(ev)
-                    ev_array[idx] = EVs[model][ev]
+                #if ev.endswith('reward'):
+                idx = idx +1
+                y_labels.append(ev)
+                ev_array[idx] = EVs[model][ev]
+                    
+            # for ev in EVs[model]:
+            #     if ev.endswith('reward'):
+            #         idx = idx +1
+            #         y_labels.append(ev)
+            #         ev_array[idx] = EVs[model][ev]
             
-            ev_array_all = np.zeros((int(len(EVs[model])), len(models[model])))
-            y_labels_all = []
-            for idx, ev in enumerate(EVs[model]):
-                y_labels_all.append(ev)
-                ev_array_all[idx] = EVs[model][ev]
+            # ev_array_all = np.zeros((int(len(EVs[model])), len(models[model])))
+            # y_labels_all = []
+            # for idx, ev in enumerate(EVs[model]):
+            #     y_labels_all.append(ev)
+            #     ev_array_all[idx] = EVs[model][ev]
                     
                    
             plt.figure(); plt.imshow(np.corrcoef(ev_array), aspect = 'auto')

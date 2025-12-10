@@ -66,7 +66,7 @@ for sub in subjects:
     affine = np.loadtxt(transform_mat)
     subj_coords = nilearn.image.coord_transform(MNI_coords[0], MNI_coords[1], MNI_coords[2], affine)
     
-    data_RDM_file_name = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/sub-02/func/data_RDMs_state-only_masked_same_locinstate_27-11-2025_glmbase_03-4/data_RDM.nii.gz"
+    data_RDM_file_name = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/sub-12/func/data_RDMs_state-only_masked_same_locinstate_27-11-2025_glmbase_03-4/data_RDM.nii.gz"
     data_RDM = load_img(data_RDM_file_name)
     RDM_affine = data_RDM.affine
     subj_coords = nilearn.image.coord_transform(MNI_coords[0], MNI_coords[1], MNI_coords[2], affine)

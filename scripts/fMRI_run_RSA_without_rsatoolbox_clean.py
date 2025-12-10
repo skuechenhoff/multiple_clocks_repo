@@ -251,7 +251,7 @@ for sub in subjects:
             #     plt.figure()
             #     plt.imshow(rdm_recon)
             #     plt.title(model)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         
     

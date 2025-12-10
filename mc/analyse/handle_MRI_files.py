@@ -94,7 +94,8 @@ def save_data_RDM_as_nifti(data_RDM_file, file_path, file_name, ref_image_for_af
     brain_4d_file = f"{file_path}/{file_name}.nii.gz"
     nib.save(brain_4d_nifti, brain_4d_file)
     
-    np.save(f"{file_path}/{file_name}", data_RDM_file)
+    print('careful! currently only saving as nifti. change this in mc.analyse.handle_MRI_files.py if wanted!')
+    # np.save(f"{file_path}/{file_name}", data_RDM_file)
     
 
 

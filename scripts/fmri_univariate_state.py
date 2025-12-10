@@ -36,7 +36,7 @@ else:
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[2] if len(sys.argv) > 2 else "config_univ_state.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "config_univ_state-paths-stickrews.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -127,8 +127,9 @@ for sub in subjects:
     else:
         data_dir = f"/home/fs0/xpsy1114/scratch/data/derivatives/{sub}"
         print(f"Running on Cluster, setting {data_dir} as data directory")
-
-    results_dir = f"{data_dir}/func/{result_name}_glmbase_{regression_version}/results" 
+    
+    results_base = f"{data_dir}/func/{result_name}_glmbase_{regression_version}"
+    results_dir = f"{results_base}/results" 
     os.makedirs(results_dir, exist_ok=True)
 
     # preparing the mask
@@ -198,7 +199,7 @@ for sub in subjects:
     header = mask_file.header
     
     # also store the smoothed version.
-    smooth_dir = os.path.join(f"{data_dir}/func/state_univ_glmbase_{regression_version}/smoothed")
+    smooth_dir = os.path.join(f"{results_base}/smoothed")
     if not os.path.exists(smooth_dir):
         os.makedirs(smooth_dir, exist_ok=True)
     print(f"now smoothing the RDM and saving it here: {smooth_dir}")
@@ -229,7 +230,7 @@ for sub in subjects:
 
         # F-test main effect all states: h0 = A-B-C-D =0
         idx_all_states = np.array([idx_A, idx_B, idx_C, idx_D]) 
-        F_all_states_vols = f_test(idx_all_states)
+        F_all_states_vols = f_test(idx_all_states, X, Y_valid, valid_vox, X_pinv, betas_masked, state_to_row)
         
         F_img = nib.Nifti1Image(F_all_states_vols, affine=affine, header=header)
         out_name = f"{sub}_F_all_states_univ_glmbase_{regression_version}.nii.gz"
@@ -248,7 +249,7 @@ for sub in subjects:
         
         # F-test main effect h0 = B-C-D = 0:
         idx_states_BCD = np.array([idx_B, idx_C, idx_D])   # the ones we test jointly
-        F_states_BCD_vols = f_test(idx_states_BCD)
+        F_states_BCD_vols = f_test(idx_states_BCD, X, Y_valid, valid_vox, X_pinv, betas_masked, state_to_row)
         
         F_img = nib.Nifti1Image(F_states_BCD_vols, affine=affine, header=header)
         out_name = f"{sub}_F_states_BCD_univ_glmbase_{regression_version}.nii.gz"
