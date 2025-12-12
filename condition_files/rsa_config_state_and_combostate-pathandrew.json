@@ -1,0 +1,27 @@
+{
+  "name_of_RSA": "state_and_combo",
+  "load_EVs_from": "simple-clean_loc-fut-rews-state",
+  "regression_version": "all_paths-stickrews-split_buttons",
+    "EV_condition_selection": {
+    "parts": {
+      "task":      { "include": [],          "exclude": []},
+      "direction": { "include": [],          "exclude": [] },
+      "state":     { "include": [], "exclude": [] },
+      "phase":     { "include": [],   "exclude": [] }
+    }
+  },
+  "models": [
+    "state", "A-state", "location", "l2_norm"
+  ],
+  "smoothing": false,
+  "fwhm": 5,
+  "load_searchlights": true,
+  "visualise_RDMs": false,
+  "run_comobo_models": true,
+  "combo_models": [
+    {
+      "name": "state_stateA_locs_l2",
+      "regressors": ["state", "A-state", "location", "l2_norm"]
+    }
+  ]
+}

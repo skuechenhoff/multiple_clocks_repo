@@ -45,8 +45,8 @@ subjects = [f"sub-{subj_no}"]
 #regression_version = '03-4' 
 #RDM_version = '03-1'
 # no_phase_neurons = 3
-plot_RDMs = False 
-save_RDMs = True
+plot_RDMs = True 
+save_RDMs = False
 EV_string = 'simple-clean_loc-fut-rews-state'
 
 coord_to_loc = {
@@ -175,12 +175,11 @@ for sub in subjects:
             # for idx, ev in enumerate(EVs[model]):
             #     y_labels_all.append(ev)
             #     ev_array_all[idx] = EVs[model][ev]
-                    
-                   
+
             plt.figure(); plt.imshow(np.corrcoef(ev_array), aspect = 'auto')
-            plt.yticks(ticks=range(len(y_labels)), labels=y_labels)
+            plt.yticks(ticks=range(len(y_labels)), labels=y_labels, fontsize = 6)
             # plt.xticks(ticks=range(len(y_labels)), labels=y_labels)
-            intervalline = 4
+            intervalline = 8
             for interval in range(0, len(ev_array), intervalline):
                 plt.axvline(interval-0.5, color='white', ls='dashed')
                 plt.axhline(interval-0.5, color='white', ls='dashed')

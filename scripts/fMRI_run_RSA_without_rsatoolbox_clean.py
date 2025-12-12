@@ -79,7 +79,7 @@ else:
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -223,7 +223,7 @@ for sub in subjects:
             print(f"excluding n = {np.sum(np.isnan(model_RDM_dir[model]))} datapoints from {len(model_RDM_dir[model][0])}.")
             # import pdb; pdb.set_trace()
         else:  
-            model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr(models_concat[model], plotting= False)
+            model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr(models_concat[model], plotting= True)
             if model == 'A-state':
                 A_state_mask = ~np.isnan(model_RDM_dir['A-state'][0])
                 # import pdb; pdb.set_trace()
@@ -251,7 +251,7 @@ for sub in subjects:
             #     plt.figure()
             #     plt.imshow(rdm_recon)
             #     plt.title(model)
-        # import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
 
         
     
@@ -326,6 +326,7 @@ for sub in subjects:
     summary = {
         "subject": sub,
         "EV_string": EV_string,
+        "EV_labels_in_RDM": model_paired_labels,
         "regression_version": regression_version,
         "RDM_version": RDM_version,
         "smoothing": smoothing,
