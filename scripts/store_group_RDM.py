@@ -19,30 +19,6 @@ It then stores a) an average version of that vector and b) the concatenated vers
 import resource
 import time
 import sys
-
-t0 = time.time()
-
-def report_usage(tag=""):
-    r = resource.getrusage(resource.RUSAGE_SELF)
-
-    # ru_maxrss is:
-    #   - kilobytes on Linux
-    #   - bytes on macOS
-    if sys.platform == "darwin":
-        mem_mb = r.ru_maxrss / (1024 * 1024)
-    else:
-        mem_mb = r.ru_maxrss / 1024
-
-    elapsed = time.time() - t0
-    print(
-        f"[USAGE] {tag} | "
-        f"time={elapsed:6.1f}s, "
-        f"maxRSS={mem_mb:6.1f} MB, "
-        f"userCPU={r.ru_utime:6.1f}s, "
-        f"sysCPU={r.ru_stime:6.1f}s"
-    )
-
-
 import numpy as np
 import os
 # from nilearn.image import load_img
@@ -52,9 +28,15 @@ from fsl.data.image import Image
 from fsl.transform import flirt
 from matplotlib import pyplot as plt
 from nilearn import plotting
+import mc
+import json
+import fnmatch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+
+t0 = time.time()
 # first step, take standard voxel coordinates as an input.
-std_voxel = [45, 22, 42]
+std_voxel = [43, 88, 38]
 print("looking at data RDM in voxel", std_voxel)
 
 RSA_version = 'state_and_combo_11-12-2025'
@@ -82,26 +64,67 @@ if len(sys.argv) > 1:
 else:
     subj_nos = ['02']                # default
 
-subjects = [f"sub-{s}" for s in subj_nos]
-print("current list included in data RDM average is", subjects)
-print("this will be based on RSA", RSA_version, "and glm", glm_version)
-
-res_dir = f"{source_dir}/data/derivatives/group/RDM_plots"
-os.makedirs(res_dir, exist_ok=True)
-
-      
-# # --- Load configuration ---
-# # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-# config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
-# with open(f"{config_path}/{config_file}", "r") as f:
-#     config = json.load(f)
-
-# # SETTINGS
-# EV_string = config.get("load_EVs_from")
-# regression_version = config.get("regression_version")
-# name_RSA = config.get("name_of_RSA")
+# subj_nos = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14']
 
 
+def pair_correct_tasks(data_dict, keys_list):
+    """
+    data_dict: dict with keys like 'A1_forw_A_reward'
+    keys_list: ordered list of keys you want to include and in what order
+    Returns two matrices: one for the first element of each pair, one for its match.
+    """
+    # Define task pairing relationships
+    task_pairs = {'1_forw': '2_backw', '1_backw': '2_forw'}
+    th_1, th_2, paired_list_control  = [], [], []
+    # Loop through keys in the *specified order*
+    for key in keys_list:
+        assert key in data_dict, "Missmatch between model rdm keys and data RDM keys"
+        task, direction, state, phase = key.split('_')  # e.g. ['A1', 'forw', 'A', 'reward']
+        # Create the pairing suffix (e.g. from '1_forw' → '2_backw')
+        pair_suffix = task_pairs.get(f"{task[-1]}_{direction}")
+        # Build the paired key (e.g. 'A2_backw_A_reward')
+        pair_key = f"{task[0]}{pair_suffix}_{state}_{phase}"
+        # Only add if both keys exist
+        if pair_key in data_dict:
+            th_1.append(np.asarray(data_dict[key]))
+            th_2.append(np.asarray(data_dict[pair_key]))
+            paired_list_control.append(f"{key} with {pair_key}")
+
+    # import pdb; pdb.set_trace()       
+    th_1 = np.vstack(th_1)
+    th_2 = np.vstack(th_2)
+    # print(paired_list_control)
+    return th_1, th_2, paired_list_control
+
+def report_usage(tag=""):
+    r = resource.getrusage(resource.RUSAGE_SELF)
+
+    # ru_maxrss is:
+    #   - kilobytes on Linux
+    #   - bytes on macOS
+    if sys.platform == "darwin":
+        mem_mb = r.ru_maxrss / (1024 * 1024)
+    else:
+        mem_mb = r.ru_maxrss / 1024
+
+    elapsed = time.time() - t0
+    print(
+        f"[USAGE] {tag} | "
+        f"time={elapsed:6.1f}s, "
+        f"maxRSS={mem_mb:6.1f} MB, "
+        f"userCPU={r.ru_utime:6.1f}s, "
+        f"sysCPU={r.ru_stime:6.1f}s"
+    )
+
+def parse_paired_label(lbl: str):
+    left, right = lbl.split(" with ")
+    l = left.split("_")
+    r = right.split("_")
+    arrow = {"backw": "←", "forw": "→"}
+    block = f"{l[0]}{arrow.get(l[1], '')}|{r[0]}{arrow.get(r[1], '')}"  # compact
+    within = f"{l[2]}-{l[3]}".replace("reward", "rew")
+    return block, within
+    
 def std_vox_to_func(std_vox):
     """
     std_vox: (i, j, k) voxel indices in FEAT's standard image (90x108x90)
@@ -146,6 +169,32 @@ def plot_std_vox_on_func(std_vox):
 
     return func_mm, func_vox
 
+
+
+subjects = [f"sub-{s}" for s in subj_nos]
+print("current list included in data RDM average is", subjects)
+print("this will be based on RSA", RSA_version, "and glm", glm_version)
+
+res_dir = f"{source_dir}/data/derivatives/group/RDM_plots"
+os.makedirs(res_dir, exist_ok=True)
+
+      
+# --- Load configuration ---
+# config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
+with open(f"{config_path}/{config_file}", "r") as f:
+    config = json.load(f)
+
+# SETTINGS
+EV_string = config.get("load_EVs_from")
+regression_version = config.get("regression_version")
+name_RSA = config.get("name_of_RSA")
+# conditions selection
+conditions = config.get("EV_condition_selection")
+parts_to_use = conditions["parts"]
+
+
+
 data_RDMs_per_sub = []
 # third, loop through the subject folders.
 for sub in subjects:
@@ -188,7 +237,9 @@ for sub in subjects:
     data_RDMs_per_sub.append(ROI_data_RDM)
     report_usage(f"after subject {sub}")
 
-    
+  
+
+# load the respective config file
 data_RDM_avg = np.asarray(np.mean(data_RDMs_per_sub,axis =0))
 file_name = f"vox_{std_voxel[0]}_{std_voxel[1]}_{std_voxel[2]}_data_RDM_{RSA_version}_glmbase_{glm_version}"
 np.save(f"{res_dir}/{file_name}", data_RDM_avg)
@@ -206,5 +257,80 @@ rdm[iu] = data_RDM_avg         # fill upper triangle
 plt.figure(); plt.imshow(rdm)
 plt.savefig(f"{res_dir}/{file_name}.png")
 
+# use the same plotting function as for the model RDMs.
+# for that, I first need to call what determined the input of the data RDMs.
+# loading the data EVs into dict
+data_EVs, all_EV_keys = mc.analyse.my_RSA.load_data_EVs(data_dir, regression_version=regression_version, only_load_labels = True)
+# if you don't want all conditions created through FSL, exclude some here based on config
+
+for _p in ("task", "direction", "state", "phase"):
+    if _p not in parts_to_use:
+        raise ValueError(f"Missing selection.parts['{_p}'] in config.")
+        
+EV_keys = []        
+for ev in sorted(all_EV_keys):
+    task, direction, state, phase = ev.split('_')
+    # simple include/exclude logic
+    for name, value in zip(["task", "direction", "state", "phase"], [task, direction, state, phase]):
+        part = parts_to_use[name]
+        includes = part.get("include", [])
+        excludes = part.get("exclude", [])
+        # Exclude first
+        if any(fnmatch(value, pat) for pat in excludes):
+            break  
+        # If include list non-empty → must match at least one
+        if includes and not any(fnmatch(value, pat) for pat in includes):
+            break
+    else:
+        # only append if none of the 4 parts triggered 'break'
+        EV_keys.append(ev)
+
+# data_th1, data_th2, paired_labels = pair_correct_tasks(EV_keys, EV_keys)
+data_th1, data_th2, paired_labels = pair_correct_tasks(data_EVs, EV_keys)
+
+# determine how long one block is.
+first_block_str = paired_labels[0].split('_')[0]+'_'+paired_labels[0].split('_')[1]
+for i, l in enumerate(paired_labels):
+    if first_block_str in l:
+        block_size = i+1
+
+
+fig, ax = plt.subplots(figsize=(4.2, 4.2))
+im = ax.imshow(rdm, cmap="RdBu", interpolation="None", aspect="equal")
+
+# block separators
+for b in range(block_size, n, block_size):
+    ax.axhline(b - 0.5, color="white", lw=1.2)
+    ax.axvline(b - 0.5, color="white", lw=1.2)
+
+# hierarchical block labels (one per 8/blocksize)
+parsed = [parse_paired_label(l) for l in paired_labels]
+block_labels = [parsed[i][0] for i in range(0, n, block_size)]
+centers = np.arange(block_size / 2 - 0.5, n, block_size)
+
+ax.set_xticks([])  # usually drop x labels for small figs
+ax.set_yticks(centers)
+ax.set_yticklabels(block_labels, fontsize=10)
+
+# y labels on the right
+ax.yaxis.tick_right()
+ax.yaxis.set_label_position("right")
+ax.tick_params(length=0, pad=1)
+
+ax.set_title(file_name, fontsize=12)
+
+within = [parsed[i][1] for i in range(0, block_size)]
+ax.set_xlabel("Within-block: " + " | ".join(within), fontsize=9, labelpad=6)
+
+# colorbar on the left (robust way)
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("left", size="4%", pad=0.08)
+cbar = fig.colorbar(im, cax=cax)
+cbar.ax.yaxis.set_ticks_position("left")
+cbar.ax.tick_params(labelsize=10)
+
+# import pdb; pdb.set_trace()
+
+fig.savefig(f"{res_dir}/{file_name}.svg")
 report_usage("after avergaging, storing and plotting:")
 

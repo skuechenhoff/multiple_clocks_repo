@@ -19,8 +19,9 @@ import os
 import nibabel as nib
 
 
-def load_data_EVs(data_dir, regression_version, old=False):
+def load_data_EVs(data_dir, regression_version, old=False, only_load_labels = False):
     EV_dict = {}
+    # import pdb; pdb.set_trace()
     # names need to be 'A1_backw_A_path' etc.
     list_loaded = []
     for th in [1,2]:
@@ -32,6 +33,7 @@ def load_data_EVs(data_dir, regression_version, old=False):
             pe_path = f"{data_dir}/func/glm_{regression_version}_pt0{th}.feat/stats"
             EV_path = f"{data_dir}/func/EVs_{regression_version}_pt0{th}/task-to-EV.txt"
         # order from FSL processed EVs to names is stored here:
+        
         with open(EV_path, 'r') as file:
         # pe_path = f"{data_dir}/func/glm_{regression_version[0:2]}_pt0{th}.feat/stats"
         # # order from FSL processed EVs to names is stored here:
@@ -40,9 +42,12 @@ def load_data_EVs(data_dir, regression_version, old=False):
                 index, name_ev = line.strip().split(' ', 1)
                 name = name_ev.replace('ev_', '')
                 EV_path = os.path.join(pe_path, f"pe{int(index)+1}.nii.gz")
-                EV_dict[name] = np.array(nib.load(EV_path).get_fdata()).flatten()
-                # reshape data so we have 1 x n_voxels
-                # import pdb; pdb.set_trace()
+                if only_load_labels == False:
+                    EV_dict[name] = np.array(nib.load(EV_path).get_fdata()).flatten()
+                else:
+                    EV_dict[name] = np.zeros((1,1))
+                    # reshape data so we have 1 x n_voxels
+                    # import pdb; pdb.set_trace()
                 if name not in ['press_EV', 'up', 'down', 'left', 'right']:
                     list_loaded.append(name)
     print(f"loaded the following data EVs in dict: {list_loaded}")
