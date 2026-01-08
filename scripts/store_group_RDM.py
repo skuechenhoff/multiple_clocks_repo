@@ -36,7 +36,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 t0 = time.time()
 # first step, take standard voxel coordinates as an input.
-std_voxel = [43, 88, 38]
+std_voxel = [44, 88, 39]
 print("looking at data RDM in voxel", std_voxel)
 
 RSA_version = 'state_and_combo_11-12-2025'
@@ -64,7 +64,7 @@ if len(sys.argv) > 1:
 else:
     subj_nos = ['02']                # default
 
-# subj_nos = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14']
+# subj_nos = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '13', '14', '15', '16', '17', '18', '19', '20', '22', '23', '24', '25', '26', '27', '28', '30', '31', '32', '33', '34', '35']
 
 
 def pair_correct_tasks(data_dict, keys_list):
@@ -181,7 +181,7 @@ os.makedirs(res_dir, exist_ok=True)
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
+config_file = sys.argv[1] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -296,7 +296,11 @@ for i, l in enumerate(paired_labels):
 
 
 fig, ax = plt.subplots(figsize=(4.2, 4.2))
-im = ax.imshow(rdm, cmap="RdBu", interpolation="None", aspect="equal")
+cmap_obj = plt.get_cmap("RdBu").copy()
+cmap_obj.set_bad("white")
+norm = (mpl.colors.Normalize(vmin=0, vmax=2))
+
+im = ax.imshow(rdm, cmap=cmap_obj, norm=norm interpolation="None", aspect="equal")
 
 # block separators
 for b in range(block_size, n, block_size):
@@ -332,5 +336,6 @@ cbar.ax.tick_params(labelsize=10)
 # import pdb; pdb.set_trace()
 
 fig.savefig(f"{res_dir}/{file_name}.svg")
+np.save(f"{res_dir}/avg_RDM_{file_name}", data_RDM_avg)
 report_usage("after avergaging, storing and plotting:")
 
