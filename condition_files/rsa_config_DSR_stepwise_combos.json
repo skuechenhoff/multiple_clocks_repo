@@ -1,0 +1,35 @@
+{
+  "name_of_RSA": "DSR_stepwise_combos",
+  "load_EVs_from": "DSR_loc-fut-rews-state",
+  "regression_version": "all_paths-stickrews-split_buttons",
+    "EV_condition_selection": {
+    "parts": {
+      "task":      { "include": [],          "exclude": []},
+      "direction": { "include": [],          "exclude": [] },
+      "state":     { "include": [], "exclude": [] },
+      "phase":     { "include": [],   "exclude": [] }
+    }
+  },
+  "models": [
+    "DSR", "state", "location", "l2_norm", "A-state"
+  ],
+  "smoothing": false,
+  "fwhm": 5,
+  "load_searchlights": true,
+  "visualise_RDMs": false,
+   "run_comobo_models": true,
+  "combo_models": [
+    {
+      "name": "DSR_state",
+      "regressors": ["DSR","state"]
+    },
+    {
+      "name": "DSR_locs_l2_Astate",
+      "regressors": ["DSR", "location", "l2_norm", "A-state"]
+    },
+    {
+      "name": "DSR_state_locs_l2_Astate",
+      "regressors": ["DSR","state", "location", "l2_norm", "A-state"]
+    }
+  ]
+}

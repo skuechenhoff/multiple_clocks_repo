@@ -6,7 +6,8 @@ Based on clean behavioural tables,
 create regressors that I want to use for the fMRI.
 
 I will store a standard set of models 
-(currently "location", "curr_rew", "next_rew", "two_next_rew", "three_next_rew", "state")
+(currently "location", "curr_rew", "next_rew", "two_next_rew", "three_next_rew", "state"
+ DSR, l2_norm, A_state)
 in all possible regressors: both task halves, path x rewards x unique_tasks
 You can choose later which regressors you want to use.
 
@@ -45,9 +46,9 @@ subjects = [f"sub-{subj_no}"]
 #regression_version = '03-4' 
 #RDM_version = '03-1'
 # no_phase_neurons = 3
-plot_RDMs = True 
-save_RDMs = False
-EV_string = 'simple-clean_loc-fut-rews-state'
+plot_RDMs = False 
+save_RDMs = True
+EV_string = 'DSR_loc-fut-rews-state'
 
 coord_to_loc = {
     (-0.21,  0.29): 1, (0.0,  0.29): 2, (0.21,  0.29): 3,
@@ -153,8 +154,49 @@ for sub in subjects:
                 EVs[model][reg][index] = LinearRegression(fit_intercept=False).fit(regressors[reg].reshape(-1,1), row.reshape(-1,1)).coef_
         
         
-        if plot_RDMs == True:
+    # additionally, add the simple musicbox: at each of the 8 timebins, the future is already encoded.
+    # order inside a task
+    temp_order = [
+        "A_path", "A_reward",
+        "B_path", "B_reward",
+        "C_path", "C_reward",
+        "D_path", "D_reward"
+    ]
+    
+    
+    models['DSR'] = np.zeros((len(temp_order)*len(locations)))
+    
+    EVs['DSR'] = {}
+    for task in tasks:
+        # build base matrix (8 x 9) in canonical order
+        bins_curr_task = [f"{task}_{temp_bin}" for temp_bin in temp_order]
+        try:
+            # concatenate the 8 bins x 9-element vectors into a single 72-element vector
+            # this will read: 0-8 = now. 9-18 = next subpath. 19-27 = subpath after, etc.
+            # each EVs['location'][k] has 9 location 
+            firing_for_subpath_A = np.concatenate([EVs['location'][k] for k in bins_curr_task], axis=0)  # shape (72,)
+        except KeyError:
+            continue
+    
+        n_bins = len(temp_order)  # 8 (4 x subpaths, 4x rewards)
+        n_locations = firing_for_subpath_A.size // n_bins   # 9 locations
+        assert n_locations * n_bins == firing_for_subpath_A.size
+     
+        # for each position, rotate by whole blocks of `block_len` so subpath-chunks move together
+        for pos, temp_bin in enumerate(temp_order):
+            bin_curr_task = f"{task}_{temp_bin}"
+            # left-roll by pos blocks: multiply by block_len to rotate whole 9-element blocks
+            rotated = np.roll(firing_for_subpath_A, -pos * n_locations).copy()  # shape (72,)
+            # store as 1D vector of length 72; if you want shape (1,72) use rotated.reshape(1,-1)
+            EVs['DSR'][bin_curr_task] = rotated
+
+       
+    if plot_RDMs == True:
+        for model in models:
             #ev_array = np.zeros((int(len(EVs[model])/2), len(models[model])))
+            # if model == 'DSR':
+            #     ev_array = np.zeros((int(len(EVs[model])), len(EVs['DSR'][bin_curr_task])))
+            # else:
             ev_array = np.zeros((int(len(EVs[model])), len(models[model])))
             idx = -1
             y_labels = []
@@ -175,7 +217,7 @@ for sub in subjects:
             # for idx, ev in enumerate(EVs[model]):
             #     y_labels_all.append(ev)
             #     ev_array_all[idx] = EVs[model][ev]
-
+    
             plt.figure(); plt.imshow(np.corrcoef(ev_array), aspect = 'auto')
             plt.yticks(ticks=range(len(y_labels)), labels=y_labels, fontsize = 6)
             # plt.xticks(ticks=range(len(y_labels)), labels=y_labels)

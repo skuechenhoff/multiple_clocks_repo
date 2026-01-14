@@ -79,7 +79,7 @@ else:
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_stepwise_combos.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -251,7 +251,7 @@ for sub in subjects:
             #     plt.figure()
             #     plt.imshow(rdm_recon)
             #     plt.title(model)
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
         
     
