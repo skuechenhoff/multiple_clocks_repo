@@ -32,14 +32,16 @@ import mc
 import json
 import fnmatch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib as mpl
 
 
 t0 = time.time()
 # first step, take standard voxel coordinates as an input.
-std_voxel = [44, 88, 39]
+std_voxel = [70, 54, 63]
+
 print("looking at data RDM in voxel", std_voxel)
 
-RSA_version = 'state_and_combo_11-12-2025'
+RSA_version = 'DSR_stepwise_combos_14-01-2026'
 glm_version = 'all_paths-stickrews-split_buttons'
 
 
@@ -58,13 +60,13 @@ else:
 # second, define which subjects to summarise the data RDMs from,
 # and which data RDMs to start with 
 # Subjects
-# if any subject numbers are passed on the command line, use them
-if len(sys.argv) > 1:
-    subj_nos = sys.argv[1:]          # ['01', '02', '03', ...]
-else:
-    subj_nos = ['02']                # default
+# # if any subject numbers are passed on the command line, use them
+# if len(sys.argv) > 1:
+#     subj_nos = sys.argv[1:]          # ['01', '02', '03', ...]
+# else:
+#     subj_nos = ['02']                # default
 
-# subj_nos = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '13', '14', '15', '16', '17', '18', '19', '20', '22', '23', '24', '25', '26', '27', '28', '30', '31', '32', '33', '34', '35']
+subj_nos = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '13', '14', '15', '16', '17', '18', '19', '20', '22', '23', '24', '25', '26', '27', '28', '30', '31', '32', '33', '34', '35']
 
 
 def pair_correct_tasks(data_dict, keys_list):
@@ -188,7 +190,7 @@ with open(f"{config_path}/{config_file}", "r") as f:
 # SETTINGS
 EV_string = config.get("load_EVs_from")
 regression_version = config.get("regression_version")
-name_RSA = config.get("name_of_RSA")
+RSA_version = config.get("name_of_RSA")
 # conditions selection
 conditions = config.get("EV_condition_selection")
 parts_to_use = conditions["parts"]
@@ -225,6 +227,10 @@ for sub in subjects:
     func_vox_rounded  = np.round(func_vox).astype(int)
 
     # data RDM will be stored in original format (108, 108, 64 x n-datapoints of the RDM)
+    # ADD THE DATE HERE!!
+    
+    
+    
     data_RDM_nifti = nib.load(f"{data_dir}/func/data_RDMs_{RSA_version}_glmbase_{glm_version}/data_RDM.nii.gz")
     # only load the current voxel: current voxel data RDM = 
     ROI_data_RDM = np.asarray(data_RDM_nifti.dataobj[func_vox_rounded[0], func_vox_rounded[1],func_vox_rounded[2], :], dtype=np.float32)
@@ -300,7 +306,7 @@ cmap_obj = plt.get_cmap("RdBu").copy()
 cmap_obj.set_bad("white")
 norm = (mpl.colors.Normalize(vmin=0, vmax=2))
 
-im = ax.imshow(rdm, cmap=cmap_obj, norm=norm interpolation="None", aspect="equal")
+im = ax.imshow(rdm, cmap=cmap_obj, norm=norm, interpolation="None", aspect="equal")
 
 # block separators
 for b in range(block_size, n, block_size):

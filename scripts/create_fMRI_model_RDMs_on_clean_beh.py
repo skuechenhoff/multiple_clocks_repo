@@ -106,6 +106,9 @@ for sub in subjects:
     for key in ["location", "curr_rew", "next_rew", "two_next_rew", "three_next_rew", "l2_norm"]:
         models[key] = np.zeros((len(locations), len(beh_df)), dtype=float)
     
+    
+    import pdb; pdb.set_trace()
+    # I THINK I NEED TO DELETE THE FIRST TIMEPOINT IN SUBPATH A! that's reward D.
     for i_loc, loc in enumerate(locations):
         models['location'][i_loc][beh_df['curr_loc'] == loc] = 1
         models['curr_rew'][i_loc][beh_df['curr_rew'] == loc] = 1
@@ -164,9 +167,13 @@ for sub in subjects:
     ]
     
     
-    models['DSR'] = np.zeros((len(temp_order)*len(locations)))
     
-    EVs['DSR'] = {}
+    import pdb; pdb.set_trace()
+    models['DSR'] = np.zeros((len(temp_order)*len(locations)))
+    models['DSR_rews'] = np.zeros((int(len(temp_order)/2)*len(locations)))
+    models['DSR_paths'] = np.zeros((int(len(temp_order)/2)*len(locations)))
+    
+    EVs['DSR'], EVs['DSR_rews'], EVs['DSR_paths'] = {},{},{}
     for task in tasks:
         # build base matrix (8 x 9) in canonical order
         bins_curr_task = [f"{task}_{temp_bin}" for temp_bin in temp_order]

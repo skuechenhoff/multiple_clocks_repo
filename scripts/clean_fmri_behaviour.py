@@ -49,7 +49,7 @@ alternative_regs = False
 
 # Find the source dir first, outside of the loop
 data_dir_beh = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/pilot/"
-out_dir      = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/pilot/"
+
 
 # import pdb; pdb.set_trace()
 all_sub_paths = glob(f"{data_dir_beh}/sub-*")
@@ -59,12 +59,16 @@ subjects = [
     if os.path.isdir(p)
 ]
 
+subjects.remove('sub-21')
+subjects.remove('sub-29')
+
 for sub in subjects:
+    out_dir = f"/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/{sub}/beh/"
     if os.path.isdir(data_dir_beh):
         print(f"Running on laptop, now subject {sub}")
     else:
         data_dir_beh = "/home/fs0/xpsy1114/scratch/data/pilot/"
-        out_dir      = "/home/fs0/xpsy1114/scratch/data/derivatives/"
+        out_dir      = f"/home/fs0/xpsy1114/scratch/data/derivatives/{sub}/beh/"
         print(f"Running on Cluster, setting {data_dir_beh} as data directory")
 
     
@@ -82,8 +86,33 @@ for sub in subjects:
         # create a new df 
         beh_clean = pd.DataFrame()
 
+        # to start with, a particularity of the df has to be accounted for:
+        # every ABCD-loop starts with 'being' at the location where reward 'D' has been found.
+        # this is, however, without having taken a new step.
+        # thus: 1. remove the first 'step' of subpath A
+        #       2. take the t_step_press_curr_run and the t_step_press_global values from AFTER the 'start_ABCD_screen' and fill the empties.
+        df_test = df.copy()
+
+        # before cleaning rows, make sure all crucial information is everywhere.
+        # forward fill for anything below
+        df['task_config'] = df['task_config'].ffill()
+        df['repeat'] = df['repeat'].ffill()
+        
+        # backward fill these as this is a 'pre-step' that shall count for the reward before [except if this is the last repeat.]
+        df['t_step_press_global'] = df['t_step_press_global'].bfill()
+        # but not in the last repeat of a task, as then a different screen followed and no button was pressed.
+        df.loc[df['task_config'].ne(df['task_config'].shift(-1)), 't_step_press_global'] = np.nan
+
+
+
+        # remove these rows as it's not actually a step.
+        beh_raw = df[df['start_ABCD_screen'].isna()].copy()
+        
         # every valid row has a 'type' entry. filter for none-valid rows.
-        beh_raw = df[df['type'].notna()].copy()
+        beh_raw = beh_raw[beh_raw['type'].notna()].copy()
+        
+        # 1) repeat [1-5]
+        beh_clean['repeat'] = beh_raw['repeat']
         
         # 1) task_config [e.g. E1]
         beh_clean['task_config_seq'] = beh_raw['task_config'].ffill()
@@ -93,6 +122,7 @@ for sub in subjects:
         
         # 3) config type [e.g. E1_forw]
         beh_raw['task_config_ex']   = beh_clean['task_config_seq'] + '_' + beh_clean['instruction']
+        
         beh_clean['task_config_ex'] = beh_clean['task_config_seq'] + '_' + beh_clean['instruction']
         
         # 4) curr rew_loc [location 1-9]
@@ -102,10 +132,16 @@ for sub in subjects:
             axis=1
         )
         
-        
+
         # 5) time start reward and length
+        # for rewards:
+        # -> arrival at location = t_step_end_global
+        # -> appearance reward = arrival at location = t_step_end_global = t_reward_start
+        # -> appearance reward end = t_reward_afterwait
+        # -> dwell time at reward = t_step_press_global- t_step_end_global
         beh_clean['t_curr_rew']   = beh_raw['t_reward_start']
         beh_clean['reward_delay'] = beh_raw['reward_delay']
+        
         
         # 6) curr_loc [location 1-9]
         beh_clean['curr_loc'] = beh_raw.apply(
@@ -113,8 +149,26 @@ for sub in subjects:
             axis=1
         )
         
-        # 7) time start at curr_loc
-        beh_clean['t_curr_loc'] = beh_raw['t_step_end_global'].fillna(beh_raw['start_ABCD_screen'])
+        # 7) time start at curr_loc -> arrival at location = t_step_end_global
+        beh_clean['t_curr_loc'] = beh_raw['t_step_end_global']
+
+        # press to leave the location 
+        beh_clean['t_press_leave_curr_loc'] = beh_raw['t_step_press_global'] 
+        
+        # -> dwell time at location = t_step_press_global- t_step_end_global
+        beh_clean['t_dwell_curr_loc'] =  beh_clean['t_press_leave_curr_loc'] - beh_clean['t_curr_loc']
+        # -> walking time to next location = length_step
+        beh_clean['t_move_to_next_loc'] = beh_raw['length_step']
+        
+        # if t_press_leave_curr_loc and t_dwell_curr_loc are empty, fill as follows:
+        # t_press_leave_curr_loc, t_dwell_curr_loc = t_curr_rew + reward_delay
+        mask = (beh_clean['t_press_leave_curr_loc'].isna() & beh_clean['t_dwell_curr_loc'].isna())
+        beh_clean.loc[mask, 't_press_leave_curr_loc'] = beh_clean.loc[mask, 't_curr_rew'] + beh_clean.loc[mask, 'reward_delay']
+        beh_clean.loc[mask, 't_dwell_curr_loc'] = beh_clean.loc[mask, 'reward_delay']
+
+        # -> overall time related to this location = anything from arrival to next location.
+        beh_clean['t_spent_at_curr_loc'] = beh_clean['t_move_to_next_loc'] + beh_clean['t_dwell_curr_loc']
+        
         
         # 8) button press for respective loc [1/4 keys]
         # leave this for now!
@@ -140,9 +194,7 @@ for sub in subjects:
         beh_clean['unique_time_bin_type'] = beh_clean['task_config_ex'] + '_' + beh_clean['state'] + '_path'
         beh_clean.loc[rewards_mask, 'unique_time_bin_type'] = beh_clean.loc[rewards_mask, 'task_config_ex'] + '_' + beh_clean.loc[rewards_mask, 'state']+ '_reward'
 
-        # 11) repeat [1-5]
-        beh_clean['repeat'] = beh_raw.groupby('task_config_ex')['start_ABCD_screen'].transform(lambda s: s.notna().cumsum())
-        
+
         # 12) session [1/2]
         beh_clean['task_half'] = task_half
         
@@ -162,7 +214,7 @@ for sub in subjects:
     
     # import pdb; pdb.set_trace()
     # store where same reward-states appear at the same locations for later masking
-    mc.analyse.extract_and_clean.store_same_locs_in_same_state(beh_both, out_dir)
+    # mc.analyse.extract_and_clean.store_same_locs_in_same_state(beh_both, out_dir)
     
     out_file = os.path.join(out_dir, f"{sub}_beh_fmri_clean.csv")
     beh_both.to_csv(out_file, index=False)

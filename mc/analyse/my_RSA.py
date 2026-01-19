@@ -143,7 +143,7 @@ def plot_rdm_with_labels(rdm, labels, group_size=4):
     n = rdm.shape[0]
 
     fig, ax = plt.subplots()
-    im = ax.imshow(rdm, aspect='auto', cmap='coolwarm')
+    im = ax.imshow(rdm, aspect='auto', cmap='coolwarm', vmin=0, vmax=2)
 
     # Tick positions and labels
     ax.set_xticks(np.arange(n))
@@ -281,7 +281,7 @@ def compute_crosscorr(data_chunk, plotting = False):
         RDM.append(rdm[np.triu_indices(n, k=0)]) 
         if plotting == True:
             plt.figure()
-            plt.imshow(rdm, aspect = 'auto', cmap = 'coolwarm')
+            plt.imshow(rdm, aspect = 'auto', cmap = 'coolwarm', vmax=2, vmin=0)
             plt.figure()
             plt.imshow(rdm_both_halves, aspect = 'auto', cmap = 'coolwarm')
             

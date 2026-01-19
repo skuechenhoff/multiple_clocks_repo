@@ -177,8 +177,8 @@ for sub in subjects:
         model_EVs = pickle.load(file)
     selected_models = config.get("models", list(model_EVs.keys()))
     # loading the data EVs into dict
+    #data_EVs, all_EV_keys = mc.analyse.my_RSA.load_data_EVs(data_dir, regression_version=regression_version, only_load_labels=True)
     data_EVs, all_EV_keys = mc.analyse.my_RSA.load_data_EVs(data_dir, regression_version=regression_version)
-    
     # if you don't want all conditions created through FSL, exclude some here!
     # based on config file:
     # Ensure all four parts exist in config
@@ -305,7 +305,7 @@ for sub in subjects:
         RSA_results[model] = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(model_RDM_dir[model][0], d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {model}"))
         mc.analyse.handle_MRI_files.save_my_RSA_results(result_file=RSA_results[model], centers=centers, file_path = results_dir, file_name= f"{model}", mask=mask, number_regr = 0, ref_image_for_affine_path=ref_img)
 
-    
+    import pdb; pdb.set_trace() 
     run_combo_models = config.get("run_combo_models", bool(config.get("combo_models")))
     if run_combo_models:
         combo_list = config["combo_models"]
@@ -318,6 +318,12 @@ for sub in subjects:
             if missing:
                 raise ValueError(f"Combo model {combo_model_name} not possible, as {missing} not computed")
             stacked_model_RDMs = np.stack([model_RDM_dir[m][0] for m in models_to_combine], axis=1)
+            # check how correlated each model is whith each other.
+            corr = np.corrcoef(stacked_model_RDMs, rowvar=False)
+            for i in range(len(models_to_combine)):
+                for j in range(i+1, len(models_to_combine)):
+                    print(f"{models_to_combine[i]} vs {models_to_combine[j]}: r={corr[i,j]:.3f}")
+
             estimates_combined_model_rdms = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(stacked_model_RDMs, d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {combo_model_name}"))
             for i, model in enumerate(models_to_combine):
                 mc.analyse.handle_MRI_files.save_my_RSA_results(result_file=estimates_combined_model_rdms, centers=centers, file_path = results_dir, file_name= f"{model.upper()}-{combo_model_name}", mask=mask, number_regr = i, ref_image_for_affine_path=ref_img)

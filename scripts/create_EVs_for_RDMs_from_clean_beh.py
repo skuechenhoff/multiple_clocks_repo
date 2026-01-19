@@ -52,6 +52,7 @@ split_buttons = config.get("split_buttons", False)
 regress_rewards = config.get("regress_rewards", True)
 rewards_as_stick_function = config.get("rewards_as_stick_function", False)
 regress_subpaths = config.get("regress_subpaths", False)
+precise_paths = config.get("precise_paths", False)
 tasks_included = config.get("tasks_included", ['A', 'B', 'C', 'D', 'E'])
 repeats_included = config.get("repeats_included", [1,2,3,4,5])
 
@@ -219,7 +220,7 @@ for sub in subjects:
                             print(f"careful! I am saving a cut state EV {task}_{rew}_reward file. Happened for subject {sub} in task half {th}")
                             np.savetxt(str(EV_folder) + 'ev_' + f"{task}_{rew}_reward" + '.txt', array, delimiter="    ", fmt='%f')
         
-        # import pdb; pdb.set_trace()                
+                       
         if regress_subpaths == True:
             all_tasks = beh_th['task_config_ex'].unique()
             for task in all_tasks:
