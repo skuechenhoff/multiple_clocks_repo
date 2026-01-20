@@ -48,7 +48,7 @@ subjects = [f"sub-{subj_no}"]
 # no_phase_neurons = 3
 plot_RDMs = False 
 save_RDMs = True
-EV_string = 'DSR_loc-fut-rews-state'
+EV_string = 'DSR_loc-fut-rews-state-dur-type'
 
 coord_to_loc = {
     (-0.21,  0.29): 1, (0.0,  0.29): 2, (0.21,  0.29): 3,
@@ -63,7 +63,7 @@ loc_to_coord = {v:k for k,v in coord_to_loc.items()}
         
 for sub in subjects:
     # load the cleaned behavioural table.
-    beh_dir = f"/Users/xpsy1114/Documents/projects/multiple_clocks/data/pilot/{sub}/beh"
+    beh_dir = f"/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/{sub}/beh"
     RDM_dir = f"/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/{sub}/beh/modelled_EVs"
     if os.path.isdir(beh_dir):
         print(f"Running on laptop, now subject {sub}")
@@ -96,6 +96,8 @@ for sub in subjects:
     # ['location', 'curr_rew', 'next_rew', 'second_next_rew', 'third_next_rew', 'state', 'clocks']
     models['state'] = np.zeros((len(states), len(beh_df)))
     models['A-state'] = np.zeros((len(states), len(beh_df)))
+    models['duration'] = np.expand_dims(beh_df['t_spent_at_curr_loc'].to_numpy(), axis=0)
+    models['path_rew'] = np.expand_dims(beh_df['time_bin_type'].to_numpy(), axis=0)
     
     for s_i, state in enumerate(states):
         # import pdb; pdb.set_trace()
@@ -103,18 +105,21 @@ for sub in subjects:
             models['A-state'][s_i][(beh_df['state'] == state)& (beh_df['time_bin_type'] == 'reward')] = 1
         models['state'][s_i][beh_df['state'] == state] = 1
     
-    for key in ["location", "curr_rew", "next_rew", "two_next_rew", "three_next_rew", "l2_norm"]:
+    for key in ["location", "curr_rew", "next_rew", "two_next_rew", "three_next_rew", "l2_norm", "curr_path"]:
         models[key] = np.zeros((len(locations), len(beh_df)), dtype=float)
     
     
-    import pdb; pdb.set_trace()
+    
     # I THINK I NEED TO DELETE THE FIRST TIMEPOINT IN SUBPATH A! that's reward D.
     for i_loc, loc in enumerate(locations):
         models['location'][i_loc][beh_df['curr_loc'] == loc] = 1
         models['curr_rew'][i_loc][beh_df['curr_rew'] == loc] = 1
+        # models['path'][i_loc][(beh_df['curr_loc'] == loc) & (beh_df['time_bin_type'] == 'path')] = 1
+        # models['rew'][i_loc][(beh_df['curr_rew'] == loc) & (beh_df['time_bin_type'] == 'reward')] = 1
         for idx_inner_loc, inner_loc in enumerate(locations):
             models['l2_norm'][idx_inner_loc][beh_df['curr_loc'] == loc] = -np.linalg.norm(coordinates[i_loc] - coordinates[idx_inner_loc])
-            
+   
+
     # this is for the future reward location models.
     # rotates the reward values by k, but keeps time-bin-length in place.
     def rotate_runs(arr, k):
@@ -150,13 +155,21 @@ for sub in subjects:
     for model in models:
         EVs[model] = {}
         for reg in regressors:
-            EVs[model][reg] = np.zeros((len(models[model])))
-            for index, row in enumerate(models[model]):
-                # Note I don't include an intercept by default.
-                # this is because the way I use ithem, the regressors would be a linear combination of the intercept ([11111] vector)
-                EVs[model][reg][index] = LinearRegression(fit_intercept=False).fit(regressors[reg].reshape(-1,1), row.reshape(-1,1)).coef_
-        
-        
+            if model == 'path_rew':
+                label = 'reward' if reg.endswith('reward') else 'path' if reg.endswith('path') else None
+                EVs[model][reg] = np.full(len(models[model]), label, dtype=object)
+            else:
+                EVs[model][reg] = np.zeros((len(models[model])))  
+                for index, row in enumerate(models[model]):
+                    if model == 'duration':
+                        # sum up the durations of each regressor and divide by how often they were 'on'
+                        n_times_regressor_active = np.sum(np.diff(regressors[reg]) == 1) + (regressors[reg][0] == 1)
+                        EVs[model][reg][index] = models[model].transpose()[regressors[reg].astype(bool)].sum()/n_times_regressor_active
+                    else:
+                        # Note I don't include an intercept by default.
+                        # this is because the way I use ithem, the regressors would be a linear combination of the intercept ([11111] vector)
+                        EVs[model][reg][index] = LinearRegression(fit_intercept=False).fit(regressors[reg].reshape(-1,1), row.reshape(-1,1)).coef_
+
     # additionally, add the simple musicbox: at each of the 8 timebins, the future is already encoded.
     # order inside a task
     temp_order = [
@@ -167,13 +180,9 @@ for sub in subjects:
     ]
     
     
-    
-    import pdb; pdb.set_trace()
+
     models['DSR'] = np.zeros((len(temp_order)*len(locations)))
-    models['DSR_rews'] = np.zeros((int(len(temp_order)/2)*len(locations)))
-    models['DSR_paths'] = np.zeros((int(len(temp_order)/2)*len(locations)))
-    
-    EVs['DSR'], EVs['DSR_rews'], EVs['DSR_paths'] = {},{},{}
+    EVs['DSR'] = {}
     for task in tasks:
         # build base matrix (8 x 9) in canonical order
         bins_curr_task = [f"{task}_{temp_bin}" for temp_bin in temp_order]

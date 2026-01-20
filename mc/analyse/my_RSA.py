@@ -79,7 +79,7 @@ def load_data_EVs_th(data_dir, regression_version):
     return EV_dict, list_loaded
 
 
-def get_RDM_per_searchlight(fmri_data, centers, neighbors, method = 'crosscorr', labels = None, full_mask=None, mask_pairs=None):
+def get_RDM_per_searchlight(fmri_data, centers, neighbors, method = 'crosscorr', labels = None, full_mask=None, mask_pairs=None, include_diagonal=True):
     # import pdb; pdb.set_trace()
     centers = np.array(centers)
     #n_conds = fmri_data['1'].shape[0]
@@ -108,7 +108,7 @@ def get_RDM_per_searchlight(fmri_data, centers, neighbors, method = 'crosscorr',
                 center_data.append(fmri_data[:, center_neighbors])
             # then compute the RDM per searchlight
             if method == 'crosscorr':
-                RDM_corr = mc.analyse.my_RSA.compute_crosscorr(center_data)
+                RDM_corr = mc.analyse.my_RSA.compute_crosscorr(center_data, include_diagonal=include_diagonal)
             elif method == 'crosscorr_and_filter':
                 RDM_corr = mc.analyse.my_RSA.compute_crosscorr_and_filter(center_data, labels=labels, full_mask=full_mask, mask_pairs=mask_pairs)
             else:
@@ -253,9 +253,89 @@ def compute_crosscorr_and_filter(data_chunk, labels = None, full_mask=None, mask
 
     return RDM
 
+def make_categorical_RDM(data_chunk, plotting = False, include_diagonal = True):
+    RDM = []
+    if not isinstance(data_chunk, (list, tuple)):
+        data_chunk = [data_chunk]
+    
+    for data in data_chunk:
+        labels = np.asarray(data).squeeze()  
+        same = (labels[:, None] == labels[None, :])
+        rdm_both_halves = np.where(same, -1.0, 1.0)
+        # cutting the lower left square of the matrix
+        rdm_small = rdm_both_halves[int(len(rdm_both_halves)/2):,0:int(len(rdm_both_halves)/2)]
+        # making the matrix symmetric
+        rdm = (rdm_small + rdm_small.T) / 2
+        
+        # vectorize upper triangle
+        n = rdm.shape[0]
+        k = 0 if include_diagonal else 1
+        vec = rdm[np.triu_indices(n, k=k)]
+        
+        # balance the regressor around 0
+        vec = vec - vec.mean()
+        
+        RDM.append(vec)
+        
+        if plotting == True:
+            plt.figure()
+            plt.imshow(rdm, aspect = 'auto', cmap = 'coolwarm', vmax=2, vmin=0)
+            plt.figure()
+            plt.imshow(rdm_both_halves, aspect = 'auto', cmap = 'coolwarm')
 
 
-def compute_crosscorr(data_chunk, plotting = False):  
+    return RDM
+                
+                
+                
+                
+def make_distance_RDM(data_chunk, plotting = False, include_diagonal = True):
+    #import pdb; pdb.set_trace()
+    # this computes the z-standardised distance between any 2 datapoints and fills the matrix with it.
+    # in the end, it then selects the relevant triangle.
+    
+    RDM = []
+    if not isinstance(data_chunk, (list, tuple)):
+        data_chunk = [data_chunk]
+    
+    for data in data_chunk:
+        # first z-score
+        z_vals = (data - data.mean()) / data.std()
+        # then take the absolute distance
+        rdm_both_halves = np.abs(z_vals - z_vals.T)
+        # cutting the lower left square of the matrix
+        rdm_small = rdm_both_halves[int(len(rdm_both_halves)/2):,0:int(len(rdm_both_halves)/2)]
+        # making the matrix symmetric
+        rdm = (rdm_small + np.transpose(rdm_small))/2
+        
+        # scale so max(absdiff) -> 2, min -> 0
+        # After scaling, 0 = most similar, 2 = most dissimilar 
+        maxd = rdm.max()
+        if maxd == 0:
+            rdm = np.zeros_like(rdm)
+        else:
+            rdm = rdm * (2.0 / maxd)
+            
+        # lastly, only store the part of the RDM I am actually interested in 
+        # i.e. the upper triangle, including the diagonal.
+        n = rdm.shape[1]
+        if include_diagonal:
+            RDM.append(rdm[np.triu_indices(n, k=0)]) 
+        else:
+            RDM.append(rdm[np.triu_indices(n, k=1)]) 
+        
+        if plotting == True:
+            plt.figure()
+            plt.imshow(rdm, aspect = 'auto', cmap = 'coolwarm', vmax=2, vmin=0)
+            plt.figure()
+            plt.imshow(rdm_both_halves, aspect = 'auto', cmap = 'coolwarm')
+
+
+    return RDM
+    
+
+
+def compute_crosscorr(data_chunk, plotting = False, include_diagonal = True):  
     RDM = []
     #import pdb; pdb.set_trace()
     if not isinstance(data_chunk, (list, tuple)):
@@ -278,7 +358,11 @@ def compute_crosscorr(data_chunk, plotting = False):
         # lastly, only store the part of the RDM I am actually interested in 
         # i.e. the upper triangle, including the diagonal.
         n = rdm.shape[1]
-        RDM.append(rdm[np.triu_indices(n, k=0)]) 
+        if include_diagonal:
+            RDM.append(rdm[np.triu_indices(n, k=0)]) 
+        else:
+            RDM.append(rdm[np.triu_indices(n, k=1)]) 
+            
         if plotting == True:
             plt.figure()
             plt.imshow(rdm, aspect = 'auto', cmap = 'coolwarm', vmax=2, vmin=0)
@@ -346,3 +430,85 @@ def evaluate_model(model_rdm, data_rdm):
     est = sm.OLS(filtered_Y, filtered_X).fit()
     # import pdb; pdb.set_trace()
     return est.tvalues[1:], est.params[1:], est.pvalues[1:]
+
+
+
+
+def plot_model_correlations(stacked_model_RDMs, model_names,
+                            figsize=(8, 6), cmap='coolwarm', annot=True,
+                            fmt='.2f', vmin=-1, vmax=1, cmap_center=0,
+                            show=True, save_path=None):
+    """
+    Plot Pearson correlations between model RDMs.
+
+    Parameters
+    ----------
+    stacked_model_RDMs : array-like, shape (n_entries, n_models)
+        Each column should be a vectorized model RDM (e.g. upper-triangle).
+    model_names : list of str, length n_models
+        Labels for the models (used on x/y ticks).
+    figsize : tuple
+        Figure size.
+    cmap : str
+        Colormap name (diverging recommended, e.g. 'bwr' or 'coolwarm').
+    annot : bool
+        Whether to annotate cells with correlation numbers.
+    fmt : str
+        Format string for annotations.
+    vmin, vmax : float
+        Value range for colormap (defaults to -1..1).
+    show : bool
+        Whether to call plt.show().
+    save_path : str or None
+        If provided, saves the figure to this path.
+
+    Returns
+    -------
+    corr : ndarray, shape (n_models, n_models)
+        Pearson correlation matrix between model columns.
+    fig, ax : matplotlib objects
+        Figure and axes (for further customization).
+    """
+    X = np.asarray(stacked_model_RDMs)
+    if X.ndim != 2:
+        raise ValueError("stacked_model_RDMs must be 2D (n_entries, n_models).")
+    if X.shape[1] != len(model_names):
+        raise ValueError("Length of model_names must match number of model columns.")
+
+    # correlation matrix (columns are variables)
+    corr = np.corrcoef(X, rowvar=False)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(corr, interpolation='nearest', cmap=cmap, vmin=vmin, vmax=vmax)
+
+    # ticks / labels
+    ax.set_xticks(np.arange(len(model_names)))
+    ax.set_yticks(np.arange(len(model_names)))
+    ax.set_xticklabels(model_names, rotation=45, ha='right', rotation_mode='anchor')
+    ax.set_yticklabels(model_names)
+
+    # annotations
+    if annot:
+        # choose contrasting text color depending on background brightness
+        for i in range(corr.shape[0]):
+            for j in range(corr.shape[1]):
+                val = corr[i, j]
+                txt = format(val, fmt)
+                # white text for strong colors, black otherwise
+                text_color = 'white' if abs(val) > 0.5 else 'black'
+                ax.text(j, i, txt, ha='center', va='center', color=text_color, fontsize=9)
+
+    # colorbar and layout
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Pearson r', rotation=270, labelpad=12)
+
+    ax.set_title('Model RDM correlations (Pearson r)')
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    if show:
+        plt.show()
+
+    return corr, fig, ax

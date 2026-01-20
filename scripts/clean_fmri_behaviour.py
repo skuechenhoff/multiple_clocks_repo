@@ -48,8 +48,15 @@ else:
 alternative_regs = False
 
 # Find the source dir first, outside of the loop
-data_dir_beh = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/pilot/"
+source_dir = "/Users/xpsy1114/Documents/projects/multiple_clocks/data"
+if os.path.isdir(source_dir):
+    print("Running on laptop")
+else:
+    source_dir = "/home/fs0/xpsy1114/scratch/data"
+    print(f"Running on Cluster, setting {source_dir} as data source")
 
+
+data_dir_beh = f"{source_dir}/pilot"
 
 # import pdb; pdb.set_trace()
 all_sub_paths = glob(f"{data_dir_beh}/sub-*")
@@ -63,21 +70,17 @@ subjects.remove('sub-21')
 subjects.remove('sub-29')
 
 for sub in subjects:
-    out_dir = f"/Users/xpsy1114/Documents/projects/multiple_clocks/data/derivatives/{sub}/beh/"
-    if os.path.isdir(data_dir_beh):
-        print(f"Running on laptop, now subject {sub}")
-    else:
-        data_dir_beh = "/home/fs0/xpsy1114/scratch/data/pilot/"
-        out_dir      = f"/home/fs0/xpsy1114/scratch/data/derivatives/{sub}/beh/"
-        print(f"Running on Cluster, setting {data_dir_beh} as data directory")
+    out_dir = f"{source_dir}/derivatives/{sub}/beh"
+    
 
+    print(f"Now subject {sub}")
     
     both_halves = []   # collect cleaned tables for both halves
 
     # Then here inside the loop, we know which subject we are looking at so we can define the correct folders
 
     for task_half in [1,2]:
-        file = data_dir_beh + f"{sub}/beh/{sub}_fmri_pt{task_half}.csv"
+        file = data_dir_beh + f"/{sub}/beh/{sub}_fmri_pt{task_half}.csv"
         if not os.path.exists(file):
             print(f"This file doesn't exist: {file}")
             continue  # skip to next loop iteration
@@ -216,6 +219,6 @@ for sub in subjects:
     # store where same reward-states appear at the same locations for later masking
     # mc.analyse.extract_and_clean.store_same_locs_in_same_state(beh_both, out_dir)
     
-    out_file = os.path.join(out_dir, f"{sub}_beh_fmri_clean.csv")
+    out_file = f"{out_dir}/{sub}_beh_fmri_clean.csv"
     beh_both.to_csv(out_file, index=False)
     print(f"Saved {out_file}")

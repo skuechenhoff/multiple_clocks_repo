@@ -79,7 +79,7 @@ else:
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_stepwise_combos.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_rew_vs_path_stepwise_combos.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -105,13 +105,13 @@ smoothing = config.get("smoothing", True)
 fwhm = config.get("fwhm", 5)
 load_searchlights = config.get("load_searchlights", False)
 masked_conditions = config.get("masked_conds", None)
+include_diagonal = config.get("diagonal_included", True)
 
 # conditions selection
 conditions = config.get("EV_condition_selection")
 parts_to_use = conditions["parts"]
 
 # model selection happens later in script
-
 
 print(f"Now running RSA based on subj GLM {regression_version} for subj {subj_no}")
 
@@ -121,9 +121,11 @@ for sub in subjects:
     if os.path.isdir(data_dir):
         print("Running on laptop.")
         # DONT FORGET TO COMMENT THIS OUT!!!!
-        regression_version = '03-4'
+        # regression_version = '03-4'
+        only_load_labels = True
     else:
         data_dir = f"/home/fs0/xpsy1114/scratch/data/derivatives/{sub}"
+        only_load_labels = False
         print(f"Running on Cluster, setting {data_dir} as data directory")
       
     modelled_conditions_dir = f"{data_dir}/beh/modelled_EVs"
@@ -177,8 +179,7 @@ for sub in subjects:
         model_EVs = pickle.load(file)
     selected_models = config.get("models", list(model_EVs.keys()))
     # loading the data EVs into dict
-    #data_EVs, all_EV_keys = mc.analyse.my_RSA.load_data_EVs(data_dir, regression_version=regression_version, only_load_labels=True)
-    data_EVs, all_EV_keys = mc.analyse.my_RSA.load_data_EVs(data_dir, regression_version=regression_version)
+    data_EVs, all_EV_keys = mc.analyse.my_RSA.load_data_EVs(data_dir, regression_version=regression_version, only_load_labels = only_load_labels)
     # if you don't want all conditions created through FSL, exclude some here!
     # based on config file:
     # Ensure all four parts exist in config
@@ -212,6 +213,12 @@ for sub in subjects:
     models_concat = {}
     model_RDM_dir = {}
     
+    #
+    #
+    # TODO: add a setting where I can choose whether i do or don't want to consider the diagonal!
+    #
+    #
+    
     for model in model_EVs:
         model_th1, model_th2, model_paired_labels = pair_correct_tasks(model_EVs[model], EV_keys)
         # finally, concatenate th1 and th2 to do the cross-correlation after
@@ -219,20 +226,27 @@ for sub in subjects:
         
         if masked_conditions:
             # here, I want to now mask all within-task similarities.
+            import pdb; pdb.set_trace()
+            # THIS IS OLD AND SHOULDNT BE CALLED
             model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr_and_filter(models_concat[model], plotting = False, labels = model_paired_labels, mask_pairs= masked_conditions, full_mask=None, binarise = False)
             print(f"excluding n = {np.sum(np.isnan(model_RDM_dir[model]))} datapoints from {len(model_RDM_dir[model][0])}.")
-            # import pdb; pdb.set_trace()
+            
         else:  
-            model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr(models_concat[model], plotting= True)
-            if model == 'A-state':
-                A_state_mask = ~np.isnan(model_RDM_dir['A-state'][0])
-                # import pdb; pdb.set_trace()
-                # first make sure to not do this for the 'correct nans'
-                nan_mask = np.isnan(model_RDM_dir['state'][0])
-                # then turn all nans into 1s
-                nan_mask_other_states = np.isnan(model_RDM_dir[model][0])
-                model_RDM_dir[model][0][nan_mask_other_states] = 1
-                #plt.figure(); plt.imshow(model_RDM_dir[model][0])
+            if model == 'path_rew':
+                model_RDM_dir[model] = mc.analyse.my_RSA.make_categorical_RDM(models_concat[model], plotting = True, include_diagonal=include_diagonal)
+            elif model == 'duration':
+                model_RDM_dir[model] = mc.analyse.my_RSA.make_distance_RDM(models_concat[model], plotting = True, include_diagonal=include_diagonal)
+            else:
+                model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr(models_concat[model], plotting= True, include_diagonal=include_diagonal)
+                if model == 'A-state':
+                    A_state_mask = ~np.isnan(model_RDM_dir['A-state'][0])
+                    # import pdb; pdb.set_trace()
+                    # first make sure to not do this for the 'correct nans'
+                    nan_mask = np.isnan(model_RDM_dir['state'][0])
+                    # then turn all nans into 1s
+                    nan_mask_other_states = np.isnan(model_RDM_dir[model][0])
+                    model_RDM_dir[model][0][nan_mask_other_states] = 1
+                    #plt.figure(); plt.imshow(model_RDM_dir[model][0])
     
     if 'A-state-ones' in selected_models:
         model_RDM_dir['state'][0][A_state_mask] = model_RDM_dir['state'][0][3]
@@ -259,7 +273,7 @@ for sub in subjects:
          # and searchlight-wise for data RDMs
          if masked_conditions:
              # here, I want to now mask all within-task similarities.
-             data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr_and_filter', labels = paired_labels, mask_pairs= masked_conditions)
+             data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr_and_filter', labels = paired_labels, mask_pairs= masked_conditions, include_diagonal=include_diagonal)
          else:
              data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr')
          mc.analyse.handle_MRI_files.save_data_RDM_as_nifti(data_RDMs, data_rdm_dir, "data_RDM", ref_img, centers) 
@@ -274,24 +288,8 @@ for sub in subjects:
             data_RDMs = mc.analyse.handle_MRI_files.smooth_RDMs(data_RDMs, ref_img, fwhm,use_rsa_toolbox = False, path_to_save=path_to_save_smooth,centers=centers)
         else:
             data_RDMs = np.load(f"{data_rdm_dir}/data_RDM_smooth_fwhm{fwhm}.npy")
-           
-    # if visualise_RDMs == True:
-    #     # note that data_RDM_file_2d this is now equivalent to half (first 40) of data_RDMs.
-    #     # adjust!
-    #     # ACC [54, 63, 41]
-    #     mc.plotting.deep_data_plt.plot_data_RDMconds_per_searchlight(data_RDM_file_2d, centers, neighbors, [54, 63, 41], ref_img, condition_names)
-    #     mc.plotting.deep_data_plt.plot_dataRDM_by_voxel_coords(data_RDMs, [54, 63, 41], ref_img, condition_names, centers = centers, no_rsa_toolbox=True)
-        
-    #     # visual cortex [72, 17, 9]
-    #     mc.plotting.deep_data_plt.plot_data_RDMconds_per_searchlight(data_RDM_file_2d, centers, neighbors, [72, 17, 9], ref_img, condition_names)
-    #     mc.plotting.deep_data_plt.plot_dataRDM_by_voxel_coords(data_RDMs, [72, 17, 9], ref_img, condition_names, centers = centers, no_rsa_toolbox=True)
-        
-    #     # hippocampus [43, 50, 17]
-    #     mc.plotting.deep_data_plt.plot_data_RDMconds_per_searchlight(data_RDM_file_2d, centers, neighbors, [43, 50, 17], ref_img, condition_names)
-    #     mc.plotting.deep_data_plt.plot_dataRDM_by_voxel_coords(data_RDMs, [43, 50, 17], ref_img, condition_names, centers = centers, no_rsa_toolbox=True)
-        
-       
-    #
+
+
     # STEP 4: evaluate the model fit between model and data RDMs.
     #
     RSA_results = {}
@@ -305,7 +303,7 @@ for sub in subjects:
         RSA_results[model] = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(model_RDM_dir[model][0], d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {model}"))
         mc.analyse.handle_MRI_files.save_my_RSA_results(result_file=RSA_results[model], centers=centers, file_path = results_dir, file_name= f"{model}", mask=mask, number_regr = 0, ref_image_for_affine_path=ref_img)
 
-    import pdb; pdb.set_trace() 
+
     run_combo_models = config.get("run_combo_models", bool(config.get("combo_models")))
     if run_combo_models:
         combo_list = config["combo_models"]
@@ -318,11 +316,13 @@ for sub in subjects:
             if missing:
                 raise ValueError(f"Combo model {combo_model_name} not possible, as {missing} not computed")
             stacked_model_RDMs = np.stack([model_RDM_dir[m][0] for m in models_to_combine], axis=1)
-            # check how correlated each model is whith each other.
-            corr = np.corrcoef(stacked_model_RDMs, rowvar=False)
-            for i in range(len(models_to_combine)):
-                for j in range(i+1, len(models_to_combine)):
-                    print(f"{models_to_combine[i]} vs {models_to_combine[j]}: r={corr[i,j]:.3f}")
+            
+            # # check how correlated each model is whith each other.
+            # corr = np.corrcoef(stacked_model_RDMs, rowvar=False)
+            # for i in range(len(models_to_combine)):
+            #     for j in range(i+1, len(models_to_combine)):
+            #         print(f"{models_to_combine[i]} vs {models_to_combine[j]}: r={corr[i,j]:.3f}")
+            # corr, fig, ax = mc.analyse.my_RSA.plot_model_correlations(stacked_model_RDMs, models_to_combine)
 
             estimates_combined_model_rdms = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(stacked_model_RDMs, d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {combo_model_name}"))
             for i, model in enumerate(models_to_combine):
@@ -341,6 +341,7 @@ for sub in subjects:
         "n_all_EVs": len(all_EV_keys),
         "n_selected_EVs": len(EV_keys),
         "models_evaluated": selected_models,
+        "diagonal is included": include_diagonal,
         "run_combo_models": run_combo_models,
         "combo_model_names": [c["name"] for c in config.get("combo_models", [])] if run_combo_models else [],
         "data_dir": data_dir,
