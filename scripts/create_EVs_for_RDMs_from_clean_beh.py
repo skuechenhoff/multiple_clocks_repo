@@ -42,7 +42,7 @@ else:
          
 # import pdb; pdb.set_trace()      
 # --- Load configuration ---
-config_file = sys.argv[2] if len(sys.argv) > 2 else "EV_config_all_paths_stickrews_split-buttons.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "EV_config_all-paths-fixed_stickrews_split-buttons.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -68,7 +68,7 @@ state_regs = config.get("state_regs", False)
 if len (sys.argv) > 1:
     subj_no = sys.argv[1]
 else:
-    subj_no = '01'  
+    subj_no = '02'  
 subjects = [f"sub-{subj_no}"]
 
 for sub in subjects:

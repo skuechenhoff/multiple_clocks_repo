@@ -95,10 +95,12 @@ def get_RDM_per_searchlight(fmri_data, centers, neighbors, method = 'crosscorr',
         chunked_center = np.split(np.arange(n_centers),
                                   np.linspace(0, n_centers,
                                               101, dtype=int)[1:-1])
-        # output will INCLUDE the diagonal. so triangle number is:
-        sl_rdms = np.zeros((n_centers, n_conds * (n_conds + 1) // 2))
-        # if excluding the diagonal
-        # sl_rdms = np.zeros((n_centers, n_conds * (n_conds - 1) // 2))
+        if include_diagonal == True:
+            # output will INCLUDE the diagonal. so triangle number is:
+            sl_rdms = np.zeros((n_centers, n_conds * (n_conds + 1) // 2))
+        if include_diagonal == False:
+            # if excluding the diagonal
+            sl_rdms = np.zeros((n_centers, n_conds * (n_conds - 1) // 2))
         #for chunks in chunked_center:
         for chunks in tqdm(chunked_center, desc='Calculating RDMs...'):            
             center_data= []

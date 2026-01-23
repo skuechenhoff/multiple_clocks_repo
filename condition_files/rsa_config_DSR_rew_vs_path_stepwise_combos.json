@@ -1,7 +1,7 @@
 {
   "name_of_RSA": "DSR_rew-vs-path_stepwise_combos",
   "load_EVs_from": "DSR_loc-fut-rews-state-dur-type",
-  "regression_version": "all_paths-stickrews-split_buttons",
+  "regression_version": "all-paths-fixed_stickrews_split-buttons",
     "EV_condition_selection": {
     "parts": {
       "task":      { "include": [],          "exclude": []},

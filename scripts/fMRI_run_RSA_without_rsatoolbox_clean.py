@@ -208,6 +208,7 @@ for sub in subjects:
     print(f"including the following EVs in the RDMs: {EV_keys}")
     data_th1, data_th2, paired_labels = pair_correct_tasks(data_EVs, EV_keys)
     data_concat = np.concatenate((data_th1, data_th2), axis = 0)
+    import pdb; pdb.set_trace()
     # 
     # Step 3: compute the model and data RDMs.
     models_concat = {}
@@ -275,7 +276,7 @@ for sub in subjects:
              # here, I want to now mask all within-task similarities.
              data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr_and_filter', labels = paired_labels, mask_pairs= masked_conditions, include_diagonal=include_diagonal)
          else:
-             data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr')
+             data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr', include_diagonal=include_diagonal)
          mc.analyse.handle_MRI_files.save_data_RDM_as_nifti(data_RDMs, data_rdm_dir, "data_RDM", ref_img, centers) 
     else:
          data_RDMs = np.load(f"{data_rdm_dir}/data_RDM.npy")

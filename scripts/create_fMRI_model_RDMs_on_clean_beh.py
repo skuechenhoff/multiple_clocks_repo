@@ -38,7 +38,7 @@ else:
     subj_no = '02'
 
 subjects = [f"sub-{subj_no}"]
-# subjects = subs_list = [f'sub-{i:02}' for i in range(1, 36)]
+subjects = subs_list = [f'sub-{i:02}' for i in range(1, 16)]
 
 #
 # SETTINGS

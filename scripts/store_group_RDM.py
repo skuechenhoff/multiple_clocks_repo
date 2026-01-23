@@ -33,16 +33,19 @@ import json
 import fnmatch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib as mpl
+import glob
 
 
 t0 = time.time()
 # first step, take standard voxel coordinates as an input.
-std_voxel = [70, 54, 63]
+std_voxel = [33, 81, 25] 
 
 print("looking at data RDM in voxel", std_voxel)
 
-RSA_version = 'DSR_stepwise_combos_14-01-2026'
-glm_version = 'all_paths-stickrews-split_buttons'
+#RSA_version = 'DSR_stepwise_combos_14-01-2026'
+# glm_version = 'all_paths-stickrews-split_buttons'
+RSA_version = 'DSR_rew-vs-path_stepwise_combos_20-01-2026'
+glm_version = 'all-paths-fixed_stickrews_split-buttons'
 
 
 # import pdb; pdb.set_trace() 
@@ -68,6 +71,12 @@ else:
 
 subj_nos = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '13', '14', '15', '16', '17', '18', '19', '20', '22', '23', '24', '25', '26', '27', '28', '30', '31', '32', '33', '34', '35']
 
+
+def vec_to_square_upper(vec, n, iu):
+    """Fill upper triangle of an (n,n) array from a condensed/upper-tri vector."""
+    mat = np.zeros((n, n), dtype=vec.dtype)
+    mat[iu] = vec
+    return mat
 
 def pair_correct_tasks(data_dict, keys_list):
     """
@@ -183,7 +192,7 @@ os.makedirs(res_dir, exist_ok=True)
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[1] if len(sys.argv) > 2 else "rsa_config_state_Aones_and_combostate-pathandrew.json"
+config_file = sys.argv[1] if len(sys.argv) > 2 else "rsa_config_DSR_rew_vs_path_stepwise_combos.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -191,6 +200,8 @@ with open(f"{config_path}/{config_file}", "r") as f:
 EV_string = config.get("load_EVs_from")
 regression_version = config.get("regression_version")
 RSA_version = config.get("name_of_RSA")
+RSA_version = 'DSR_rew-vs-path_stepwise_combos_20-01-2026'
+RSA_version = 'DSR_rew-vs-path_stepwise_combos_*'
 # conditions selection
 conditions = config.get("EV_condition_selection")
 parts_to_use = conditions["parts"]
@@ -228,10 +239,11 @@ for sub in subjects:
 
     # data RDM will be stored in original format (108, 108, 64 x n-datapoints of the RDM)
     # ADD THE DATE HERE!!
+    hits = sorted(glob.glob(f"{data_dir}/func/data_RDMs_{RSA_version}_glmbase_{glm_version}/data_RDM.nii.gz"))
+    data_RDM_nifti = nib.load(hits[-1])
     
     
-    
-    data_RDM_nifti = nib.load(f"{data_dir}/func/data_RDMs_{RSA_version}_glmbase_{glm_version}/data_RDM.nii.gz")
+    # data_RDM_nifti = nib.load(f"{data_dir}/func/data_RDMs_{RSA_version}_glmbase_{glm_version}/data_RDM.nii.gz")
     # only load the current voxel: current voxel data RDM = 
     ROI_data_RDM = np.asarray(data_RDM_nifti.dataobj[func_vox_rounded[0], func_vox_rounded[1],func_vox_rounded[2], :], dtype=np.float32)
     # data_RDM = data_RDM_nifti.get_fdata()
@@ -249,6 +261,7 @@ for sub in subjects:
 data_RDM_avg = np.asarray(np.mean(data_RDMs_per_sub,axis =0))
 file_name = f"vox_{std_voxel[0]}_{std_voxel[1]}_{std_voxel[2]}_data_RDM_{RSA_version}_glmbase_{glm_version}"
 np.save(f"{res_dir}/{file_name}", data_RDM_avg)
+
 
 print("now saving the averaged RDM in", f"{res_dir}/{file_name}")
 
@@ -300,13 +313,127 @@ for i, l in enumerate(paired_labels):
     if first_block_str in l:
         block_size = i+1
 
+# ----------------------------
+# Plot individual subject RDMs
+# ----------------------------
+
+# If you haven't already computed these for the avg plot, compute once here:
+parsed = [parse_paired_label(l) for l in paired_labels]
+block_labels = [parsed[i][0] for i in range(0, n, block_size)]
+centers = np.arange(block_size / 2 - 0.5, n, block_size)
+within = [parsed[i][1] for i in range(0, block_size)]
+
+cmap_obj = plt.get_cmap("RdBu").copy()
+cmap_obj.set_bad("white")
+
+n_sub = len(data_RDMs_per_sub)
+per_fig = 6
+n_figs = int(np.ceil(n_sub / per_fig))
+
+# choose robust scaling per subject (recommended) or full min/max
+use_robust = True
+robust_lo, robust_hi = 2, 98  # percentiles
+
+for fi in range(n_figs):
+    start = fi * per_fig
+    end = min((fi + 1) * per_fig, n_sub)
+    idxs = range(start, end)
+
+    fig, axes = plt.subplots(2, 3, figsize=(12, 8), constrained_layout=True)
+    axes = np.asarray(axes).ravel()
+
+    # turn off unused axes (if last page not full)
+    for ax in axes[end - start:]:
+        ax.axis("off")
+
+    for j, sub_i in enumerate(idxs):
+        ax = axes[j]
+
+        # subject vector -> square
+        sub_vec = np.asarray(data_RDMs_per_sub[sub_i])
+        sub_rdm = vec_to_square_upper(sub_vec, n=n, iu=iu)
+
+        # --- Per-subject scaling (NOT fixed across subjects) ---
+        vals = sub_rdm[np.triu_indices(n)]
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            ax.axis("off")
+            continue
+
+        if use_robust:
+            vmin = np.percentile(vals, robust_lo)
+            vmax = np.percentile(vals, robust_hi)
+        else:
+            vmin, vmax = float(np.min(vals)), float(np.max(vals))
+
+        # avoid degenerate norm if flat
+        if np.isclose(vmin, vmax):
+            vmin = vmin - 1e-6
+            vmax = vmax + 1e-6
+
+        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+
+        im = ax.imshow(sub_rdm, cmap=cmap_obj, norm=norm,
+                       interpolation="None", aspect="equal")
+
+        # block separators
+        for b in range(block_size, n, block_size):
+            ax.axhline(b - 0.5, color="white", lw=1.0)
+            ax.axvline(b - 0.5, color="white", lw=1.0)
+
+        ax.set_xticks([])
+        ax.set_yticks(centers)
+        ax.set_yticklabels(block_labels, fontsize=7)
+        ax.yaxis.tick_right()
+        ax.tick_params(length=0, pad=1)
+
+        ax.set_title(f"sub {sub_i:02d}  (vmin={vmin:.2g}, vmax={vmax:.2g})", fontsize=9)
+
+        # small colorbar per subplot (so scales are explicit & independent)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("left", size="4%", pad=0.05)
+        cbar = fig.colorbar(im, cax=cax)
+        cbar.ax.yaxis.set_ticks_position("left")
+        cbar.ax.tick_params(labelsize=7)
+
+    # optional shared xlabel for the whole page
+    fig.suptitle(
+        f"{file_name} — individual RDMs (page {fi+1}/{n_figs})\n"
+        f"Within-block: " + " | ".join(within),
+        fontsize=11
+    )
+
+    out_base = f"{res_dir}/{file_name}_individualRDMs_page{fi+1:02d}"
+    fig.savefig(out_base + ".png", dpi=200)
+    fig.savefig(out_base + ".svg")
+    plt.close(fig)
+
 
 fig, ax = plt.subplots(figsize=(4.2, 4.2))
 cmap_obj = plt.get_cmap("RdBu").copy()
 cmap_obj.set_bad("white")
-norm = (mpl.colors.Normalize(vmin=0, vmax=2))
+# --- Better scaling for the average RDM (not fixed) ---
+vals = rdm[np.triu_indices(n)]
+vals = vals[np.isfinite(vals)]
+
+use_robust = True
+robust_lo, robust_hi = 2, 98  # percentiles
+
+if use_robust:
+    vmin = np.percentile(vals, robust_lo)
+    vmax = np.percentile(vals, robust_hi)
+else:
+    vmin, vmax = float(np.min(vals)), float(np.max(vals))
+
+# avoid degenerate scaling
+if np.isclose(vmin, vmax):
+    vmin -= 1e-6
+    vmax += 1e-6
+
+norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
 im = ax.imshow(rdm, cmap=cmap_obj, norm=norm, interpolation="None", aspect="equal")
+ax.set_title(f"{file_name}\n(vmin={vmin:.2g}, vmax={vmax:.2g})", fontsize=12)
 
 # block separators
 for b in range(block_size, n, block_size):

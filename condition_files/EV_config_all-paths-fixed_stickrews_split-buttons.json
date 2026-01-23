@@ -1,0 +1,15 @@
+{
+  "name": "all-paths-fixed_stickrews_split-buttons",
+  "split_buttons": true,
+  "repeats_included": [0, 1, 2, 3, 4],
+  "regress_rewards": true,
+  "rewards_as_stick_function": true,
+  "regress_subpaths": true,
+  "tasks_included": ["A", "B", "C", "D", "E"],
+  "states_included": ["A", "B", "C", "D"],
+  "fut_step_x_loc_regs": false,
+  "state_regs": false,
+  "duration_state": "full_path"
+}
+
+
