@@ -79,7 +79,7 @@ else:
       
 # --- Load configuration ---
 # config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_simple.json"
-config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_rew_vs_path_stepwise_combos.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_rew_vs_path_interaction_vis_combos.json"
 with open(f"{config_path}/{config_file}", "r") as f:
     config = json.load(f)
 
@@ -208,7 +208,7 @@ for sub in subjects:
     print(f"including the following EVs in the RDMs: {EV_keys}")
     data_th1, data_th2, paired_labels = pair_correct_tasks(data_EVs, EV_keys)
     data_concat = np.concatenate((data_th1, data_th2), axis = 0)
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     # 
     # Step 3: compute the model and data RDMs.
     models_concat = {}
@@ -234,11 +234,11 @@ for sub in subjects:
             
         else:  
             if model == 'path_rew':
-                model_RDM_dir[model] = mc.analyse.my_RSA.make_categorical_RDM(models_concat[model], plotting = True, include_diagonal=include_diagonal)
+                model_RDM_dir[model] = mc.analyse.my_RSA.make_categorical_RDM(models_concat[model], plotting = False, include_diagonal=include_diagonal)
             elif model == 'duration':
-                model_RDM_dir[model] = mc.analyse.my_RSA.make_distance_RDM(models_concat[model], plotting = True, include_diagonal=include_diagonal)
+                model_RDM_dir[model] = mc.analyse.my_RSA.make_distance_RDM(models_concat[model], plotting = False, include_diagonal=include_diagonal)
             else:
-                model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr(models_concat[model], plotting= True, include_diagonal=include_diagonal)
+                model_RDM_dir[model] = mc.analyse.my_RSA.compute_crosscorr(models_concat[model], plotting= False, include_diagonal=include_diagonal)
                 if model == 'A-state':
                     A_state_mask = ~np.isnan(model_RDM_dir['A-state'][0])
                     # import pdb; pdb.set_trace()
@@ -266,22 +266,22 @@ for sub in subjects:
             #     plt.figure()
             #     plt.imshow(rdm_recon)
             #     plt.title(model)
-    # import pdb; pdb.set_trace()
+    #import pdb; pdb.set_trace()
 
         
     
     if not os.path.exists(f"{data_rdm_dir}/data_RDM.npy"): 
-         # and searchlight-wise for data RDMs
-         if masked_conditions:
-             # here, I want to now mask all within-task similarities.
-             data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr_and_filter', labels = paired_labels, mask_pairs= masked_conditions, include_diagonal=include_diagonal)
-         else:
-             data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr', include_diagonal=include_diagonal)
-         mc.analyse.handle_MRI_files.save_data_RDM_as_nifti(data_RDMs, data_rdm_dir, "data_RDM", ref_img, centers) 
+          # and searchlight-wise for data RDMs
+          if masked_conditions:
+              # here, I want to now mask all within-task similarities.
+              data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr_and_filter', labels = paired_labels, mask_pairs= masked_conditions, include_diagonal=include_diagonal)
+          else:
+              data_RDMs = mc.analyse.my_RSA.get_RDM_per_searchlight(data_concat, centers, neighbors, method = 'crosscorr', include_diagonal=include_diagonal)
+          mc.analyse.handle_MRI_files.save_data_RDM_as_nifti(data_RDMs, data_rdm_dir, "data_RDM", ref_img, centers) 
     else:
-         data_RDMs = np.load(f"{data_rdm_dir}/data_RDM.npy")
+          data_RDMs = np.load(f"{data_rdm_dir}/data_RDM.npy")
 
-    
+
     if smoothing == True:
         if not os.path.exists(f"{data_rdm_dir}/data_RDM_smooth_fwhm{fwhm}.npy"):
             path_to_save_smooth = f"{data_rdm_dir}/data_RDM_smooth_fwhm{fwhm}"
@@ -294,15 +294,17 @@ for sub in subjects:
     # STEP 4: evaluate the model fit between model and data RDMs.
     #
     RSA_results = {}
-    for model in selected_models:
-        if model == 'A-state-mask' or model == 'A-state-ones':
-            print("skipping computing A-state-mask or A-state-ones, already masked")
-            continue
-        print(model)
-        # first, compute similarity esitmate for each model separately.
-        # ACTUAL RSA - single regressors
-        RSA_results[model] = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(model_RDM_dir[model][0], d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {model}"))
-        mc.analyse.handle_MRI_files.save_my_RSA_results(result_file=RSA_results[model], centers=centers, file_path = results_dir, file_name= f"{model}", mask=mask, number_regr = 0, ref_image_for_affine_path=ref_img)
+    run_single_models = config.get("run_single_models", True)
+    if run_single_models == True:
+        for model in selected_models:
+            if model == 'A-state-mask' or model == 'A-state-ones':
+                print("skipping computing A-state-mask or A-state-ones, already masked")
+                continue
+            print(model)
+            # first, compute similarity esitmate for each model separately.
+            # ACTUAL RSA - single regressors
+            RSA_results[model] = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(model_RDM_dir[model][0], d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {model}"))
+            mc.analyse.handle_MRI_files.save_my_RSA_results(result_file=RSA_results[model], centers=centers, file_path = results_dir, file_name= f"{model}", mask=mask, number_regr = 0, ref_image_for_affine_path=ref_img)
 
 
     run_combo_models = config.get("run_combo_models", bool(config.get("combo_models")))
@@ -315,7 +317,15 @@ for sub in subjects:
             # check if these models have been computed in model_EVs
             missing = [m for m in models_to_combine if m not in model_EVs]
             if missing:
-                raise ValueError(f"Combo model {combo_model_name} not possible, as {missing} not computed")
+                for m_int in missing:
+                    if m_int.endswith('interaction'):
+                        curr_m = m_int.split('_interaction')[0]
+                        z = lambda v: (v - np.nanmean(v)) / np.nanstd(v)
+                        model_RDM_dir[m_int] = [z(model_RDM_dir[curr_m][0]) * z(model_RDM_dir['path_rew'][0])]
+                        # model_RDM_dir[m_int] = [model_RDM_dir[curr_m][0]*model_RDM_dir['path_rew'][0]]
+                    else:
+                        raise ValueError(f"Combo model {combo_model_name} not possible, as {missing} not computed")
+            
             stacked_model_RDMs = np.stack([model_RDM_dir[m][0] for m in models_to_combine], axis=1)
             
             # # check how correlated each model is whith each other.
@@ -324,7 +334,8 @@ for sub in subjects:
             #     for j in range(i+1, len(models_to_combine)):
             #         print(f"{models_to_combine[i]} vs {models_to_combine[j]}: r={corr[i,j]:.3f}")
             # corr, fig, ax = mc.analyse.my_RSA.plot_model_correlations(stacked_model_RDMs, models_to_combine)
-
+            
+            # import pdb; pdb.set_trace()
             estimates_combined_model_rdms = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(stacked_model_RDMs, d) for d in tqdm(data_RDMs, desc=f"running GLM for all searchlights in {combo_model_name}"))
             for i, model in enumerate(models_to_combine):
                 mc.analyse.handle_MRI_files.save_my_RSA_results(result_file=estimates_combined_model_rdms, centers=centers, file_path = results_dir, file_name= f"{model.upper()}-{combo_model_name}", mask=mask, number_regr = i, ref_image_for_affine_path=ref_img)

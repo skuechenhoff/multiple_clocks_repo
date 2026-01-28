@@ -263,7 +263,9 @@ def make_categorical_RDM(data_chunk, plotting = False, include_diagonal = True):
     for data in data_chunk:
         labels = np.asarray(data).squeeze()  
         same = (labels[:, None] == labels[None, :])
-        rdm_both_halves = np.where(same, -1.0, 1.0)
+        # dissimilaririty matrix. 
+        # 0 = the same; 1 = different
+        rdm_both_halves = np.where(same, 0, 1)
         # cutting the lower left square of the matrix
         rdm_small = rdm_both_halves[int(len(rdm_both_halves)/2):,0:int(len(rdm_both_halves)/2)]
         # making the matrix symmetric
@@ -275,6 +277,7 @@ def make_categorical_RDM(data_chunk, plotting = False, include_diagonal = True):
         vec = rdm[np.triu_indices(n, k=k)]
         
         # balance the regressor around 0
+        # this will be -0.5 or 0.5
         vec = vec - vec.mean()
         
         RDM.append(vec)
@@ -408,10 +411,15 @@ def evaluate_model(model_rdm, data_rdm):
 
     #X = sm.add_constant(model_rdm.transpose());
     X = sm.add_constant(model_rdm);
-    # first, normalize the regressors (but not the intercept, bc std = 0 -> division by 0!)
+    
+    # first, filter out potential nans in the model part
+    nan_filter = np.isnan(X).any(axis=1)
+    filtered_X = X[~nan_filter]
+    
+    # next, normalize the regressors (but not the intercept, bc std = 0 -> division by 0!)
     # X = model_rdm.transpose()
-    for i in range(1, X.shape[1]):
-        X[:,i] = (X[:,i] - np.nanmean(X[:,i]))/ np.nanstd(X[:,i])
+    for i in range(1, filtered_X.shape[1]):
+        filtered_X[:,i] = (filtered_X[:,i] - np.nanmean(filtered_X[:,i]))/ np.nanstd(filtered_X[:,i])
     
     # to check if a GLM is ill-conditioned
     # To check that you can check the “condition number” of the design matrix - 
@@ -422,13 +430,12 @@ def evaluate_model(model_rdm, data_rdm):
     # import pdb; pdb.set_trace()
     
     Y = data_rdm;
-    Y = (Y - np.nanmean(Y))/ np.nanstd(Y)
-    
-    # to filter out potential nans in the model part
-    nan_filter = np.isnan(X).any(axis=1)
-    filtered_X = X[~nan_filter]
+    # also filter the data
     filtered_Y = Y[~nan_filter]
+    # then z-score
+    filtered_Y = (filtered_Y - np.nanmean(filtered_Y))/ np.nanstd(filtered_Y)
     
+
     est = sm.OLS(filtered_Y, filtered_X).fit()
     # import pdb; pdb.set_trace()
     return est.tvalues[1:], est.params[1:], est.pvalues[1:]

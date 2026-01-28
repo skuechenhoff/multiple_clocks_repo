@@ -1,0 +1,48 @@
+{
+  "name_of_RSA": "DSR_rew-vs-path_stepwise_combos",
+  "load_EVs_from": "DSR_loc-fut-rews-state-dur-type",
+  "regression_version": "all-paths-fixed_stickrews_split-buttons",
+    "EV_condition_selection": {
+    "parts": {
+      "task":      { "include": [],          "exclude": []},
+      "direction": { "include": [],          "exclude": [] },
+      "state":     { "include": [], "exclude": [] },
+      "phase":     { "include": [],   "exclude": [] }
+    }
+  },
+  "models": [
+    "DSR", "state", "location", "l2_norm", "A-state", "path_rew"
+  ],
+  "smoothing": false,
+  "diagonal_included": false,
+  "fwhm": 5,
+  "load_searchlights": true,
+  "visualise_RDMs": false,
+   "run_comobo_models": true,
+  "combo_models": [
+    {
+      "name": "DSR_pathrew",
+      "regressors": ["DSR","path_rew"]
+    },
+    {
+      "name": "DSR_duration",
+      "regressors": ["DSR","duration"]
+    },
+    {
+      "name": "DSR_all_controls",
+      "regressors": ["DSR","state", "location", "l2_norm", "A-state", "path_rew", "duration"]
+    },
+    {
+      "name": "DSR_vis_controls",
+      "regressors": ["DSR","location", "l2_norm", "A-state"]
+    },
+    {
+      "name": "State_vis_controls",
+      "regressors": ["state", "location", "l2_norm", "A-state"]
+    },
+    {
+      "name": "DSR_state_locs_l2_Astate",
+      "regressors": ["DSR","state", "location", "l2_norm", "A-state"]
+    }
+  ]
+}

@@ -250,9 +250,15 @@ def parse_args():
     )
     parser.add_argument(
         "--data-npy",
+        # default=(
+        #     "data/derivatives/group/RDM_plots/"
+        #     "vox_33_19_48_data_RDM_DSR_rew-vs-path_stepwise_combos_glmbase_"
+        #     "all-paths-fixed_stickrews_split-buttons.npy"
+        # ),
+        # /avg_RDM_vox_65_50_64_data_RDM_DSR_rew_stepwise_combos_23-01-2026_glmbase_all-paths-fixed_stickrews_split-buttons.npy
         default=(
             "data/derivatives/group/RDM_plots/"
-            "vox_33_19_48_data_RDM_DSR_rew-vs-path_stepwise_combos_glmbase_"
+            "vox_65_50_64_data_RDM_DSR_rew_stepwise_combos_23-01-2026_glmbase_"
             "all-paths-fixed_stickrews_split-buttons.npy"
         ),
         help="Path to the subject-by-RDM numpy array (.npy).",
@@ -261,7 +267,8 @@ def parse_args():
         
     parser.add_argument(
         "--config",
-        default="rsa_config_DSR_rew_vs_path_stepwise_combos.json",
+        #default="rsa_config_DSR_rew_vs_path_stepwise_combos.json",
+        default="rsa_config_DSR_rew_stepwise_combos.json",
         help="RSA config file (in condition_files).",
     )
     parser.add_argument(
@@ -621,7 +628,7 @@ def main():
         )
         fig_c.tight_layout()
         fig_c.savefig(map_path, dpi=200)
-        plt.close(fig_c)
+        #plt.close(fig_c)
 
         # # Plot
         # fig, ax = plt.subplots(figsize=(22, 6))
@@ -688,7 +695,7 @@ def main():
             out_dir, f"{sub}_toppos{top_bins_n}_bins_lineplot_{args.model}.png"
         )
         fig_t.savefig(top_path, dpi=200)
-        plt.close(fig_t)
+        # plt.close(fig_t)
 
     summary_path = os.path.join(
         out_dir, f"summary_toppos_contrib_{args.model}.csv"

@@ -163,6 +163,21 @@ def analysis_string_from_labels(top_labels):
     )
 
 
+def phase_combo_from_label(label):
+    if not label:
+        return None
+    sides = label.split(" vs ")
+    if len(sides) != 2:
+        return None
+    left_events = parse_label_events(sides[0])
+    right_events = parse_label_events(sides[1])
+    if not left_events or not right_events:
+        return None
+    left_phase = left_events[0]["phase"]
+    right_phase = right_events[0]["phase"]
+    return "-".join(sorted([left_phase, right_phase]))
+
+
 def compute_contributions(model_vec, data_vec):
     mask = np.isfinite(model_vec) & np.isfinite(data_vec)
     if mask.sum() == 0:
@@ -254,14 +269,20 @@ def parse_args():
         "--data-npy",
         default=(
             "data/derivatives/group/RDM_plots/"
-            "vox_33_81_25_data_RDM_DSR_rew-vs-path_stepwise_combos_glmbase_"
+            "vox_33_19_48_data_RDM_DSR_rew-vs-path_stepwise_combos_glmbase_"
             "all-paths-fixed_stickrews_split-buttons.npy"
         ),
+        # default=(
+        #     "data/derivatives/group/RDM_plots/"
+        #     "vox_65_50_64_data_RDM_DSR_rew_stepwise_combos_23-01-2026_glmbase_"
+        #     "all-paths-fixed_stickrews_split-buttons.npy"
+        # ),
         help="Path to subject-by-RDM numpy array (.npy).",
     )
     parser.add_argument(
         "--config",
         default="rsa_config_DSR_rew_vs_path_stepwise_combos.json",
+        # default="rsa_config_DSR_rew_stepwise_combos.json",
         help="RSA config file (in condition_files).",
     )
     parser.add_argument(
@@ -320,7 +341,8 @@ def main():
     if args.subjects:
         subjects = [s.strip() for s in args.subjects.split(",") if s.strip()]
     else:
-        subjects = [f'sub-{i:02}' for i in range(1,15)]
+        # subjects = [f'sub-{i:02}' for i in range(1,15)]
+        subjects = [f'sub-{i:02}' for i in range(1,2)]
         # subjects = [f"sub-{i + 1:02d}" for i in range(data_rdms.shape[0])]
 
     if data_rdms.shape[0] == 0:
@@ -413,6 +435,28 @@ def main():
             point_labels[i] if i < len(point_labels) else "" for i in top_pos_idx_mm
         ]
         analysis_mm = analysis_string_from_labels(labels_mm)
+
+        # Plot contribution curve (model-model)
+        pos_vals_mm = contrib_mm[np.isfinite(contrib_mm) & (contrib_mm > 0)]
+        pos_vals_mm = np.sort(pos_vals_mm)[::-1]
+        fig_curve_mm, ax_curve_mm = plt.subplots(1, 1, figsize=(7, 4))
+        ax_curve_mm.plot(pos_vals_mm, color="black", linewidth=1.2)
+        if len(top_pos_idx_mm) > 0:
+            ax_curve_mm.axvline(
+                len(top_pos_idx_mm) - 1, color="#d7301f", linestyle="--", linewidth=1
+            )
+        ax_curve_mm.set_title(
+            f"{sub} {voxel_tag}: sorted positive contrib (model-model)",
+            fontsize=12,
+        )
+        ax_curve_mm.set_xlabel("Ranked positive contribution", fontsize=10)
+        ax_curve_mm.set_ylabel("Contribution (z*z)", fontsize=10)
+        fig_curve_mm.tight_layout()
+        fig_curve_mm.savefig(
+            os.path.join(out_dir, f"{sub}_contrib_curve_model-model.png"),
+            dpi=200,
+        )
+        plt.close(fig_curve_mm)
 
         n = len(paired_labels)
         k = 0 if include_diagonal else 1
@@ -577,7 +621,137 @@ def main():
         print(f"{sub}: top {len(top_do_idx)} ortho-{args.model_b} vs data contributors")
         for rank, idx in enumerate(top_do_idx, start=1):
             label = point_labels[idx] if idx < len(point_labels) else ""
-            print(f"{rank:03d} idx={idx:04d} contrib={contrib_do[idx]: .4f} label={label}")
+            print(
+                f"{rank:03d} idx={idx:04d} contrib={contrib_do[idx]: .4f} "
+                f"model={ortho_b_vec[idx]: .4f} data={data_vec[idx]: .4f} "
+                f"label={label}"
+            )
+
+        # z-score scatter and classification for ortho vs data
+        z_model_full = (ortho_b_vec - np.nanmean(ortho_b_vec)) / np.nanstd(ortho_b_vec)
+        z_data_full = (data_vec - np.nanmean(data_vec)) / np.nanstd(data_vec)
+        z_mask = np.isfinite(z_model_full) & np.isfinite(z_data_full)
+        z_model = z_model_full[z_mask]
+        z_data = z_data_full[z_mask]
+        label_arr = np.array(
+            [point_labels[i] if i < len(point_labels) else "" for i in range(len(ortho_b_vec))],
+            dtype=object,
+        )
+        labels_z = label_arr[z_mask]
+        phase_combo = np.array([phase_combo_from_label(l) for l in labels_z], dtype=object)
+
+        thr = 1.0
+        is_joint = (np.abs(z_model) > thr) & (np.abs(z_data) > thr)
+        is_data_driven = (np.abs(z_data) > np.abs(z_model)) & ~is_joint
+        is_model_driven = (np.abs(z_model) > np.abs(z_data)) & ~is_joint
+
+        fig_sc, ax_sc = plt.subplots(1, 1, figsize=(6.5, 6.5))
+
+        def scatter_by_combo(mask, label, color):
+            for combo, marker in [
+                ("reward-reward", "x"),
+                ("path-reward", "o"),
+                ("path-path", "s"),
+            ]:
+                idx = mask & (phase_combo == combo)
+                if np.any(idx):
+                    ax_sc.scatter(
+                        z_model[idx],
+                        z_data[idx],
+                        s=18,
+                        color=color,
+                        alpha=0.6,
+                        marker=marker,
+                        label=f"{label}, {combo}",
+                    )
+
+        scatter_by_combo(is_data_driven, "data-driven", "#2b8cbe")
+        scatter_by_combo(is_model_driven, "model-driven", "#e34a33")
+        scatter_by_combo(is_joint, "joint (both |z|>1)", "#31a354")
+        ax_sc.axhline(0, color="black", lw=0.8)
+        ax_sc.axvline(0, color="black", lw=0.8)
+        ax_sc.set_xlabel("z_model (ortho DSR)", fontsize=11)
+        ax_sc.set_ylabel("z_data", fontsize=11)
+        ax_sc.set_title(f"{sub} {voxel_tag}: z_model vs z_data (ortho vs data)", fontsize=12)
+        ax_sc.legend(fontsize=9, frameon=False)
+        fig_sc.tight_layout()
+        fig_sc.savefig(
+            os.path.join(out_dir, f"{sub}_scatter_zmodel_zdata_ortho-data.png"),
+            dpi=200,
+        )
+        # plt.close(fig_sc)
+
+        # Histogram: counts per phase-combo by category, split by corr sign
+        combos = ["reward-reward", "path-reward", "path-path"]
+        categories = [
+            ("data-driven", is_data_driven, "#2b8cbe"),
+            ("model-driven", is_model_driven, "#e34a33"),
+            ("joint", is_joint, "#31a354"),
+        ]
+        pos_corr = (z_model * z_data) > 0
+        neg_corr = (z_model * z_data) < 0
+
+        def counts_for(mask_sign):
+            counts = np.zeros((len(categories), len(combos)), dtype=int)
+            for ci, (_, mask_c, _) in enumerate(categories):
+                for cj, combo in enumerate(combos):
+                    counts[ci, cj] = int(np.sum(mask_c & (phase_combo == combo) & mask_sign))
+            return counts
+
+        counts_pos = counts_for(pos_corr)
+        counts_neg = counts_for(neg_corr)
+
+        x = np.arange(len(combos))
+        width = 0.25
+        fig_hist, axes_hist = plt.subplots(1, 2, figsize=(12.5, 4.5), sharey=True)
+        for ax_hist, counts, title in [
+            (axes_hist[0], counts_pos, "positive correlation (UR/LL)"),
+            (axes_hist[1], counts_neg, "negative correlation (UL/LR)"),
+        ]:
+            for i, (label, _, color) in enumerate(categories):
+                ax_hist.bar(
+                    x + (i - 1) * width,
+                    counts[i],
+                    width=width,
+                    color=color,
+                    label=label,
+                )
+            ax_hist.set_xticks(x)
+            ax_hist.set_xticklabels(combos)
+            ax_hist.set_ylabel("Count", fontsize=11)
+            ax_hist.set_title(
+                f"{sub} {voxel_tag}: {title}",
+                fontsize=12,
+            )
+        axes_hist[0].legend(fontsize=9, frameon=False)
+        fig_hist.tight_layout()
+        fig_hist.savefig(
+            os.path.join(out_dir, f"{sub}_hist_phasecombo_categories_ortho-data.png"),
+            dpi=200,
+        )
+        # plt.close(fig_hist)
+
+        # Plot contribution curve (ortho vs data)
+        pos_vals_do = contrib_do[np.isfinite(contrib_do) & (contrib_do > 0)]
+        pos_vals_do = np.sort(pos_vals_do)[::-1]
+        fig_curve_do, ax_curve_do = plt.subplots(1, 1, figsize=(7, 4))
+        ax_curve_do.plot(pos_vals_do, color="black", linewidth=1.2)
+        if len(top_pos_idx_do) > 0:
+            ax_curve_do.axvline(
+                len(top_pos_idx_do) - 1, color="#d7301f", linestyle="--", linewidth=1
+            )
+        ax_curve_do.set_title(
+            f"{sub} {voxel_tag}: sorted positive contrib (ortho-{args.model_b} vs data)",
+            fontsize=12,
+        )
+        ax_curve_do.set_xlabel("Ranked positive contribution", fontsize=10)
+        ax_curve_do.set_ylabel("Contribution (z*z)", fontsize=10)
+        fig_curve_do.tight_layout()
+        fig_curve_do.savefig(
+            os.path.join(out_dir, f"{sub}_contrib_curve_ortho-data.png"),
+            dpi=200,
+        )
+        plt.close(fig_curve_do)
 
         contrib_do_mat = np.full((n, n), np.nan, dtype=float)
         contrib_do_mat[iu] = 0.0

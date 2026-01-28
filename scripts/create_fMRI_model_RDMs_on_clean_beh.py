@@ -31,6 +31,8 @@ import mc
 import sys
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
+import json
+from fnmatch import fnmatch
 
 if len (sys.argv) > 1:
     subj_no = sys.argv[1]
@@ -38,7 +40,22 @@ else:
     subj_no = '02'
 
 subjects = [f"sub-{subj_no}"]
-subjects = subs_list = [f'sub-{i:02}' for i in range(1, 16)]
+subjects = subs_list = [f'sub-{i:02}' for i in range(22, 35)]
+
+# --- Load configuration ---
+source_dir = "/Users/xpsy1114/Documents/projects/multiple_clocks"
+if os.path.isdir(source_dir):
+    config_path = f"{source_dir}/multiple_clocks_repo/condition_files"
+    print("Running on laptop.")
+else:
+    source_dir = "/home/fs0/xpsy1114/scratch"
+    config_path = f"{source_dir}/analysis/multiple_clocks_repo/condition_files"
+    print(f"Running on Cluster, setting {source_dir} as data directory")
+
+#config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_rew_vs_path_stepwise_combos.json"
+config_file = sys.argv[2] if len(sys.argv) > 2 else "rsa_config_DSR_rew_stepwise_combos.json"
+with open(f"{config_path}/{config_file}", "r") as f:
+    config = json.load(f)
 
 #
 # SETTINGS
@@ -48,7 +65,10 @@ subjects = subs_list = [f'sub-{i:02}' for i in range(1, 16)]
 # no_phase_neurons = 3
 plot_RDMs = False 
 save_RDMs = True
-EV_string = 'DSR_loc-fut-rews-state-dur-type'
+EV_string = config.get("load_EVs_from", "DSR_loc-fut-rews-state-dur-type")
+plot_DSR_task_matrices = False
+plot_DSR_tasks = [] # fill this with eg tasks[14]
+plot_DSR_rotation_bins = None
 
 coord_to_loc = {
     (-0.21,  0.29): 1, (0.0,  0.29): 2, (0.21,  0.29): 3,
@@ -89,6 +109,32 @@ for sub in subjects:
     for reg in regs:
         regressors[reg] = np.zeros(len(beh_df))
         regressors[reg][beh_df['unique_time_bin_type'] == reg] = 1
+
+    # select which EVs are included in the RDM (same logic as fMRI_run_RSA_without_rsatoolbox_clean.py)
+    conditions = config.get("EV_condition_selection", {})
+    parts_to_use = conditions.get("parts")
+    if parts_to_use:
+        for _p in ("task", "direction", "state", "phase"):
+            if _p not in parts_to_use:
+                raise ValueError(f"Missing selection.parts['{_p}'] in config.")
+        EV_keys = []
+        for ev in sorted(regs):
+            task, direction, state, phase = ev.split('_')
+            for name, value in zip(
+                ["task", "direction", "state", "phase"],
+                [task, direction, state, phase],
+            ):
+                part = parts_to_use[name]
+                includes = part.get("include", [])
+                excludes = part.get("exclude", [])
+                if any(fnmatch(value, pat) for pat in excludes):
+                    break
+                if includes and not any(fnmatch(value, pat) for pat in includes):
+                    break
+            else:
+                EV_keys.append(ev)
+    else:
+        EV_keys = list(regs)
 
 
     # define models.
@@ -206,17 +252,28 @@ for sub in subjects:
             # store as 1D vector of length 72; if you want shape (1,72) use rotated.reshape(1,-1)
             EVs['DSR'][bin_curr_task] = rotated
 
+    if plot_DSR_task_matrices and plot_DSR_tasks:
+        mc.plotting.results.plot_dsr_task_matrices(
+            EVs,
+            tasks=plot_DSR_tasks,
+            temp_order=temp_order,
+            rotation_bins=plot_DSR_rotation_bins,
+        )
+
        
     if plot_RDMs == True:
         for model in models:
+            if model == 'path_rew':
+                continue
             #ev_array = np.zeros((int(len(EVs[model])/2), len(models[model])))
             # if model == 'DSR':
             #     ev_array = np.zeros((int(len(EVs[model])), len(EVs['DSR'][bin_curr_task])))
             # else:
-            ev_array = np.zeros((int(len(EVs[model])), len(models[model])))
+            evs_for_model = [ev for ev in EV_keys if ev in EVs[model]]
+            ev_array = np.zeros((int(len(evs_for_model)), len(models[model])))
             idx = -1
             y_labels = []
-            for ev in EVs[model]:
+            for ev in evs_for_model:
                 #if ev.endswith('reward'):
                 idx = idx +1
                 y_labels.append(ev)
@@ -234,16 +291,16 @@ for sub in subjects:
             #     y_labels_all.append(ev)
             #     ev_array_all[idx] = EVs[model][ev]
     
-            plt.figure(); plt.imshow(np.corrcoef(ev_array), aspect = 'auto')
-            plt.yticks(ticks=range(len(y_labels)), labels=y_labels, fontsize = 6)
-            # plt.xticks(ticks=range(len(y_labels)), labels=y_labels)
-            intervalline = 8
-            for interval in range(0, len(ev_array), intervalline):
-                plt.axvline(interval-0.5, color='white', ls='dashed')
-                plt.axhline(interval-0.5, color='white', ls='dashed')
-            plt.title(model)
+            mc.plotting.results.plot_model_rdm_half(
+                ev_array,
+                labels=y_labels,
+                method="crosscorr",
+                label_half="first",
+                group_size=4,
+                title=model,
+            )
 
-    # import pdb; pdb.set_trace()          
+    #import pdb; pdb.set_trace()          
     if save_RDMs: 
         # then save these matrices.
         if not os.path.exists(RDM_dir):
@@ -253,4 +310,3 @@ for sub in subjects:
             pickle.dump(EVs, file)
             
         print(f"saved EV dictionary as {RDM_dir}/{sub}_modelled_EVs_{EV_string}.pkl")
-

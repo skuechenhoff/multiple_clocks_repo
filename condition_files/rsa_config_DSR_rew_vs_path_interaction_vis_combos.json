@@ -1,0 +1,37 @@
+{
+  "name_of_RSA": "DSR_rew-vs-path_interact_vis_combos",
+  "load_EVs_from": "DSR_loc-fut-rews-state-dur-type",
+  "regression_version": "all-paths-fixed_stickrews_split-buttons",
+    "EV_condition_selection": {
+    "parts": {
+      "task":      { "include": [],          "exclude": []},
+      "direction": { "include": [],          "exclude": [] },
+      "state":     { "include": [], "exclude": [] },
+      "phase":     { "include": [],   "exclude": [] }
+    }
+  },
+  "models": [
+    "DSR", "state", "location", "l2_norm", "A-state", "path_rew"
+  ],
+  "smoothing": false,
+  "diagonal_included": false,
+  "fwhm": 5,
+  "load_searchlights": true,
+  "visualise_RDMs": false,
+  "run_single_models": false,
+   "run_comobo_models": true,
+  "combo_models": [
+    {
+      "name": "State_vis_ints_pathrew",
+      "regressors": ["state", "location", "l2_norm", "A-state", "location_interaction", "l2_norm_interaction", "path_rew"]
+    },
+    {
+      "name": "DSR_all_interactions",
+      "regressors": ["DSR","location", "l2_norm", "A-state", "path_rew", "DSR_interaction", "location_interaction", "l2_norm_interaction"]
+    },
+    { 
+      "name": "DSR_vis_ints_pathrew",
+      "regressors": ["DSR","location", "l2_norm", "A-state", "location_interaction", "l2_norm_interaction", "path_rew"]
+    }
+  ]
+}

@@ -9,6 +9,7 @@ this script offers several specific functions to plot my results.
 """
 
 from matplotlib import pyplot as plt
+from matplotlib import colors as mcolors
 import numpy as np
 import os
 from scipy.stats import ttest_ind
@@ -18,6 +19,7 @@ import scipy.stats as st
 import math
 from collections import defaultdict
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 import mc
 
 
@@ -38,6 +40,346 @@ def stars(p):
     if p < 0.01:  return '**'
     if p < 0.05:  return '*'
     return 'n.s.'
+
+
+def plot_model_rdm_half(
+    ev_array,
+    labels=None,
+    method="crosscorr",
+    label_half="first",
+    group_size="auto",
+    title=None,
+    cmap="RdBu_r",
+    vmin=0.5,
+    vmax=1.5,
+    vcenter=1.0,
+    show=True,
+):
+    """
+    Plot a model RDM with only the upper triangle visible (lower half masked white).
+
+    Parameters
+    ----------
+    ev_array : array-like, shape (n_conditions, n_features)
+        Condition-by-feature matrix used to compute the RDM.
+    labels : list[str] or None
+        Labels for conditions (same length as n_conditions).
+    method : {"crosscorr", "corrcoef"}
+        "crosscorr" uses mc.analyse.my_RSA.compute_crosscorr (half-size cross-half RDM).
+        "corrcoef" uses 1 - corrcoef across conditions.
+    label_half : {"first", "second", "full", None}
+        Which half of labels to show (used for concatenated conditions).
+    group_size : int
+        Interval for dashed grid lines. Set to 0/None to disable.
+    title : str or None
+        Title for the plot.
+    cmap : str
+        Matplotlib colormap name.
+    vmin, vmax, vcenter : float
+        Color scale parameters; vcenter=1 matches dissimilarity (1 - r).
+    show : bool
+        Whether to call plt.show().
+    """
+    ev_array = np.asarray(ev_array, dtype=float)
+    if labels is None:
+        labels = [str(i) for i in range(ev_array.shape[0])]
+    labels = list(labels)
+
+    if method == "crosscorr":
+        if ev_array.shape[0] % 2 != 0:
+            raise ValueError("crosscorr expects an even number of conditions.")
+        vec = mc.analyse.my_RSA.compute_crosscorr(ev_array, include_diagonal=True)[0]
+        n = int((-1 + np.sqrt(1 + 8 * len(vec))) / 2)
+        rdm = np.zeros((n, n), dtype=float)
+        iu = np.triu_indices(n, k=0)
+        rdm[iu] = vec
+        rdm[(iu[1], iu[0])] = vec
+        half_n = ev_array.shape[0] // 2
+        if label_half == "second":
+            labels = labels[half_n:half_n + n]
+        else:
+            labels = labels[:n]
+    elif method == "corrcoef":
+        corr = np.corrcoef(ev_array)
+        rdm = 1.0 - corr
+        n_total = rdm.shape[0]
+        half_n = n_total // 2
+        if label_half == "first":
+            rdm = rdm[:half_n, :half_n]
+            labels = labels[:half_n]
+        elif label_half == "second":
+            rdm = rdm[half_n:half_n * 2, half_n:half_n * 2]
+            labels = labels[half_n:half_n * 2]
+        elif label_half in ("full", None):
+            pass
+        else:
+            raise ValueError(f"Unknown label_half: {label_half}")
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    n = rdm.shape[0]
+    rdm_masked = rdm.copy()
+    rdm_masked[np.tril_indices(n, k=-1)] = np.nan
+
+    fig, ax = plt.subplots(figsize=(6.0, 5.0))
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad(color="white")
+    norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+    im = ax.imshow(
+        rdm_masked,
+        cmap=cmap_obj,
+        norm=norm,
+        interpolation="none",
+        aspect="equal",
+    )
+
+    ax.set_xticks(np.arange(n))
+    ax.set_yticks(np.arange(n))
+    ax.set_xticklabels(labels, rotation=90, fontsize=6)
+    ax.set_yticklabels(labels, fontsize=12)
+
+    if group_size:
+        if group_size == "auto":
+            boundaries = []
+            prev_task = None
+            for i, lab in enumerate(labels):
+                task = lab.split("_", 1)[0] if isinstance(lab, str) else str(lab)
+                if prev_task is None:
+                    prev_task = task
+                    continue
+                if task != prev_task:
+                    boundaries.append(i)
+                    prev_task = task
+            for k in boundaries:
+                ax.axhline(k - 0.5, color="black", ls="dashed", linewidth=0.8)
+                ax.axvline(k - 0.5, color="black", ls="dashed", linewidth=0.8)
+        else:
+            for k in range(group_size, n, group_size):
+                ax.axhline(k - 0.5, color="black", ls="dashed", linewidth=0.8)
+                ax.axvline(k - 0.5, color="black", ls="dashed", linewidth=0.8)
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Dissimilarity (1 - r)", rotation=270, labelpad=12)
+
+    if title:
+        ax.set_title(title)
+
+    fig.tight_layout()
+    if show:
+        plt.show()
+
+    return fig, ax, rdm
+
+
+def plot_dsr_task_matrices(
+    EVs,
+    tasks,
+    temp_order=None,
+    location_colors=None,
+    rotation_bins=None,
+    include_one_hot=True,
+    include_rotations=True,
+    include_dsr_ev_panels=True,
+    show=True,
+    save_dir=None,
+):
+    """
+    Plot one-hot location matrices and DSR-rotated matrices for one or more tasks.
+
+    Parameters
+    ----------
+    EVs : dict
+        EV dictionary containing "location" and "DSR" entries.
+    tasks : list[str] or str
+        Task names to plot (one or two recommended).
+    temp_order : list[str] or None
+        Order of bins within a task. Defaults to A_path..D_reward.
+    location_colors : dict[int, str] or None
+        Mapping of location index (1-9) to hex color.
+    rotation_bins : list[str] or None
+        Subset of bins to plot rotations for. Defaults to temp_order.
+    include_one_hot : bool
+        Whether to plot the base one-hot location matrix.
+    include_rotations : bool
+        Whether to plot the DSR-rotated matrices.
+    show : bool
+        Whether to call plt.show().
+    save_dir : str or None
+        Optional directory to save figures as PNG.
+    """
+    if temp_order is None:
+        temp_order = [
+            "A_path", "A_reward",
+            "B_path", "B_reward",
+            "C_path", "C_reward",
+            "D_path", "D_reward",
+        ]
+    if location_colors is None:
+        location_colors = {
+            1: "#008080",
+            2: "#99E6E6",
+            3: "#C9F2F2",
+            4: "#008F64",
+            5: "#66B88F",
+            6: "#D9FFD9",
+            7: "#00331F",
+            8: "#146633",
+            9: "#7CD973",
+        }
+    if rotation_bins is None:
+        rotation_bins = list(temp_order)
+
+    if isinstance(tasks, str):
+        tasks = [tasks]
+    tasks = list(tasks)
+    if not tasks:
+        raise ValueError("tasks must include at least one task name.")
+
+    def _to_label_matrix(one_hot):
+        one_hot = np.asarray(one_hot, dtype=float)
+        if one_hot.ndim != 2:
+            raise ValueError("Expected a 2D one-hot matrix.")
+        n_rows, n_cols = one_hot.shape
+        labels = np.zeros((n_rows, n_cols), dtype=int)
+        for i in range(n_rows):
+            row = one_hot[i]
+            if not np.isfinite(row).any() or np.nanmax(row) <= 0:
+                continue
+            j = int(np.nanargmax(row))
+            labels[i, j] = j + 1
+        return labels
+
+    def _vector_to_label_row(vec, n_locations):
+        vec = np.asarray(vec, dtype=float).ravel()
+        if vec.size % n_locations != 0:
+            raise ValueError("Vector length must be divisible by n_locations.")
+        n_bins_local = vec.size // n_locations
+        labels_row = np.zeros(vec.size, dtype=int)
+        for b in range(n_bins_local):
+            start = b * n_locations
+            end = start + n_locations
+            block = vec[start:end]
+            if not np.isfinite(block).any() or np.nanmax(block) <= 0:
+                continue
+            j = int(np.nanargmax(block))
+            labels_row[start + j] = j + 1
+        return labels_row
+
+    cmap_list = ["#FFFFFF"] + [location_colors[i] for i in range(1, 10)]
+    cmap = mcolors.ListedColormap(cmap_list)
+    norm = mcolors.BoundaryNorm(np.arange(-0.5, 10.5, 1), cmap.N)
+
+    figs = {}
+    for task in tasks:
+        bins_curr_task = [f"{task}_{temp_bin}" for temp_bin in temp_order]
+        missing = [b for b in bins_curr_task if b not in EVs.get("location", {})]
+        if missing:
+            raise KeyError(f"Missing EVs['location'] entries for {task}: {missing}")
+
+        one_hot_mat = np.vstack([EVs["location"][b] for b in bins_curr_task])
+        n_bins, n_locations = one_hot_mat.shape
+        if n_locations != 9:
+            raise ValueError(f"Expected 9 locations, got {n_locations}.")
+
+        panels = []
+        if include_one_hot:
+            panels.append(("one_hot", None))
+        if include_rotations:
+            for rot_bin in rotation_bins:
+                panels.append(("rotation", rot_bin))
+        if not panels:
+            raise ValueError("No panels selected to plot.")
+
+        n_panels = len(panels)
+        n_cols = min(3, n_panels)
+        n_rows = int(np.ceil(n_panels / n_cols))
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 2.6 * n_rows))
+        axes = np.atleast_1d(axes).ravel()
+
+        for ax, (kind, rot_bin) in zip(axes, panels):
+            if kind == "one_hot":
+                labels_mat = _to_label_matrix(one_hot_mat)
+                title = f"{task} one-hot"
+            else:
+                key = f"{task}_{rot_bin}"
+                if key not in EVs.get("DSR", {}):
+                    raise KeyError(f"Missing EVs['DSR'] entry: {key}")
+                rotated = np.asarray(EVs["DSR"][key], dtype=float).reshape(n_bins, n_locations)
+                labels_mat = _to_label_matrix(rotated)
+                title = f"{task} DSR @ {rot_bin}"
+
+            im = ax.imshow(labels_mat, cmap=cmap, norm=norm, interpolation="none", aspect="auto")
+            ax.set_title(title, fontsize=9)
+            ax.set_xticks(np.arange(n_locations))
+            ax.set_xticklabels([str(i) for i in range(1, n_locations + 1)], fontsize=7)
+            ax.set_yticks(np.arange(n_bins))
+            ax.set_yticklabels(list(temp_order), fontsize=7)
+            ax.tick_params(length=0)
+
+        for ax in axes[len(panels):]:
+            ax.axis("off")
+
+        legend_handles = [
+            Patch(facecolor=location_colors[i], edgecolor="none", label=str(i))
+            for i in range(1, 10)
+        ]
+        fig.legend(
+            handles=legend_handles,
+            title="Location",
+            loc="upper right",
+            bbox_to_anchor=(0.98, 0.98),
+            frameon=False,
+            fontsize=8,
+            title_fontsize=9,
+        )
+
+        fig.tight_layout(rect=[0, 0, 0.95, 1])
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            fig.savefig(os.path.join(save_dir, f"{task}_DSR_matrices.png"), dpi=200)
+        if show:
+            plt.show()
+
+        figs[task] = fig
+
+        if include_dsr_ev_panels:
+            dsr_missing = [f"{task}_{b}" for b in temp_order if f"{task}_{b}" not in EVs.get("DSR", {})]
+            if dsr_missing:
+                raise KeyError(f"Missing EVs['DSR'] entries for {task}: {dsr_missing}")
+
+            dsr_vectors = [np.asarray(EVs["DSR"][f"{task}_{b}"], dtype=float).ravel() for b in temp_order]
+            dsr_rows = [_vector_to_label_row(vec, n_locations) for vec in dsr_vectors]
+            dsr_matrix = np.vstack(dsr_rows)
+
+            fig_panels, axes = plt.subplots(len(temp_order), 1, figsize=(12, 0.7 * len(temp_order)))
+            axes = np.atleast_1d(axes).ravel()
+            for ax, row, label in zip(axes, dsr_rows, temp_order):
+                ax.imshow(row.reshape(1, -1), cmap=cmap, norm=norm, interpolation="none", aspect="auto")
+                ax.set_yticks([0])
+                ax.set_yticklabels([label], fontsize=8)
+                ax.set_xticks([])
+                ax.tick_params(length=0)
+            fig_panels.suptitle(f"{task} DSR EVs (1x72 each)", fontsize=10)
+            fig_panels.tight_layout(rect=[0, 0, 1, 0.96])
+            if save_dir:
+                fig_panels.savefig(os.path.join(save_dir, f"{task}_DSR_ev_panels.png"), dpi=200)
+            if show:
+                plt.show()
+
+            fig_concat, axc = plt.subplots(figsize=(12, 3.2))
+            axc.imshow(dsr_matrix, cmap=cmap, norm=norm, interpolation="none", aspect="auto")
+            axc.set_yticks(np.arange(len(temp_order)))
+            axc.set_yticklabels(list(temp_order), fontsize=8)
+            axc.set_xticks([])
+            axc.tick_params(length=0)
+            axc.set_title(f"{task} DSR EVs concatenated (8x72)")
+            fig_concat.tight_layout()
+            if save_dir:
+                fig_concat.savefig(os.path.join(save_dir, f"{task}_DSR_ev_concat.png"), dpi=200)
+            if show:
+                plt.show()
+
+    return figs
     
 
 
