@@ -2132,3 +2132,201 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
             fig.savefig(out_stem + ".pdf", dpi=600)
             fig.savefig(out_stem + ".png", dpi=600)
         return fig
+
+
+# ==================================================== artifact, for print ==
+# The per-session `artifact_figure` above is a diagnostic: dense, six panels,
+# meant to be read at A4. These three are manuscript panels -- each makes one
+# point, at the size it will be printed.
+
+def ied_vs_ripple_figure(ied_raw, ripple_raw, fs, out_stem=None,
+                         width_cm=8.0, band=RIPPLE_BAND, title=None):
+    """A rejected discharge and an accepted ripple, on ONE voltage axis.
+
+    The whole case for artifact rejection in an epilepsy cohort is that these
+    two are separable, and a reader who will not read the five criteria will
+    believe it or not on the strength of this panel. Both are drawn on a shared
+    y-axis for exactly that reason: plotting each to its own scale is the
+    standard way to make a 250 uV discharge and a 25 uV ripple look alike.
+
+    `ied_raw` and `ripple_raw` are 1-D snippets, same length, centred on the
+    event. The band-passed trace is drawn beneath each on its own (shared)
+    axis, since the ripple band is ~1-2 uV against a raw swing of tens.
+    """
+    import matplotlib.pyplot as plt
+
+    ied = np.asarray(ied_raw, float)
+    rip = np.asarray(ripple_raw, float)
+    n = min(len(ied), len(rip))
+    ied, rip = ied[:n], rip[:n]
+    t = (np.arange(n) - n / 2) / fs * 1000.0
+    ied_bp, rip_bp = _bp(ied, fs, *band), _bp(rip, fs, *band)
+
+    raw_lim = 1.08 * max(np.abs(ied).max(), np.abs(rip).max())
+    bp_lim = 1.08 * max(np.abs(ied_bp).max(), np.abs(rip_bp).max())
+
+    w_in = width_cm * CM
+    with plt.rc_context(_rc()):
+        fig, axes = plt.subplots(2, 2, figsize=(w_in, w_in * 0.62),
+                                 sharex=True, gridspec_kw=dict(
+                                     height_ratios=[1.6, 1], hspace=0.28,
+                                     wspace=0.28))
+        for col, (x, xb, name, colour) in enumerate(
+                [(ied, ied_bp, "rejected: interictal discharge", CRIT_C["ied_janca"]),
+                 (rip, rip_bp, "accepted: ripple", RIPPLE_C)]):
+            ax = axes[0, col]
+            ax.plot(t, x, color="0.3", lw=0.7)
+            ax.set_ylim(-raw_lim, raw_lim)
+            ax.set_title(name, fontsize=FS_TICK, color=colour, pad=3)
+            ax.axvline(0, color="0.75", ls=":", lw=0.7)
+            if col == 0:
+                ax.set_ylabel(r"raw ($\mu$V)")
+            else:
+                ax.set_yticklabels([])
+
+            ax = axes[1, col]
+            ax.plot(t, xb, color=colour, lw=0.8)
+            ax.set_ylim(-bp_lim, bp_lim)
+            ax.axvline(0, color="0.75", ls=":", lw=0.7)
+            ax.set_xlabel("Time (ms)")
+            if col == 0:
+                ax.set_ylabel(f"{band[0]:g}–{band[1]:g} Hz\n" + r"($\mu$V)")
+            else:
+                ax.set_yticklabels([])
+        if title:
+            fig.suptitle(title, fontsize=FS_TITLE, y=1.0)
+        if out_stem:
+            fig.savefig(out_stem + ".pdf")
+            fig.savefig(out_stem + ".png", dpi=300)
+        return fig
+
+
+def padding_figure(x, fs, per, bad, out_stem=None, width_cm=12.0,
+                   t0_s=0.0, title=None, overall_frac=None):
+    """Where the rejected fraction comes from: crossings, then +-1 s padding.
+
+    The equivalent of Chen's Supplemental Fig. S1, and the panel this analysis
+    most needs. Each criterion flags well under 1% of samples; the union after
+    dilation removes ~40%. Quoting the 40% without showing this invites the
+    reading that a criterion is set too loosely, which is not what happened --
+    the recording simply contains many separate discharges, and 1 s either side
+    of each adds up.
+
+    `per` is {criterion: bool array} BEFORE padding, `bad` the final mask.
+    `overall_frac`, if given, is the whole derivation's rejected fraction and is
+    printed beside the excerpt's own -- the caller picks a REPRESENTATIVE
+    excerpt rather than the worst minute, and the two numbers agreeing is what
+    shows the reader that it did.
+    """
+    import matplotlib.pyplot as plt
+
+    x = np.asarray(x, float)
+    t = t0_s + np.arange(len(x)) / fs
+    crits = [c for c in CRIT_C if c in per]
+
+    w_in = width_cm * CM
+    with plt.rc_context(_rc()):
+        fig = plt.figure(figsize=(w_in, w_in * 0.42))
+        gs = gridspec.GridSpec(3, 1, figure=fig,
+                               height_ratios=[2.0, 1.5, 0.45], hspace=0.42,
+                               left=0.17, right=0.99, top=0.88, bottom=0.15)
+
+        ax = fig.add_subplot(gs[0])
+        ax.plot(t, x, color="0.35", lw=0.4)
+        ax.set_ylabel(r"raw ($\mu$V)")
+        ax.set_xlim(t[0], t[-1])
+        ax.set_xticklabels([])
+        ax.set_title(title or "", fontsize=FS_TITLE, pad=3)
+
+        # what each criterion flagged, one row each, unpadded
+        ax = fig.add_subplot(gs[1])
+        for i, c in enumerate(crits):
+            m = np.asarray(per[c], bool)
+            ax.fill_between(t, i + 0.12, i + 0.88, where=m, color=CRIT_C[c], lw=0)
+            ax.text(t[0] - 0.010 * (t[-1] - t[0]), i + 0.4,
+                    CRIT_SHORT.get(c, c), ha="right", va="center",
+                    fontsize=FS_TICK - 1, color=CRIT_C[c])
+        ax.set_ylim(-0.2, len(crits))
+        ax.set_yticks([]); ax.set_xlim(t[0], t[-1]); ax.set_xticklabels([])
+        for s in ("left", "bottom"):
+            ax.spines[s].set_visible(False)
+
+        # the mask that is actually applied
+        ax = fig.add_subplot(gs[2])
+        ax.fill_between(t, 0, 1, where=np.asarray(bad, bool),
+                        color=RIPPLE_C, lw=0)
+        ax.set_ylim(0, 1); ax.set_yticks([]); ax.set_xlim(t[0], t[-1])
+        ax.set_xlabel("Time in recording (s)")
+        ax.text(t[0] - 0.010 * (t[-1] - t[0]), 0.5, f"after ±{PAD_S_LABEL:g} s",
+                ha="right", va="center", fontsize=FS_TICK - 1, color=RIPPLE_C)
+        for sp in ("left",):
+            ax.spines[sp].set_visible(False)
+        frac = float(np.mean(np.asarray(bad, bool)))
+        note = f"{100 * frac:.0f}% of this excerpt removed"
+        if overall_frac is not None:
+            note += f"  (derivation overall {100 * overall_frac:.0f}%)"
+        fig.axes[0].text(0.995, 0.97, note, transform=fig.axes[0].transAxes,
+                         ha="right", va="top", fontsize=FS_TICK - 1,
+                         color=RIPPLE_C)
+
+        if out_stem:
+            fig.savefig(out_stem + ".pdf", bbox_inches="tight")
+            fig.savefig(out_stem + ".png", dpi=300, bbox_inches="tight")
+        return fig
+
+
+PAD_S_LABEL = 1.0          # only for the axis label; the value lives in swr_artifact
+
+
+def contamination_group_figure(channel_qc, out_stem=None, width_cm=8.0,
+                               max_contam=2.0 / 3.0, title=None):
+    """Contamination of every derivation in the study, against the 2/3 rule.
+
+    `artifact_figure` panel (b) shows this for one session. The manuscript
+    needs it for all of them at once: it is the only place a reader can see
+    that the exclusions are a tail rather than a large arbitrary slice, and
+    how close the retained derivations came to the line.
+    """
+    import matplotlib.pyplot as plt
+
+    qc = channel_qc.copy()
+    qc = qc[qc["contaminated_frac"].notna()]
+    exc = qc["excluded"].fillna(False).astype(bool)
+    v = qc["contaminated_frac"].to_numpy(float) * 100.0
+    order = np.argsort(v)
+    v, exc = v[order], exc.to_numpy()[order]
+
+    w_in = width_cm * CM
+    with plt.rc_context(_rc()):
+        fig, (ax, axh) = plt.subplots(
+            1, 2, figsize=(w_in, w_in * 0.5),
+            gridspec_kw=dict(width_ratios=[2.6, 1], wspace=0.30))
+
+        ax.bar(np.arange(len(v)), v, width=1.0,
+               color=np.where(exc, CRIT_C["ied_janca"], HPC_BODY_C),
+               linewidth=0)
+        ax.axhline(100 * max_contam, color="0.25", ls="--", lw=0.9)
+        ax.text(0, 100 * max_contam + 2, "excluded above ⅔", fontsize=FS_TICK - 1,
+                color="0.25", va="bottom")
+        ax.set_xlabel(f"Derivation (n = {len(v)}, ranked)")
+        ax.set_ylabel("% of recording rejected")
+        ax.set_ylim(0, 100)
+        ax.set_xlim(-0.5, len(v) - 0.5)
+
+        axh.hist(v[~exc], bins=np.arange(0, 102, 5), orientation="horizontal",
+                 color=HPC_BODY_C, edgecolor="w", linewidth=0.4)
+        axh.hist(v[exc], bins=np.arange(0, 102, 5), orientation="horizontal",
+                 color=CRIT_C["ied_janca"], edgecolor="w", linewidth=0.4)
+        axh.axhline(100 * max_contam, color="0.25", ls="--", lw=0.9)
+        axh.set_ylim(0, 100); axh.set_yticklabels([])
+        axh.set_xlabel("Derivations")
+        axh.text(0.95, 0.99,
+                 f"{int(exc.sum())} excluded\n{int((~exc).sum())} analysed",
+                 transform=axh.transAxes, ha="right", va="top",
+                 fontsize=FS_TICK - 1)
+        if title:
+            fig.suptitle(title, fontsize=FS_TITLE, y=1.02)
+        if out_stem:
+            fig.savefig(out_stem + ".pdf", bbox_inches="tight")
+            fig.savefig(out_stem + ".png", dpi=300, bbox_inches="tight")
+        return fig

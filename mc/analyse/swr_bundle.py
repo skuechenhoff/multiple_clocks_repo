@@ -118,6 +118,109 @@ class RippleStore:
         print(f"          {where}")
 
 
+def load_figure_data(bundle_dir, out_name="swr_bundle"):
+    """(arrays, index) for methods figures, from a downloaded bundle.
+
+        arrays, idx = swb_.load_figure_data("<bundle dir>")
+        row = idx[(idx.session == 21) & (idx["rank"] == 3)].iloc[0]
+        trace = arrays[row.key_raw][row["rank"] - 1]      # one sharp-wave example
+        fs    = float(arrays[f"s{row.session:02d}_sw_fs"])
+
+    `rank` is 1-based and indexes into the stacked array in the same order.
+    """
+    import pickle
+    z = np.load(os.path.join(bundle_dir, f"{out_name}_figures.npz"),
+                allow_pickle=False)
+    arrays = {k: z[k] for k in z.files}
+    idx = pd.DataFrame()
+    pkl = os.path.join(bundle_dir, f"{out_name}.pkl")
+    if os.path.exists(pkl):
+        with open(pkl, "rb") as f:
+            idx = pickle.load(f).get("figure_index", pd.DataFrame())
+    return arrays, idx
+
+
+def collect_figure_data(sessions, analysis_name=ANALYSIS_NAME):
+    """Per-session waveform arrays for METHODS FIGURES, small enough to travel.
+
+    The statistics only need event times, but a methods figure needs the traces,
+    and fetching those file-by-file from the cluster does not work in practice.
+    So they ride along in the bundle.
+
+    Only condensed arrays are taken, never per-event stacks:
+
+        mean       ripple-triggered mean waveform, ONE PER DERIVATION -- keeps
+                   the option of a per-ROI or per-site grand average locally
+        tfr_mean   ripple-triggered TFR averaged across the session's
+                   derivations. The per-derivation TFR is (n_pairs, n_freq,
+                   n_time) and would dominate the bundle; the session mean is
+                   ~0.1 MB and is what the pooled figure uses anyway
+        ex_*       the single clearest ripple the QC report found, raw,
+                   band-passed and as a TFR
+        sw_*       the sharp-wave example candidates (`qc_report examples`),
+                   which are chosen by eye for the publication figure
+        art_*      the artifact panels' inputs: one interictal discharge, one
+                   ripple from the same derivation, and the representative
+                   excerpt with each criterion's crossings and the final padded
+                   mask. Without these the two artifact figures cannot be
+                   redrawn off-cluster at all -- they are the only figures that
+                   need the raw trace rather than event-triggered averages
+
+    Returns (arrays, index) -- a dict of numeric arrays keyed `s{NN}_{what}`,
+    and a DataFrame naming what each sharp-wave candidate is, since the labels
+    are strings and do not belong in an .npz.
+    """
+    import mc.plotting.ripple_figures as rfig
+
+    arrays, index, index_art = {}, [], []
+    for sess, rip_dir in sessions:
+        tag = f"s{sess:02d}"
+        sw = os.path.join(rip_dir, "sharpwave_examples_best.npz")
+        if os.path.exists(sw):
+            z = np.load(sw, allow_pickle=True)
+            arrays[f"{tag}_sw_raw"] = np.asarray(z["raw"], np.float32)
+            arrays[f"{tag}_sw_bip"] = np.asarray(z["bip"], np.float32)
+            arrays[f"{tag}_sw_fs"] = np.asarray(z["fs"], float)
+            for k in range(len(z["raw"])):
+                index.append({"session": sess, "rank": k + 1,
+                              "pair_id": str(z["pair_id"][k]),
+                              "contact": str(z["contact"][k]),
+                              "t_peak_s": float(z["t_peak_s"][k]),
+                              "score": float(z["score"][k]),
+                              "key_raw": f"{tag}_sw_raw",
+                              "key_bip": f"{tag}_sw_bip"})
+        art = os.path.join(rip_dir, "artifact_examples.npz")
+        if os.path.exists(art):
+            z = np.load(art, allow_pickle=True)
+            # Masks are stored as bool: an int8 cast would quadruple them for
+            # no gain, and there are five per session.
+            for k in z.files:
+                if k in ("session", "pair_id"):
+                    continue
+                v = np.asarray(z[k])
+                if v.dtype == bool:
+                    arrays[f"{tag}_art_{k}"] = v
+                else:
+                    arrays[f"{tag}_art_{k}"] = v.astype(
+                        np.float32 if v.ndim else float)
+            index_art.append({"session": sess, "pair_id": str(z["pair_id"]),
+                              "t0_s": float(z["t0_s"]), "fs": float(z["fs"]),
+                              "key_prefix": f"{tag}_art_"})
+
+        st = os.path.join(rip_dir, "ripple_stacks.npz")
+        if os.path.exists(st):
+            z = np.load(st, allow_pickle=True)
+            if "mean" in z:
+                arrays[f"{tag}_mean"] = np.asarray(z["mean"], np.float32)
+            if "tfr" in z and np.size(z["tfr"]):
+                arrays[f"{tag}_tfr_mean"] = np.asarray(z["tfr"], float).mean(0).astype(np.float32)
+            for k in ("t_ms", "n_events", "ex_raw", "ex_bp", "ex_tfr", "fs"):
+                if k in z and np.size(z[k]):
+                    arrays[f"{tag}_{k}"] = np.asarray(z[k], np.float32)
+    arrays["tfr_freqs"] = np.asarray(rfig.TFR_FREQS, float)
+    return arrays, pd.DataFrame(index), pd.DataFrame(index_art)
+
+
 def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
                   out_name="swr_bundle", out_dir=None):
     """Everything needed to redo any of these statistics WITHOUT the LFP.
@@ -211,15 +314,24 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
     def cat(x):
         return pd.concat(x, ignore_index=True) if x else pd.DataFrame()
 
+    fig_arrays, fig_index, fig_index_art = collect_figure_data(
+        sessions, analysis_name)
+
     bundle = {"ripples": cat(rip), "intervals": cat(iv), "pairs": cat(pr),
+              "figure_index": fig_index,
+              "figure_index_artifact": fig_index_art,
               "behaviour": cat(beh_all), "uncover": cat(unc_all),
               "channel_qc": cat(qc_all),
               "meta": {"analysis_name": analysis_name,
                        "created": datetime.now().isoformat(timespec="seconds"),
                        "data_root": R,
                        "n_sessions": len(sessions),
+                       "figure_data": f"{out_name}_figures.npz",
                        "note": "rates must use intervals for exposure; a ripple "
                                "rate is events per ARTIFACT-FREE second"}}
+
+    fig_path = os.path.join(out_dir, f"{out_name}_figures.npz")
+    np.savez_compressed(fig_path, **fig_arrays)
 
     with open(os.path.join(out_dir, f"{out_name}.pkl"), "wb") as f:
         pickle.dump(bundle, f, protocol=4)
@@ -235,5 +347,11 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
     for k, v in bundle.items():
         if isinstance(v, pd.DataFrame):
             print(f"  {k:12s} {len(v):7d} rows")
+    mb = os.path.getsize(fig_path) / 1e6
+    n_sw = len(fig_index)
+    print(f"  {'figure_data':12s} {len(fig_arrays):7d} arrays  ({mb:.1f} MB, "
+          f"{n_sw} sharp-wave candidates, "
+          f"{len(fig_index_art)} artifact excerpts)")
     print(f"\nSaved -> {out_dir}")
+    print(f"  bring home: {out_name}.pkl + {out_name}_figures.npz")
     return bundle

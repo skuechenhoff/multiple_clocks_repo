@@ -34,8 +34,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.signal import butter, sosfiltfilt, hilbert
+from scipy.ndimage import label as ndimage_label
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mc.analyse.swr_io as swr_io
 import mc.analyse.swr_detect as det
 import mc.plotting.ripple_figures as rfig
@@ -364,6 +366,110 @@ def qc_group(analysis_name=ANALYSIS_NAME, sessions=None, save=True):
     return None      # fire renders a returned DataFrame as an attribute listing
 
 
+ARTIFACT_EXCERPT_S = 60.0        # length of the padding-figure excerpt
+ARTIFACT_SNIP_S = 0.30           # half-width of the IED / ripple snippets
+
+
+def _artifact_panels(session, raw_by_pair, fs, masks, passed, rip_dir):
+    """The IED-vs-ripple and padding panels, and the cache to rebuild them.
+
+    Both need the raw signal, which lives only on the cluster, so the snippets
+    they use are written to `artifact_examples.npz` alongside. That file is what
+    `swr_export.py bundle` brings home, and it is what lets these panels be
+    redrawn -- restyled, recoloured, recomposed -- without the LFP.
+
+    The excerpt is the minute whose rejected fraction is CLOSEST TO THE
+    DERIVATION'S OWN -- not the busiest one. The panel exists to explain where
+    ~40% of a recording goes, and picking the worst minute would explain it with
+    a number the rest of the paper never uses. Both fractions are printed on the
+    panel so a reader can see the excerpt is representative.
+    """
+    pid = max(raw_by_pair, key=lambda k: masks[k]["bad"].mean())
+    x = raw_by_pair[pid]
+    bad, per = masks[pid]["bad"], masks[pid]["per"]
+    half = int(round(ARTIFACT_SNIP_S * fs))
+
+    # excerpt: the window whose removed fraction best matches the whole
+    # derivation's, among windows that actually contain crossings
+    overall = float(bad.mean())
+    n_win = int(round(ARTIFACT_EXCERPT_S * fs))
+    if len(x) > n_win:
+        raw_flag = np.zeros(len(x), bool)
+        for v in per.values():
+            raw_flag |= v
+        step = max(1, n_win // 10)
+        starts = np.arange(0, len(x) - n_win, step)
+        fracs = np.array([bad[a:a + n_win].mean() for a in starts])
+        has = np.array([raw_flag[a:a + n_win].any() for a in starts])
+        score = np.where(has, np.abs(fracs - overall), np.inf)
+        a0 = int(starts[int(np.argmin(score))]) if np.isfinite(score).any() else 0
+    else:
+        a0 = 0
+    sl = slice(a0, a0 + min(n_win, len(x)))
+    ex_x = np.asarray(x[sl], float)
+    ex_per = {k: np.asarray(v[sl], bool) for k, v in per.items()}
+    ex_bad = np.asarray(bad[sl], bool)
+
+    # the largest discharge the IED criterion flagged
+    ied_snip = np.zeros(0)
+    lab, n = ndimage_label(per["ied_janca"])
+    if n:
+        best, best_amp = None, -np.inf
+        for i in range(1, n + 1):
+            idx = np.flatnonzero(lab == i)
+            c = int(idx[len(idx) // 2])
+            if c - half < 0 or c + half >= len(x):
+                continue
+            amp = np.abs(x[c - half:c + half]).max()
+            if amp > best_amp:
+                best, best_amp = c, amp
+        if best is not None:
+            ied_snip = np.asarray(x[best - half:best + half], float)
+
+    # a ripple from the same derivation, from CLEAN time, of typical amplitude
+    # Ranked by the ripple-band envelope at the event, not by `amp_peak_uv`:
+    # the panel has to show something a reader recognises as a ripple, and the
+    # raw amplitude of a ripple is mostly the background it sits on. The 90th
+    # percentile rather than the maximum, so it is a good example and not a
+    # freak one.
+    rip_snip = np.zeros(0)
+    ev = passed[passed.pair_id == pid]
+    xb = np.abs(hilbert(sosfiltfilt(
+        butter(4, [det.RIPPLE_BAND[0] / (fs / 2), det.RIPPLE_BAND[1] / (fs / 2)],
+               btype="band", output="sos"), x)))
+    cand = []
+    for _, r in ev.iterrows():
+        c = int(r.peak_sample) if "peak_sample" in r else int(r.t_peak_s * fs)
+        if c - half >= 0 and c + half < len(x) and not bad[c]:
+            w = int(0.025 * fs)
+            cand.append((float(xb[max(0, c - w):c + w].max()), c))
+    if cand:
+        cand.sort(key=lambda z: z[0])
+        c = cand[int(0.90 * (len(cand) - 1))][1]
+        rip_snip = np.asarray(x[c - half:c + half], float)
+
+    np.savez_compressed(
+        os.path.join(rip_dir, "artifact_examples.npz"),
+        fs=fs, session=session, pair_id=pid, t0_s=a0 / fs,
+        excerpt=ex_x, excerpt_bad=ex_bad,
+        ied=ied_snip, ripple=rip_snip,
+        **{f"excerpt_per__{k}": v for k, v in ex_per.items()})
+
+    rfig.padding_figure(
+        ex_x, fs, ex_per, ex_bad, t0_s=a0 / fs, overall_frac=overall,
+        out_stem=os.path.join(_FIGDIR[0], "artifact_padding"),
+        title=f"s{session:02d} {pid}: criterion crossings, then ±1 s padding")
+    if ied_snip.size and rip_snip.size:
+        rfig.ied_vs_ripple_figure(
+            ied_snip, rip_snip, fs,
+            out_stem=os.path.join(_FIGDIR[0], "ied_vs_ripple"),
+            title=f"s{session:02d} {pid}")
+    else:
+        print(f"  [ied_vs_ripple skipped: "
+              f"{'no IED' if not ied_snip.size else 'no clean ripple'} on {pid}]")
+    print(f"  saved -> artifact_padding, ied_vs_ripple, artifact_examples.npz")
+
+
 _FIGDIR = [None]
 
 
@@ -577,6 +683,11 @@ def _qc_report_one(session, analysis_name=ANALYSIS_NAME, max_events=800):
             session=session).to_csv(
             os.path.join(rip_dir, "artifact_criteria.csv"), index=False)
 
+        # The two manuscript panels, plus the cache that lets them be redrawn
+        # on a laptop. Everything above needs `continuous.npy`, which stays on
+        # the cluster; `artifact_examples.npz` is ~1 MB and comes home.
+        _artifact_panels(session, raw_by_pair, fs, masks, passed, rip_dir)
+
     qc_metrics(session, analysis_name)      # prints its own checkpoint
     return None
 
@@ -733,6 +844,34 @@ def group_figure(sessions=None, analysis_name=ANALYSIS_NAME, win_s=WIN_S,
               f"across {len(sessions)} sessions",
         n_contacts=len(means), ex_bp=ex_bp)
     print(f"  pooled {len(means)} derivations from {len(sessions)} sessions")
+
+    # --- artifact contamination across every derivation in the study --------
+    qcs = []
+    for sess in sessions:
+        p_ = os.path.join(swr_io.session_deriv_dir(int(sess), R), "LFP-ripples",
+                          analysis_name, "channel_qc.csv")
+        if os.path.isfile(p_):
+            q = pd.read_csv(p_); q["session"] = sess; qcs.append(q)
+    if qcs:
+        qc_all = pd.concat(qcs, ignore_index=True)
+        rfig.contamination_group_figure(
+            qc_all, out_stem=os.path.join(out_dir, "contamination_group"),
+            title=f"Artifact rejection across {len(qc_all)} derivations, "
+                  f"{len(sessions)} sessions")
+        n_exc = int(qc_all.excluded.fillna(False).sum())
+        print(f"  contamination figure: {len(qc_all)} derivations, "
+              f"{n_exc} above 2/3")
+
+    # --- where the hippocampal contacts are --------------------------------
+    # Built here rather than only in swr_contact_figure.py so that one command
+    # produces every group figure the manuscript needs; the script remains for
+    # rebuilding it alone against a downloaded run.
+    try:
+        import swr_contact_figure as scf
+        gdir = os.path.join(swr_io.derivatives_dir(R), "group", "swr")
+        scf.make_figure(group_dir=gdir, out_dir=out_dir, verbose=False)
+    except Exception as e:
+        print(f"  [contact figure skipped: {type(e).__name__}: {e}]")
     return None
 
 

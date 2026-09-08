@@ -55,7 +55,7 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
     print(f"\n{len(mf)} sessions in manifest; {len(ok)} have raw files")
 
     # stage 2 needs bipolar_pairs; stage 3 needs continuous.npy
-    rows_pre, rows_det, rows_qc = [], [], []
+    rows_pre, rows_det, rows_qc, rows_fig = [], [], [], []
     for _, r in ok.iterrows():
         s = int(r.session)
         pairs = os.path.join(swr_io.session_deriv_dir(s, R), "LFP",
@@ -74,6 +74,12 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
                           analysis_name, "ripple_events.csv")
         if os.path.isfile(ev):
             rows_qc.append(f"metrics {arg}")
+            # `metrics` prints the checkpoint numbers and nothing else; the
+            # per-session FIGURES -- artifact_rejection, artifact_padding,
+            # ied_vs_ripple, chen_fig2, the example grids -- come from `report`,
+            # which is ~10x slower and so gets its own list rather than being
+            # folded into the qc one.
+            rows_fig.append(f"report {arg}")
 
     os.makedirs(out_dir, exist_ok=True)
     written = []
@@ -95,6 +101,11 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
         with open(p, "w") as f:
             f.write("\n".join(rows_qc) + "\n")
         written.append((p, len(rows_qc), "stage 4 (qc metrics)"))
+    if stage in ("both", "qcfig", "report") and rows_fig:
+        p = os.path.join(out_dir, f"swr_qcfig_{analysis_name}.txt")
+        with open(p, "w") as f:
+            f.write("\n".join(rows_fig) + "\n")
+        written.append((p, len(rows_fig), "stage 4b (qc FIGURES)"))
 
     print()
     for p, n, what in written:
@@ -104,6 +115,7 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
     print("     extract  needs bipolar_pairs_NN.csv   (swr_build_contacts.py)")
     print("     detect   needs continuous.npy         (swr_extract_continuous.py)")
     print("     qc       needs ripple_events.csv      (swr_detect_session.py)")
+    print("     qcfig    needs ripple_events.csv      (same, but draws figures)")
     print("  Re-run this script after each stage to pick up what just finished.")
     if stage in ("both", "detect") and not rows_det:
         print("\n  NOTE stage-3 list is empty: no continuous.npy yet.")

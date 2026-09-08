@@ -43,6 +43,7 @@ ARE the session timeline: `sample = round(t_session * fs)`.
 """
 
 import os
+import re
 import struct
 import datetime
 
@@ -505,15 +506,51 @@ def _load_blackrock_channels(path, nsx, seg_index, ch_positions,
     return np.stack([np.concatenate(c) for c in out], axis=0)
 
 
+_NCS_BLOCK_SUFFIX = re.compile(r'_\d{4}$')
+
+
 def _load_ncs_channels(files, stems_wanted, duration_s, verbose=False):
-    """Load selected UCLA contacts of one .ncs block, resampled to TARGET_FS."""
-    by_stem = {os.path.splitext(os.path.basename(f))[0]: f for f in files}
-    rows = []
+    """Load selected UCLA contacts of one .ncs block, resampled to TARGET_FS.
+
+    Channels are matched on the electrode stem with the `_NNNN` RECORDING-BLOCK
+    suffix removed, because the same electrode appears in every block under a
+    different filename (`RMH1.ncs`, `RMH1_0001.ncs`, `RMH1_0002.ncs`) and the
+    channel list is read from whichever block happens to be first on disk.
+
+    This mattered for s40: its task is in block `_0002`, but `load_channel_list`
+    names channels from block 1, so the requested `RMH1` never matched the
+    available `RMH1_0002`. Every contact was then zero-filled and the session
+    detected 0 ripples on 3 pairs with 100% of the recording marked
+    artifact-free -- silently, because a flat trace crosses no threshold and
+    triggers no artifact criterion.
+
+    A channel that cannot be found is now a hard error. Zero-filling one side of
+    a bipolar derivation does not produce a degraded ripple estimate, it
+    produces a meaningless one, and it looks like a clean session.
+    """
+    by_stem = {}
+    for f in files:
+        stem = os.path.splitext(os.path.basename(f))[0]
+        by_stem.setdefault(stem, f)
+        by_stem.setdefault(_NCS_BLOCK_SUFFIX.sub("", stem), f)
+
+    # Resolve every path BEFORE reading anything, so a missing channel is
+    # reported as a missing channel rather than surfacing as whatever error the
+    # first successful read happens to hit later.
+    paths, missing = [], []
     for stem in stems_wanted:
-        path = by_stem.get(stem)
-        if path is None:
-            rows.append(np.zeros(int(duration_s * TARGET_FS), np.float32))
-            continue
+        path = by_stem.get(stem) or by_stem.get(_NCS_BLOCK_SUFFIX.sub("", stem))
+        (paths.append(path) if path is not None else missing.append(stem))
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} requested channel(s) are not in this recording "
+            f"block: {missing[:8]}{' ...' if len(missing) > 8 else ''}\n"
+            f"  available stems (first 8): {sorted(by_stem)[:8]}\n"
+            f"  Rebuild the session's contacts so the channel list comes from "
+            f"the block that carries the behaviour.")
+
+    rows = []
+    for path in paths:
         sig, fs, _ = read_ncs(path)
         rows.append(resample_to(sig, fs, TARGET_FS))
     n = min(len(r) for r in rows)
