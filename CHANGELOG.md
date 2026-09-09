@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## 2026-09-09 — RSA audit emits a per-wrapper resubmission plan
+
+`check_RSA_ran.py` now tracks all five pipeline stages and writes
+`resubmit_plan.sh`: the exact commands that would fill every gap, per wrapper,
+in pipeline order.
+
+    results/                fMRI_run_RSA_instruction.py   per subject x epoch
+    smoothed/               smooth_subject_space.py       per subject x epoch
+    standard-space-smooth/  applywarp wrapper             per subject x epoch
+    group_..._glmbase_{epoch}/          merge_subj_to_group.sh        per epoch
+    group_..._glmbase_{epoch}_cropped/  mask_subj_by_missingvoxels.sh per epoch
+
+Two gating rules keep the plan honest rather than merely complete:
+  * a stage only lists work whose PREDECESSOR is complete, so nothing is
+    submitted that would read half-written inputs;
+  * a run queued for an RSA rerun is excluded from the downstream stages
+    entirely -- its maps are about to be rewritten, so smoothing them now is
+    wasted queue time. (Caught in testing: a subject whose maps were all
+    present but whose settings summary was missing was being offered for
+    smoothing and RSA resubmission at once.)
+Group stages additionally require the epoch to have NO subject-level gap left,
+because merging a partial set gives the wrong volume count and
+mask_subj_by_missingvoxels.sh then rejects it on `required_n`.
+
+Smoothing is submitted per (subject, epoch) through
+wrapper_python_fMRI_RSA_clean_config.sh rather than through
+wrapper_smooth_stat_maps_subj.sh: smooth_subject_space.py has no
+skip-if-exists, so the wrapper's loop would re-smooth every subject of the
+epoch. That needs a per-epoch smoothing config, which the audit now writes
+(`smooth5_config_{epoch}.json`) so concurrent jobs cannot rewrite each other's
+`regression_version` in the shared file.
+
+The stages are dependent, so the plan is not a script to run top to bottom: run
+one stage, wait for the queue, re-run the audit for the next plan.
+
+Verified on a synthetic tree through the whole chain: mixed subject states ->
+RSA + smoothing + standard-space plan; all subjects complete -> merge offered
+and crop still gated; merged present (as gunzipped .nii, which the checker
+accepts) -> crop offered and merge gone.
+
 ## 2026-09-09 — RSA audit now checks all three stages per model
 
 `check_RSA_ran.py` only asked whether the RSA had finished, per (subject,
