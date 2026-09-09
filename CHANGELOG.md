@@ -1,5 +1,217 @@
 # CHANGELOG
 
+## 2026-09-09 — RSA audit now checks all three stages per model
+
+`check_RSA_ran.py` only asked whether the RSA had finished, per (subject,
+epoch). It now walks the whole per-subject pipeline, per MODEL, at each stage:
+
+    results/                {map}_beta.nii.gz          fMRI_run_RSA_instruction.py
+    smoothed/               smooth_fwhm5_{map}_beta.nii.gz      smooth_subject_space.py
+    standard-space-smooth/  smooth_fwhm5_{map}_beta_std.nii.gz  applywarp wrapper
+
+Only the beta map is tracked: it is what the group merge collects
+(`*beta_std.nii.gz`) and what `loso.py` reads, so a missing beta is what
+actually breaks the pipeline; t_val / p_val are written in the same call.
+
+`expected_map_names` derives the full set of maps from the config, mirroring
+the output naming of fMRI_run_RSA_instruction.py: `{model}`, or
+`{model}_within` / `_across` where `single_model_scopes` entitles a model to
+several scopes, plus `{REGRESSOR}-{combo}` per combo regressor (with the same
+scope suffix on the combo name, and the `block` nuisance when
+`add_block_nuisance` is set). For rsa_instruction_cumulative_rew.json that is
+**41 maps** per (subject, epoch) — 21 single + 20 combo.
+
+New statuses distinguish what actually needs rerunning: `NOT_STARTED` /
+`RESULTS_INCOMPLETE` / `RERUN_CHANGED` need the RSA resubmitted and go on
+todo_rsa.txt, while `SMOOTHED_INCOMPLETE` and `STANDARD_INCOMPLETE` mean the
+RSA is fine and only the cheap downstream wrapper has to be rerun — those are
+reported separately and deliberately kept OFF the submission list.
+`RESULTS_INCOMPLETE` also covers "all maps present but no settings summary",
+i.e. the run died before its last action.
+
+Outputs gain a per-stage table (complete / partial / none / maps missing, with
+the script that produces each stage) and `missing_maps.txt`, one line per
+individual map absent from disk. settings.json records the expected map names
+and the stage tally.
+
+Verified on a synthetic tree covering seven states — all stages complete,
+smoothed partial, standard partial, results partial, nothing at all, results
+without a summary, and settings changed. Each classified correctly, the stage
+tallies reconcile exactly (46 = 5 + 41, 125 = 2 + 3x41, 165 = 1 + 4x41), and
+the two downstream-only gaps stayed off todo_rsa.txt.
+
+## 2026-09-09 — group inference runs per TR or per condition (`--axis`)
+
+`per_TR_loso.py` assumed its third axis was the ordered seconds of the
+instruction period: `--trs` was parsed with `int()` and substituted into
+`dir_pattern.format(tr=tr)`, so the instruction-epoch folders
+(`group_RSA_instr_cumrew_glmbase_instr_see-A-first_cropped`) could not be read
+at all.
+
+**`--axis {tr,condition}`.** `tr` (default) is unchanged: levels from `--trs`,
+peaks reported as TR numbers, figure drawn as a timecourse with the reward
+schedule. `condition` takes levels from `--conditions` (the epoch GLM names)
+and substitutes them as `{condition}` / `{tr}` / `{level}` in `--dir-pattern`.
+
+**The statistics are identical in both modes** — the same max-t sign-flip
+permutation over voxels x levels, one family per mask, through the same
+`tstat` / `null_max_t` (CLAUDE.md rule 4). Only reporting differs: `peak_TR`
+fields hold the condition name, and `settings.json` records `axis`, `levels`
+and an `axis_note` stating that a condition axis must not be read as a
+timecourse.
+
+**Plotting is deliberately different per axis.** A condition axis is drawn as
+points with error bars, rotated condition labels, no joining line and no reward
+schedule — a line between unordered conditions would assert a progression the
+design does not contain. A non-numeric axis is forced to that style whatever is
+requested, so a mislabelled call cannot draw a timecourse through condition
+names. Models are dodged horizontally (x-offset only, no value altered) so
+overlapping points stay readable. `--mode plot` reads the axis kind back from
+the run's `settings.json`, so old per-TR folders still plot as timecourses.
+
+**Two bugs found while doing this:**
+- `CHANNEL_COLOURS` / `CHANNEL_LABELS` still used the pre-rename model names
+  (`curr_rew`...), while the RSA now writes `A_rew`...`D_rew`. Every map would
+  have plotted grey and the default "four reward channels" selection would have
+  matched nothing, silently falling back to plotting all 14 models. Rekeyed to
+  the current names with the project state colours; `LEGACY_CHANNEL_ALIASES`
+  keeps pre-rename result folders colouring correctly. The cumulative channels
+  (AB/ABC/ABCD_rew) stay grey rather than inventing a colour convention.
+- `summary_row` reported `loso_peak_TR` as the POSITION along the axis, not the
+  level: with `--trs 4,5,6` it printed 0/1/2. Now the level.
+
+Verified end to end on synthetic 32-subject volumes with a planted blob: TR mode
+recovers the planted TR, condition mode recovers the planted condition, both
+figures render, and `--mode plot` picks the right style from settings.json.
+
+## 2026-09-08 — UCLA's own anatomical labels vs our atlas ROIs (`ucla_label_vs_atlas_roi.py`)
+
+UCLA report that their electrode localisation is very precise, so the labels
+they ship were used as an independent check on the ROIs
+`cell_to_roi_july26.py` assigns. That script reads only the MNI coordinate out
+of `sub-{NNN}_localizations.xlsx` and discards every label column; this
+compares those discarded labels against `atlas_roi` / `alt_final_roi`. **Read
+only — the ROI table is unchanged.**
+
+140 UCLA cells on 24 microwire bundles, joined on
+`(Subject Label, source_electrode)` — the same bundle the coordinate came
+from, so the two verdicts describe the same contact. Seven UCLA columns were
+mapped onto our ROI vocabulary: `ASHS_ABC` (subject's own T2, MTL subfields),
+`aparc+aseg` / `aparc.DKTatlas+aseg` (subject's own T1, FreeSurfer native
+space), `Anat` and `AnatMacro_1` (SPM Anatomy toolbox), `NMM`
+(Neuromorphometrics), and `region` (the implantation-target code). Labels that
+make no regional claim (`Unknown`, `*Cerebral-White-Matter`, `(extra-axial)`)
+are scored as "no verdict", not as disagreements. `HC_anterior`/`HC_mid` is our
+own y = -21 split and no UCLA column encodes it, so agreement is scored on the
+collapsed `HC`.
+
+**Headline: 114/140 cells (81.4 %) and 20/24 bundles agree** with at least one
+UCLA column. Per column, over the contacts where that column has a verdict:
+NMM 84 %, AnatMacro_1 65 %, aparc+aseg 65 %, DKT 61 %, Anat 54 %,
+implantation-target code 48 %. ASHS agrees 11/12 where it is defined.
+
+**The disagreements are not spread out — they are exactly the neighbourhood
+fallback.** Splitting by `atlas_reason`:
+
+| assignment mode | cells with a UCLA verdict | agree | % |
+|---|---|---|---|
+| exact voxel | 104 | 103 | **99.0** |
+| `neighbor@1/2/3mm` probe | 28 | 11 | **39.3** |
+
+The single exact-voxel disagreement is a `leftover` cell (Heschl's gyrus,
+dropped anyway). So wherever the cell's own voxel lands in an atlas region,
+UCLA's independent labelling confirms us essentially always; the risk is
+concentrated in rule 12, where the voxel is white matter and we probe outwards.
+
+**What this costs the analysis ROIs.** 93 UCLA cells survive into analyses on
+13 bundles; 12 bundles are confirmed, one is not:
+
+* **`RPv-micro` (UC3-0582, 17 cells, currently `HC_mid`) is almost certainly
+  pulvinar.** Coordinate (12.2, -31.6, 3.9), assigned via
+  `hippocampal_subfield_split_y-21.0_neighbor@2mm`. All four UCLA columns say
+  thalamus (`Right-Thalamus`, `Right Thalamus Proper`, `Thal: Temporal`,
+  `R Thalamus`) and the electrode is named `RP` = right pulvinar. This is
+  **half of the UCLA `HC_mid` cells** (17 of 35).
+* `RPHG_micro-1` (UC3-0573, 1 cell, `HC_mid`) — ASHS `Right PHC`, both aparc
+  columns `parahippocampal`, AnatMacro `R ParaHippocampal Gyrus`. Also a
+  `neighbor@1mm` assignment. Probably PHC.
+
+Per analysis ROI, cells confirmed by at least one UCLA column: PCC 22/22,
+mPFC 4/4, EC 3/3, HC_anterior 29/29, **HC_mid 18/35**.
+
+**EC survives the strictest test available.** The 3 EC cells (`LEC-micro`,
+UC2-0578) are confirmed by ASHS (`Left_ERC`, segmented on that subject's own
+T2) and by SPM Anatomy (`Entorhinal Cortex`) — the two most anatomically
+specific columns UCLA ship.
+
+**Caveat: `aparc+aseg` is not uniformly trustworthy, so its 65 % is a floor.**
+Per-subject concordance between `aparc+aseg` and `NMM` on the same contacts is
+100 % (UC3-0559), 100 % (UC3-0577), 86 % (UC3-0582), 50 % (UC2-0576, UC3-0573)
+but **20 % for UC2-0578**, whose column labels an entorhinal contact at
+z = -38 as `ctx-lh-insula`, an amygdala contact as `Left-Putamen` and a
+hippocampal one as `Left-Pallidum` — anatomically impossible, all displaced the
+same way. That subject's FreeSurfer columns look mis-registered; its ASHS and
+Anat columns behave normally. So "UCLA's method is precise" holds for their
+MTL segmentation, less so for the whole-brain FreeSurfer columns in every
+subject.
+
+**Mechanism: there are two neighbourhood probes and only one is dangerous.**
+
+* **Path A — the HC probe inside rule 4** (`hippocampal_subfield_..._neighbor@Nmm`).
+  It fires whenever the exact voxel is not hippocampus, and returns *before
+  rules 5-11 are ever consulted*, so it can override a perfectly good
+  exact-voxel verdict from a lower-priority rule. Its design comment scopes it
+  against rule 5 only ("otherwise leaves subicular voxels to be captured by the
+  coarser parahippocampal-gyrus rule despite being anatomically hippocampal") —
+  but it sits above rules 5-11 and therefore beats *all* of them, including
+  Thalamus and Amygdala. That is the RPv bug: at (12.2, -31.6, 3.9) the exact
+  voxel is HO-subcortical `Right Thalamus`, rule 10 would have caught it, but
+  rule 4's probe finds Juelich cornu ammonis 2 mm away first.
+* **Path B — rule 12 proper** (`atlas_neighbor@Nmm`) is reached only when *no*
+  rule matched at the exact voxel, so it can only promote `leftover`. It cannot
+  contradict an exact-voxel label and is structurally safe.
+
+**Path A is confined to HC by construction** — it lives inside rule 4 and can
+only return `HC_anterior`/`HC_mid`. So no other ROI is exposed to this failure
+mode. Probe cells in analysis ROIs, whole table: HC_mid 56 (all path A),
+HC_anterior 11 (all path A), mOFC 23, mPFC 13, PCC 4 (all path B), **EC 0**.
+
+Re-querying the exact voxel of all 67 path-A cells across all three sites:
+
+| overridden exact-voxel label | HC_ant | HC_mid | sites |
+|---|---|---|---|
+| PHC — **intended** override | 4 | 39 | Baylor 41, UCLA 1, Utah 1 |
+| Thalamus — **not** intended | 0 | 17 | UCLA (RPv) |
+| Amygdala — **not** intended | 5 | 0 | Utah |
+| white matter — probe justified | 2 | 0 | Utah |
+
+The 43 PHC cells are the documented purpose of rule 4c (the subiculum sits in
+what HO calls parahippocampal gyrus) and are **not** errors. The 17 Thalamus
+and 5 Amygdala overrides are side effects of the probe outranking rules 10 and
+9, which its own rationale never claims.
+
+**Correction to the note above on `RPHG_micro-1`:** it is *not* clearly wrong.
+Its exact voxel is HO `Parahippocampal Gyrus, posterior division` and the probe
+found Juelich subiculum at 1 mm — the intended rule-4c behaviour — and UCLA's
+own SPM Anatomy column independently says `Subiculum` there. ASHS says
+`Right PHC`; the two disagree with each other, not with us. **`RPv` (17 cells)
+is the only UCLA assignment contradicted by every available source.**
+
+**Not done / open:** the 17 pulvinar cells were left in `HC_mid` — changing the
+ROI table is a separate decision, not a side effect of an audit. The 5 Utah
+amygdala overrides share the failure mode but have no independent labels to
+check against. A minimal fix would be to make rule 4c yield to HO-subcortical
+Thalamus/Amygdala at the exact voxel while keeping its PHC precedence; that
+would move 17 cells (UCLA) out of HC_mid and 5 (Utah) out of HC_anterior, and
+touch nothing else. Baylor and Utah ship no label columns, so the UCLA
+agreement check itself covers 140 of 984 cells.
+
+Outputs -> `ephys_humans/derivatives/ROI_assignment/ucla_label_agreement_2026-09-08/`
+(`per_cell_labels.csv`, `per_bundle_labels.csv`, `agreement_summary.csv`,
+`agreement_by_assignment_mode.csv`, `per_analysis_roi_verdict.csv`,
+`analysis_bundles_verdict.csv`, `freesurfer_column_sanity.csv`,
+`confusion_*.csv`, `settings.json`).
+
 ## 2026-09-07 — instruction RSA submitted only where it can run (`check_RSA_ran.py`)
 
 `submit_RSA_instruction_epochs.sh` used to submit 33 subjects x 11 epochs

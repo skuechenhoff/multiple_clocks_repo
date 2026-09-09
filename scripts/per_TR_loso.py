@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Single runner for the per-TR instruction-phase group analysis.
+Single runner for the instruction-phase group analysis, per TR or per condition.
 
 All statistics and plotting live in `mc.analyse.loso`; this file only wires
 them to a command line. Three modes:
@@ -10,9 +10,23 @@ them to a command line. Three modes:
     --mode both   run, then plot (default)
 
 The test is a small-volume corrected max-t sign-flip permutation over voxels
-x TRs inside each a-priori mask, plus the LOSO cross-validated timecourse, and
-optionally whole-brain t / FWE-p / uncorrected-p volumes for visualisation.
-See `mc/analyse/loso.py` for what each of those means and what it does not.
+x levels of the third axis inside each a-priori mask, plus the LOSO
+cross-validated readout, and optionally whole-brain t / FWE-p / uncorrected-p
+volumes for visualisation. See `mc/analyse/loso.py` for what each of those
+means and what it does not.
+
+--axis picks what that third axis is:
+    tr         (default) the ordered seconds of the instruction period, from
+               --trs. Folders are group_..._01-TR{tr}_cropped, peaks are
+               reported as TR numbers, and the figure is a timecourse.
+    condition  named conditions, from --conditions -- the instruction-epoch
+               GLMs (instr_see-A-first, ...), whose folders are
+               group_..._glmbase_{condition}_cropped. The statistics are
+               IDENTICAL: max-t over voxels x levels, one family per mask.
+               What changes is the reporting: peak_TR fields hold the condition
+               name, and the figure is drawn as points with no joining line,
+               because these conditions have no ordering and a line would
+               assert a progression the design does not contain.
 
 Multiple comparisons across models are NOT corrected: each map's peak_p_FWE is
 corrected over its own voxels x TRs only. The family size is recorded in
@@ -29,6 +43,13 @@ Examples
         --mask MTL=../../data/masks/Garvert_MTL_2mm.nii.gz \
         --wholebrain \
         --out-dir .../per_TR_svc_instr_test_full_allTR_2026-08-28
+
+    # the same thing over the instruction-epoch conditions
+    python per_TR_loso.py --mode both --axis condition \
+        --dir-pattern "group_RSA_instr_cumrew_glmbase_{condition}_cropped" \
+        --conditions instr_see-A-first,instr_see-B-first,instr_see-C-first,instr_see-D-first \
+        --mask mPFC=../../data/masks/mask_PFC_LR_smoothed_resampled.nii.gz \
+        --out-dir .../per_condition_svc_instr_cumrew_2026-09-09
 
     # re-plot a finished run without touching the statistics
     python per_TR_loso.py --mode plot \
@@ -79,7 +100,21 @@ def parse_args():
                     default="group_RSA_instr_test_full_glmbase_01-TR{tr}_cropped")
     ap.add_argument("--mask", action="append", default=[], help="name=path, repeatable")
     ap.add_argument("--models", default="", help="comma-separated; default = all found")
-    ap.add_argument("--trs", default="0,1,2,3,4,5,6,7,8,9,10,11")
+    ap.add_argument("--axis", choices=L.AXIS_KINDS, default="tr",
+                    help="what the third axis of the maps is. 'tr' (default): "
+                         "ordered seconds of the instruction period, taken from "
+                         "--trs. 'condition': named conditions, taken from "
+                         "--conditions -- the instruction-epoch GLMs, which have "
+                         "no ordering. The statistics are identical (max-t over "
+                         "voxels x levels); what changes is that peaks are "
+                         "reported by condition name and the figure is drawn as "
+                         "points rather than as a timecourse.")
+    ap.add_argument("--trs", default="0,1,2,3,4,5,6,7,8,9,10,11",
+                    help="axis levels when --axis tr")
+    ap.add_argument("--conditions", default="",
+                    help="axis levels when --axis condition, comma-separated, "
+                         "e.g. instr_see-A-first,instr_see-B-first. Substituted "
+                         "into --dir-pattern as {condition} (or {tr}/{level}).")
     ap.add_argument("--n-perm", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--k", default="50,100,200")
@@ -115,11 +150,26 @@ def parse_args():
     args = ap.parse_args()
     if args.mode in ("run", "both") and not args.mask:
         ap.error("--mask is required when --mode is 'run' or 'both'")
+    if args.axis == "condition" and not args.conditions:
+        ap.error("--axis condition needs --conditions (comma-separated names)")
     return args
 
 
+def level_str(v):
+    """How one axis level is printed: 'TR4' for a numeric level, the bare name
+    for a condition. Padded to 4 so the TR form lines up exactly as before."""
+    return f"TR{v}" if isinstance(v, int) else str(v)
+
+
+def axis_levels(args):
+    """The levels of the third axis: ints for 'tr', names for 'condition'."""
+    if args.axis == "condition":
+        return [c for c in args.conditions.split(",") if c]
+    return [int(x) for x in args.trs.split(",")]
+
+
 def do_run(args):
-    trs = [int(x) for x in args.trs.split(",")]
+    trs = axis_levels(args)
     k_values = [int(x) for x in args.k.split(",")]
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -151,11 +201,20 @@ def do_run(args):
                                        args.wholebrain and m in wb_models)]
         print(f"[info] resume: {len(models) - len(todo)} of {len(models)} models "
               f"already complete, {len(todo)} to run", file=sys.stderr)
-    print(f"[info] {len(todo)} maps x {len(masks)} masks x {len(trs)} TRs",
-          file=sys.stderr)
+    print(f"[info] {len(todo)} maps x {len(masks)} masks x {len(trs)} "
+          f"{'TRs' if args.axis == 'tr' else 'conditions'}", file=sys.stderr)
 
     json.dump(dict(
         root=args.root, dir_pattern=args.dir_pattern, trs=trs,
+        axis=args.axis, levels=trs,
+        axis_note=("the third axis is ordered time (seconds of the instruction "
+                   "period); peaks are reported as TR numbers"
+                   if args.axis == "tr" else
+                   "the third axis is a set of NAMED CONDITIONS with no "
+                   "ordering; peak_TR fields hold the condition name, and "
+                   "max-t is corrected over voxels x conditions jointly -- the "
+                   "same family-wise correction, but it must not be read as a "
+                   "timecourse"),
         masks={k: dict(path=v["path"], n_vox_in_brain=v["n_vox"])
                for k, v in masks.items()},
         models=models, n_models=len(models), n_perm=args.n_perm, seed=args.seed,
@@ -213,7 +272,7 @@ def do_run(args):
                       indent=2)
             print(f"  {'*' if wsum['peak_p_FWE'] < 0.05 else ' '} [{mi:2d}/{len(todo)}]"
                   f" WHOLEBRAIN {model:42s} t={wsum['peak_t']:5.2f} "
-                  f"TR{wsum['peak_TR']:<2d} p={wsum['peak_p_FWE']:.4f} "
+                  f"{level_str(wsum['peak_TR']):<4s} p={wsum['peak_p_FWE']:.4f} "
                   f"MNI={wsum['peak_mni']}", flush=True)
             del Tw, nmw, p_fwe, p_unc, p_unc_neg
 
@@ -239,7 +298,7 @@ def do_run(args):
                           indent=2)
             print(f"{'*' if svc['peak_p_FWE'] < 0.05 else ' '} [{mi:2d}/{len(todo)}] "
                   f"{name:7s} {model:42s} t={svc['peak_t']:5.2f} "
-                  f"TR{svc['peak_TR']:<2d} p={svc['peak_p_FWE']:.4f}   "
+                  f"{level_str(svc['peak_TR']):<4s} p={svc['peak_p_FWE']:.4f}   "
                   f"(neg t={svc['peak_t_neg']:6.2f} p={svc['peak_p_FWE_neg']:.4f})",
                   flush=True)
         del Du
@@ -260,17 +319,28 @@ def do_run(args):
 
 
 def do_plot(args):
+    # The axis kind is taken from the finished run's settings.json when there is
+    # one, so `--mode plot` on an existing folder draws it the way it was run
+    # (and an older folder with no 'axis' key stays a timecourse).
+    try:
+        axis_kind = L.load_settings(args.out_dir).get("axis", "tr")
+    except (OSError, ValueError):
+        axis_kind = args.axis
     if args.plot_models:
         models = [m for m in args.plot_models.split(",") if m]
     else:
         settings = L.load_settings(args.out_dir)
-        four = [c for c in L.CHANNEL_COLOURS if c in settings["models"]]
+        # the four split reward channels, under whatever names this run used
+        four = [m for m in settings["models"]
+                if L.base_channel(m) in L.CHANNEL_COLOURS
+                and not m.endswith("_instr")]
         models = four or settings["models"]
         print(f"[info] plotting {len(models)} models "
               f"({'reward channels' if four else 'all models'})", file=sys.stderr)
     masks = [m for m in args.plot_masks.split(",") if m] or None
     L.plot_per_TR_timecourses(args.out_dir, models, masks=masks, k=args.plot_k,
-                              out_name=args.plot_name, show=not args.no_show)
+                              out_name=args.plot_name, show=not args.no_show,
+                              axis_kind=axis_kind)
 
 
 def main():

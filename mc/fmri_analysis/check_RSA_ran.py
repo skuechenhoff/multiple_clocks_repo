@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Decide which (subject x instruction epoch) searchlight RSAs still need running.
+Audit the instruction-phase RSA pipeline: which (subject x epoch x model x stage)
+outputs exist, and which jobs still need running.
 
 `fMRI_run_RSA_instruction.py` is expensive (one searchlight pass per subject per
 epoch) and it reads the first-level GLMs directly, so submitting it blindly
@@ -9,14 +10,33 @@ wastes queue time two ways: on subjects whose epoch GLM never finished (the job
 dies on a missing PE, or worse, reads a half-written one), and on subjects that
 are already done. This walks the (subject x epoch) grid and sorts it into:
 
-    READY            all inputs present, no result yet          -> submit
+    NOT_STARTED      all inputs present, no maps yet             -> submit
+    RESULTS_INCOMPLETE  some beta maps are there and some are not, or all are
+                     there but the settings summary is not (the run died
+                     before finishing)                          -> submit
     RERUN_CHANGED    a result exists but was made with DIFFERENT settings
                      than this config asks for                  -> submit
                      (it overwrites the old maps; --skip-changed leaves it)
-    DONE             a result exists and its settings match     -> skip
+    SMOOTHED_INCOMPLETE / STANDARD_INCOMPLETE
+                     the RSA is finished but a DOWNSTREAM stage is not. These
+                     do NOT need the RSA rerun -- rerun the smoothing or the
+                     applywarp wrapper, which skip what already exists.
+    DONE             every stage complete and the settings match -> skip
     GLM_NOT_READY    the epoch GLM has no complete run in the base directory
                      the RSA reads                              -> skip
     MISSING_INPUT    modelled EVs / reference image / mask absent -> skip
+
+THE THREE STAGES, per subject x epoch x model
+    results/                {map}_beta.nii.gz
+    smoothed/               smooth_fwhm{N}_{map}_beta.nii.gz
+    standard-space-smooth/  smooth_fwhm{N}_{map}_beta_std.nii.gz
+Only the beta map is tracked: it is what the group merge collects
+(`*beta_std.nii.gz`) and what loso.py finally reads, so a missing beta is what
+actually breaks the pipeline; the t_val / p_val maps are written in the same
+call and travel with it. `{map}` is every name the config implies --
+`{model}`, `{model}_within` / `_across` when `single_model_scopes` entitles a
+model to several scopes, and `{REGRESSOR}-{combo}` for each combo regressor --
+built by `expected_map_names`, which mirrors fMRI_run_RSA_instruction.py.
 
 GLM readiness is not re-implemented here: it calls `check_GLMs_ran.check_one`,
 the same function that produces the FEAT audit, so 'complete' means exactly the
@@ -35,8 +55,11 @@ directory the RSA reads is broken, so the cleanup has to run first.
     also counts as changed: the settings cannot be shown to match.
 
 WHAT IT WRITES  (--out-dir, default derivatives/group/rsa_audit_<name>_<date>/)
-    report.txt      every (subject, epoch) that is not READY, with the reason
-    todo_rsa.txt    'subject epoch_config' per job to submit
+    report.txt        the per-stage table, and every (subject, epoch) that is
+                      not complete, with the reason
+    missing_maps.txt  one line per individual map that is not on disk
+                      (subject, epoch, stage, filename)
+    todo_rsa.txt      'subject epoch_config' per RSA job to submit
     settings.json   what this audit was run with
   and one per-epoch config snapshot per epoch, next to the base config:
     <base>_<epoch>.json   = the base config with regression_version set to the
@@ -67,6 +90,10 @@ import check_GLMs_ran as glmcheck
 # twin finished but the base did not, so it is deliberately not in this set.
 GLM_READY = {'OK', 'DUPLICATES'}
 
+# statuses that are fixed by rerunning the RSA itself, rather than one of the
+# cheap downstream wrappers
+NEEDS_RSA = {'NOT_STARTED', 'RESULTS_INCOMPLETE', 'RERUN_CHANGED'}
+
 # Settings that must match for an existing result to count as done. These are
 # the keys of fMRI_run_RSA_instruction.py's summary that come from the config
 # rather than from the data (n_cells_per_searchlight, paired_labels etc. are
@@ -81,6 +108,103 @@ COMPARED_KEYS = ['EV_string', 'regression_version', 'TR', 'regression_version_fu
 SCOPE_ALIASES = {'across_only': 'across_only', 'across': 'across_only',
                  'within_only': 'within_only', 'within': 'within_only',
                  'full_no_diag': 'full_no_diag', 'full': 'full_no_diag'}
+
+
+# Suffix the RSA appends to a map name when a model is fitted in more than one
+# scope, and the marker of an instruction-similarity model. Both mirror
+# fMRI_run_RSA_instruction.py.
+SCOPE_TAGS = {'across_only': 'across', 'within_only': 'within',
+              'full_no_diag': 'full'}
+INSTR_SUFFIX = '_instr'
+
+# The three per-subject stages, in pipeline order. Each is a directory under
+# the RSA folder plus the name one model's map carries there. Only the BETA map
+# is tracked: it is what the group merge collects (`*beta_std.nii.gz`) and what
+# loso.py finally reads, so a missing beta is what actually breaks the pipeline.
+# The t_val / p_val maps are written in the same call and travel with it.
+STAGE_ORDER = ('results', 'smoothed', 'standard')
+STAGE_DIRS = {'results': 'results', 'smoothed': 'smoothed',
+              'standard': 'standard-space-smooth'}
+STAGE_MADE_BY = {
+    'results': 'fMRI_run_RSA_instruction.py (submit_RSA_instruction_epochs.sh)',
+    'smoothed': 'smooth_subject_space.py (wrapper_smooth_stat_maps_subj.sh)',
+    'standard': 'applywarp (transform_smooth_subject_res_to_standard.sh)'}
+
+
+def stage_filename(stage, map_name, fwhm):
+    """What one model's beta map is called at one stage."""
+    if stage == 'results':
+        return f"{map_name}_beta.nii.gz"
+    if stage == 'smoothed':
+        return f"smooth_fwhm{fwhm}_{map_name}_beta.nii.gz"
+    return f"smooth_fwhm{fwhm}_{map_name}_beta_std.nii.gz"
+
+
+def _scopes_for_single(model, cfg_scopes, default):
+    """Mirrors single_model_scopes() in fMRI_run_RSA_instruction.py."""
+    if not cfg_scopes:
+        return [default], False
+    key = 'instruction' if model.endswith(INSTR_SUFFIX) else 'execution'
+    raw = cfg_scopes.get(key, default)
+    raw = [raw] if isinstance(raw, str) else list(raw)
+    return [SCOPE_ALIASES[x] for x in raw], True
+
+
+def _scopes_for_combo(combo, default):
+    """Mirrors combo_scopes() in fMRI_run_RSA_instruction.py."""
+    if "scope" not in combo:
+        return [default], False
+    raw = combo["scope"]
+    raw = [raw] if isinstance(raw, str) else list(raw)
+    return [SCOPE_ALIASES[x] for x in raw], True
+
+
+def expected_map_names(config):
+    """Every map name the RSA writes, for this config.
+
+    Mirrors the output naming of fMRI_run_RSA_instruction.py: a single model is
+    `{model}`, or `{model}_{within|across|full}` when `single_model_scopes`
+    entitles it to more than one scope; a combo regressor is
+    `{REGRESSOR}-{combo}` with the same optional scope suffix on the combo
+    name. Keep in step with that script -- it is the only duplicated logic
+    here, and a mismatch shows up as a stage that never looks complete."""
+    want = expected_settings(config)
+    default = want['data_rdm_scope']
+    cfg_scopes = config.get("single_model_scopes", None)
+    names = []
+    if want['run_single_models']:
+        for m in want['models_evaluated']:
+            scopes, tagged = _scopes_for_single(m, cfg_scopes, default)
+            for sc in scopes:
+                names.append(f"{m}_{SCOPE_TAGS[sc]}" if tagged else m)
+    if want['run_combo_models']:
+        for combo in want['combo_models']:
+            scopes, tagged = _scopes_for_combo(combo, default)
+            for sc in scopes:
+                out = (f"{combo['name']}_{SCOPE_TAGS[sc]}" if tagged
+                       else combo['name'])
+                for m in combo['regressors']:
+                    names.append(f"{m.upper()}-{out}")
+    return names
+
+
+def _present(listing, fname):
+    """Accept the .nii twin of a .nii.gz name, as the rest of the code does."""
+    return fname in listing or fname[:-3] in listing
+
+
+def check_stages(rsa_dir, map_names, fwhm):
+    """Per stage: how many of the expected maps are on disk, and which are not.
+    One listdir per stage directory rather than a stat per map."""
+    out = {}
+    for stage in STAGE_ORDER:
+        d = f"{rsa_dir}/{STAGE_DIRS[stage]}"
+        listing = set(os.listdir(d)) if os.path.isdir(d) else set()
+        missing = [m for m in map_names
+                   if not _present(listing, stage_filename(stage, m, fwhm))]
+        out[stage] = dict(dir=d, exists=bool(listing), n_expected=len(map_names),
+                          n_missing=len(missing), missing=missing)
+    return out
 
 
 def expected_settings(config):
@@ -111,13 +235,19 @@ def expected_settings(config):
     }
 
 
-def results_dir_for(data_dir, config):
-    """The same path fMRI_run_RSA_instruction.py builds."""
+def rsa_dir_for(data_dir, config):
+    """The RSA folder itself -- results/, smoothed/ and standard-space-smooth/
+    all live under it."""
     want = expected_settings(config)
     base = f"{data_dir}/func/RSA_{want['RDM_version']}_glmbase_{want['regression_version_full']}"
     if want['smoothing']:
         base = f"{base}_smooth{want['fwhm']}"
-    return f"{base}/results"
+    return base
+
+
+def results_dir_for(data_dir, config):
+    """The same path fMRI_run_RSA_instruction.py builds."""
+    return f"{rsa_dir_for(data_dir, config)}/results"
 
 
 def settings_differences(summary, want):
@@ -154,8 +284,11 @@ def missing_inputs(data_dir, sub, config):
     return missing
 
 
-def check_one_rsa(sub_tag, glm, config):
-    """(status, detail) for one (subject, epoch)."""
+def check_one_rsa(sub_tag, glm, config, map_names=None, fwhm=5):
+    """(status, detail, stages) for one (subject, epoch).
+
+    `stages` is the per-stage record from check_stages, or None when the run
+    never got far enough for the stages to mean anything (inputs missing)."""
     sub = f"sub-{sub_tag}"
     data_dir = f"{glmcheck.data_dir_deriv}/{sub}"
 
@@ -166,27 +299,52 @@ def check_one_rsa(sub_tag, glm, config):
             if status == 'PROMOTE_TWIN':
                 detail = ("the finished run is in a '+' twin, the base directory "
                           "the RSA reads is not usable -- run the FEAT cleanup first")
-            return 'GLM_NOT_READY', f"pt{th} {status}: {detail}"
+            return 'GLM_NOT_READY', f"pt{th} {status}: {detail}", None
 
     # 2. everything else the script opens
     missing = missing_inputs(data_dir, sub, config)
     if missing:
-        return 'MISSING_INPUT', '; '.join(missing)
+        return 'MISSING_INPUT', '; '.join(missing), None
 
-    # 3. is there already a finished result, and was it made like this?
-    summary_path = f"{results_dir_for(data_dir, config)}/{sub}_settings_summary.json"
+    # 3. walk the three stages, per model
+    if map_names is None:
+        map_names = expected_map_names(config)
+    rsa_dir = rsa_dir_for(data_dir, config)
+    stages = check_stages(rsa_dir, map_names, fwhm)
+    res = stages['results']
+
+    if res['n_missing'] == res['n_expected']:
+        return 'NOT_STARTED', f"no maps under {rsa_dir}", stages
+    if res['n_missing']:
+        return 'RESULTS_INCOMPLETE', (
+            f"{res['n_missing']}/{res['n_expected']} beta maps missing "
+            f"(first: {res['missing'][0]})"), stages
+
+    # The settings summary is the RSA's last action, so results can be complete
+    # while the run still died before writing it.
+    summary_path = f"{rsa_dir}/results/{sub}_settings_summary.json"
     if not os.path.exists(summary_path):
-        return 'READY', ''
+        return 'RESULTS_INCOMPLETE', ("all beta maps present but no settings "
+                                      "summary -- the run did not finish"), stages
     try:
         with open(summary_path) as f:
             summary = json.load(f)
     except (ValueError, OSError) as e:
-        return 'RERUN_CHANGED', f"summary unreadable ({e}), treating as not done"
+        return 'RERUN_CHANGED', f"summary unreadable ({e}), treating as not done", stages
     diffs = settings_differences(summary, expected_settings(config))
     if diffs:
         return 'RERUN_CHANGED', '; '.join(diffs[:3]) + (
-            f" (+{len(diffs) - 3} more)" if len(diffs) > 3 else "")
-    return 'DONE', summary_path
+            f" (+{len(diffs) - 3} more)" if len(diffs) > 3 else ""), stages
+
+    # 4. the two downstream stages. These do not need the RSA rerun -- they need
+    # their own wrapper rerun, which is a different and much cheaper fix.
+    for stage in ('smoothed', 'standard'):
+        st = stages[stage]
+        if st['n_missing']:
+            return f"{stage.upper()}_INCOMPLETE", (
+                f"{st['n_missing']}/{st['n_expected']} maps missing "
+                f"(first: {st['missing'][0]})"), stages
+    return 'DONE', summary_path, stages
 
 
 def main():
@@ -205,6 +363,9 @@ def main():
                     help='where the per-epoch config snapshots are written. '
                          'Default: the repo condition_files directory')
     ap.add_argument('--out-dir', default=None)
+    ap.add_argument('--smooth-fwhm', type=int, default=None,
+                    help='FWHM in the smoothed/standard-space filenames '
+                         '(smooth_fwhm{N}_...). Default: the fwhm in the config.')
     ap.add_argument('--skip-changed', action='store_true',
                     help='do NOT resubmit results whose settings differ (default is to '
                          'resubmit them, which overwrites the old maps)')
@@ -237,21 +398,56 @@ def main():
         cfg['TR'] = None
         epoch_configs[glm] = (f"{os.path.splitext(args.base_config)[0]}_{epoch_tag}.json", cfg)
 
+    map_names = expected_map_names(base_config)
+    fwhm = args.smooth_fwhm if args.smooth_fwhm is not None else base_config.get("fwhm", 5)
+    print(f"{len(map_names)} map(s) per subject x epoch, checked at each of "
+          f"{len(STAGE_ORDER)} stages (fwhm{fwhm})")
+    print(f"  {' -> '.join(STAGE_DIRS[st] for st in STAGE_ORDER)}\n")
+
     rows, todo, counts_all = [], [], {}
+    # per stage: how many (subject, epoch) runs are complete / partial / absent,
+    # and every individual map that is missing
+    stage_tally = {st: dict(complete=0, partial=0, absent=0, n_missing_maps=0)
+                   for st in STAGE_ORDER}
+    missing_maps = []
     for glm in epochs:
         cfg_name, cfg = epoch_configs[glm]
         counts = {}
         for sub in args.subjects:
-            status, detail = check_one_rsa(sub, glm, cfg)
+            status, detail, stages = check_one_rsa(sub, glm, cfg, map_names, fwhm)
             counts[status] = counts.get(status, 0) + 1
             counts_all[status] = counts_all.get(status, 0) + 1
             if status != 'DONE':
                 rows.append((glm, sub, status, detail))
-            if status == 'READY' or (status == 'RERUN_CHANGED' and not args.skip_changed):
+            if status in NEEDS_RSA and not (status == 'RERUN_CHANGED' and args.skip_changed):
                 todo.append((sub, cfg_name))
-        n_ready = counts.get('READY', 0) + (0 if args.skip_changed else counts.get('RERUN_CHANGED', 0))
+            if stages is None:
+                continue
+            for st in STAGE_ORDER:
+                rec = stages[st]
+                if rec['n_missing'] == 0:
+                    stage_tally[st]['complete'] += 1
+                elif rec['n_missing'] == rec['n_expected']:
+                    stage_tally[st]['absent'] += 1
+                else:
+                    stage_tally[st]['partial'] += 1
+                stage_tally[st]['n_missing_maps'] += rec['n_missing']
+                for m in rec['missing']:
+                    missing_maps.append((sub, glm, st, stage_filename(st, m, fwhm)))
+        n_sub = sum(v for k, v in counts.items()
+                    if k in NEEDS_RSA
+                    and not (k == 'RERUN_CHANGED' and args.skip_changed))
         other = ', '.join(f"{k}:{v}" for k, v in sorted(counts.items()))
-        print(f"  {glm:<40} submit {n_ready:>3}/{len(args.subjects)}   [{other}]")
+        print(f"  {glm:<40} submit {n_sub:>3}/{len(args.subjects)}   [{other}]")
+
+    n_runs = len(epochs) * len(args.subjects)
+    print(f"\n=== stages, over {n_runs} (subject x epoch) runs ===")
+    print(f"    {'stage':<22}{'complete':>9}{'partial':>9}{'none':>7}"
+          f"{'maps missing':>14}   made by")
+    for st in STAGE_ORDER:
+        t = stage_tally[st]
+        print(f"    {STAGE_DIRS[st]:<22}{t['complete']:>9}{t['partial']:>9}"
+              f"{t['absent']:>7}{t['n_missing_maps']:>14}   {STAGE_MADE_BY[st]}")
 
     print(f"\n=== {len(todo)} job(s) to submit ===")
     if counts_all.get('DONE'):
@@ -269,6 +465,15 @@ def main():
               f"(run check_GLMs_ran.py)")
     if counts_all.get('MISSING_INPUT'):
         print(f"    {counts_all['MISSING_INPUT']} blocked: inputs missing")
+    # These two do NOT need the RSA rerun -- the downstream wrapper skips what
+    # already exists, so rerunning it is cheap and only fills the gaps.
+    for st, script in (('SMOOTHED_INCOMPLETE', 'wrapper_smooth_stat_maps_subj.sh'),
+                       ('STANDARD_INCOMPLETE',
+                        'transform_smooth_subject_res_to_standard.sh')):
+        if counts_all.get(st):
+            print(f"    {counts_all[st]} run(s) have complete results but an "
+                  f"incomplete {st.split('_')[0].lower()} stage -- rerun {script}, "
+                  f"not the RSA")
 
     by_status = {}
     for glm, sub, status, detail in rows:
@@ -297,9 +502,24 @@ def main():
 
     with open(f"{out_dir}/report.txt", 'w') as f:
         f.write(f"RSA audit {stamp} -- {name_RSA} ({args.base_config})\n")
-        f.write(f"{len(todo)} job(s) to submit\n\nsub\tepoch\tstatus\tdetail\n")
+        f.write(f"{len(map_names)} maps per (subject, epoch); {n_runs} runs\n")
+        f.write(f"{len(todo)} job(s) to submit\n\n")
+        f.write("stage                  complete  partial   none   maps missing\n")
+        for st in STAGE_ORDER:
+            t = stage_tally[st]
+            f.write(f"{STAGE_DIRS[st]:<22}{t['complete']:>9}{t['partial']:>9}"
+                    f"{t['absent']:>7}{t['n_missing_maps']:>15}\n")
+        f.write("\nsub\tepoch\tstatus\tdetail\n")
         for glm, sub, status, detail in rows:
             f.write(f"sub-{sub}\t{glm}\t{status}\t{detail}\n")
+
+    # Exactly which map is absent where -- the thing you actually need when a
+    # stage is partial and you want to know whether it is one model or all of
+    # them.
+    with open(f"{out_dir}/missing_maps.txt", 'w') as f:
+        f.write("# subject\tepoch\tstage\tfilename -- maps not on disk\n")
+        for sub, glm, st, fname in missing_maps:
+            f.write(f"sub-{sub}\t{glm}\t{st}\t{fname}\n")
 
     with open(f"{out_dir}/settings.json", 'w') as f:
         json.dump({'date': stamp, 'base_config': args.base_config,
@@ -307,13 +527,20 @@ def main():
                    'epochs': epochs, 'subjects': args.subjects,
                    'skip_changed': args.skip_changed,
                    'compared_keys': COMPARED_KEYS,
+                   'smooth_fwhm': fwhm,
+                   'stages': {st: STAGE_DIRS[st] for st in STAGE_ORDER},
+                   'stage_tally': stage_tally,
+                   'n_maps_expected_per_run': len(map_names),
+                   'expected_map_names': map_names,
                    'expected_settings': expected_settings(base_config),
                    'counts': counts_all, 'n_todo': len(todo)}, f, indent=2)
 
     print(f"\nwritten to {out_dir}:")
-    print(f"    todo_rsa.txt   {len(todo)} job(s)")
-    print(f"    report.txt     why each of the others is not being submitted")
-    print(f"    settings.json  what this audit was run with")
+    print(f"    todo_rsa.txt      {len(todo)} job(s)")
+    print(f"    report.txt        per-stage table + why each run is not complete")
+    print(f"    missing_maps.txt  {len(missing_maps)} individual map(s) not on disk")
+    print(f"    settings.json     what this audit was run with, incl. the "
+          f"{len(map_names)} expected map names")
     print(f"    ({len(epoch_configs)} per-epoch config snapshot(s) in {config_dir})")
     return 0
 

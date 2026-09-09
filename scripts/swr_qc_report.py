@@ -107,21 +107,37 @@ def _cut(sig, row, pair_idx, fs, pad_s=PAD_S):
     return t, seg, win
 
 
-def _panel(ax, t, seg, win, fs, title, sub):
+def _panel(ax, t, seg, win, fs, title, sub, show_right_label=False):
+    """Broadband and ripple band, each on its OWN axis.
+
+    The ripple band is 1-2 uV against tens of uV of broadband LFP, so the two
+    cannot share a y-axis. They used to be drawn on one, with the ripple
+    multiplied by a factor printed in small grey text in the corner -- which is
+    easy to miss and invites reading a ripple as ten times its real amplitude.
+    A second axis in the ripple's own colour states the scale instead of hiding
+    it in a caption.
+    """
     ax.axvspan(win[0], win[1], color=SHADE_C, lw=0, zorder=0)
     ax.plot(t, seg, color=BROAD_C, lw=0.6, zorder=2, label="broadband")
-    rip = _bandpass(seg, fs, *det.RIPPLE_BAND) if hasattr(det, "RIPPLE_BAND") \
-        else _bandpass(seg, fs, 80.0, 120.0)
-    scale = (np.percentile(np.abs(seg), 99) /
-             max(np.percentile(np.abs(rip), 99), 1e-9))
-    ax.plot(t, rip * scale, color=RIPPLE_C, lw=0.8, zorder=3,
-            label="80-120 Hz (scaled to fit)")
     ax.set_title(title, fontsize=8, pad=3)
-    ax.text(0.02, 0.02, sub + f"  x{scale:.0f}", transform=ax.transAxes,
+    ax.text(0.02, 0.02, sub, transform=ax.transAxes,
             fontsize=6.5, va="bottom", ha="left", color="#666")
     ax.set_xlim(t[0], t[-1])
     ax.set_xticks([-0.2, 0, 0.2])
     ax.tick_params(labelsize=7)
+
+    rip = _bandpass(seg, fs, *det.RIPPLE_BAND) if hasattr(det, "RIPPLE_BAND") \
+        else _bandpass(seg, fs, 80.0, 120.0)
+    ax2 = ax.twinx()
+    ax2.plot(t, rip, color=RIPPLE_C, lw=0.8, zorder=3, label="80-120 Hz")
+    lim = 1.15 * np.abs(rip).max()
+    ax2.set_ylim(-lim, lim)
+    ax2.tick_params(axis="y", colors=RIPPLE_C, labelsize=6.5)
+    ax2.spines["right"].set_color(RIPPLE_C)
+    ax2.spines["top"].set_visible(False)
+    if show_right_label:
+        ax2.set_ylabel(r"80–120 Hz ($\mu$V)", color=RIPPLE_C, fontsize=7)
+    return ax2
 
 
 def _grid(sig, ev, pairs, fs, out_stem, suptitle, n=9):
@@ -153,16 +169,20 @@ def _grid(sig, ev, pairs, fs, out_stem, suptitle, n=9):
             continue
         ax = axes.ravel()[k]
         ax.axis("on")
-        _panel(ax, t, seg, win, fs, f"{r.pair_id}  t={r.t_peak_s:.1f}s",
-               f"z={r.rms_peak_z:.1f}  {1000*r.duration_s:.0f} ms  "
-               f"{r.peak_freq_hz:.0f} Hz")
+        ax2 = _panel(ax, t, seg, win, fs, f"{r.pair_id}  t={r.t_peak_s:.1f}s",
+                     f"z={r.rms_peak_z:.1f}  {1000*r.duration_s:.0f} ms  "
+                     f"{r.peak_freq_hz:.0f} Hz",
+                     show_right_label=(k % ncol == ncol - 1))
         if k % ncol == 0:
-            ax.set_ylabel("µV")
+            ax.set_ylabel(r"broadband ($\mu$V)", fontsize=7)
         if k >= len(ev) - ncol:
             ax.set_xlabel("time from ripple peak (s)")
-    h, l = axes.ravel()[0].get_legend_handles_labels()
-    fig.legend(h, l, frameon=False, fontsize=7.5, ncol=2,
-               loc="lower center", bbox_to_anchor=(0.5, -0.015))
+    from matplotlib.lines import Line2D
+    fig.legend(handles=[
+        Line2D([], [], color=BROAD_C, lw=1.2, label="broadband (left axis)"),
+        Line2D([], [], color=RIPPLE_C, lw=1.2, label="80–120 Hz (right axis)")],
+        frameon=False, fontsize=7.5, ncol=2,
+        loc="lower center", bbox_to_anchor=(0.5, -0.015))
     fig.suptitle(suptitle, fontsize=9, y=1.0)
     fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     for ext in ("png", "pdf"):
@@ -410,19 +430,29 @@ def _artifact_panels(session, raw_by_pair, fs, masks, passed, rip_dir):
     ex_per = {k: np.asarray(v[sl], bool) for k, v in per.items()}
     ex_bad = np.asarray(bad[sl], bool)
 
-    # the largest discharge the IED criterion flagged
+    # The discharge with the largest RIPPLE-BAND envelope -- not the largest raw
+    # deflection. Measured across 12 derivations, IEDs beat ripples on raw
+    # amplitude in 12/12 (median 34 vs 9 uV) but on peak ripple-band envelope in
+    # 11/12 (20 vs 4 uV), and it is the second number that matters: the panel
+    # exists to show what the detector would have called a ripple, not what is
+    # merely big. Ranking by raw amplitude picked visually unconvincing examples
+    # on clean derivations.
+    xb = np.abs(hilbert(sosfiltfilt(
+        butter(4, [det.RIPPLE_BAND[0] / (fs / 2), det.RIPPLE_BAND[1] / (fs / 2)],
+               btype="band", output="sos"), x)))
+
     ied_snip = np.zeros(0)
     lab, n = ndimage_label(per["ied_janca"])
     if n:
-        best, best_amp = None, -np.inf
+        best, best_env = None, -np.inf
         for i in range(1, n + 1):
             idx = np.flatnonzero(lab == i)
             c = int(idx[len(idx) // 2])
             if c - half < 0 or c + half >= len(x):
                 continue
-            amp = np.abs(x[c - half:c + half]).max()
-            if amp > best_amp:
-                best, best_amp = c, amp
+            e_ = xb[idx].max()
+            if e_ > best_env:
+                best, best_env = c, e_
         if best is not None:
             ied_snip = np.asarray(x[best - half:best + half], float)
 
@@ -434,9 +464,6 @@ def _artifact_panels(session, raw_by_pair, fs, masks, passed, rip_dir):
     # freak one.
     rip_snip = np.zeros(0)
     ev = passed[passed.pair_id == pid]
-    xb = np.abs(hilbert(sosfiltfilt(
-        butter(4, [det.RIPPLE_BAND[0] / (fs / 2), det.RIPPLE_BAND[1] / (fs / 2)],
-               btype="band", output="sos"), x)))
     cand = []
     for _, r in ev.iterrows():
         c = int(r.peak_sample) if "peak_sample" in r else int(r.t_peak_s * fs)
@@ -763,21 +790,42 @@ def session_stacks(session, analysis_name=ANALYSIS_NAME, win_s=WIN_S,
         xyz = [p_.get("mni_x"), p_.get("mni_y"), p_.get("mni_z")]
         coords.append(xyz if np.isfinite(xyz).all() else [np.nan] * 3)
         rois.append(str(p_.get("pair_roi", "HC_mid")))
-        # Choose the event to feature by how clearly the ripple stands out from
-        # the slow background on that contact, not by raw RMS: the largest RMS
-        # event tends to sit on the contact with the biggest slow waves, which
-        # is exactly the one where the ripple is least visible. Score = ripple
-        # envelope at the peak / SD of the same window below 40 Hz.
+        # Which event to FEATURE in the figure. A display choice only -- it
+        # changes no count, rate or statistic -- but the wrong score picks an
+        # unconvincing example, and the featured event is what most readers
+        # take as the evidence that these are ripples.
+        #
+        # Scoring on envelope / slow-background alone (the previous rule) is not
+        # enough: it rewards any event on a flat contact, including one sitting
+        # in continuous ripple-band activity, where nothing stands out. A ripple
+        # is a DISCRETE burst, so focality has to be in the score, together with
+        # the two properties that make an event look canonical rather than
+        # marginal: a duration in the middle of the accepted range, and a peak
+        # frequency away from the band edges where the filter, not the signal,
+        # sets it.
         env = np.abs(hilbert(rb))
         slow = sosfiltfilt(butter(4, 40 / (fs / 2), btype="low", output="sos"), raw)
-        cand = pk[(pk - half >= 0) & (pk + half < len(raw))]
-        if len(cand):
-            sc = np.array([env[c] / (slow[c - half:c + half].std() + 1e-9)
-                           for c in cand])
+        cand_ev = e[(e.peak_sample >= half) &
+                    (e.peak_sample < len(raw) - half)]
+        if len(cand_ev):
+            sc, cs = [], []
+            for _, r in cand_ev.iterrows():
+                c = int(r.peak_sample)
+                a, b = int(r.start_sample), int(r.stop_sample)
+                nbr = np.r_[env[c - half:max(a, c - half)],
+                            env[min(b, c + half):c + half]]
+                focal = env[c] / (np.median(nbr) + 1e-9) if nbr.size else 1.0
+                contrast = env[c] / (slow[c - half:c + half].std() + 1e-9)
+                dur_ms = 1000.0 * float(r.duration_s)
+                # triangular preferences, peaked at 65 ms and 97 Hz
+                w_dur = max(0.0, 1.0 - abs(dur_ms - 65.0) / 45.0)
+                w_frq = max(0.0, 1.0 - abs(float(r.peak_freq_hz) - 97.0) / 20.0)
+                sc.append(focal * contrast * w_dur * w_frq)
+                cs.append(c)
             j = int(np.argmax(sc))
             if sc[j] > best_z:
                 best_z = sc[j]
-                best_ex = (i, int(cand[j]))
+                best_ex = (i, int(cs[j]))
 
     if best_ex is not None:
         i, bpk = best_ex

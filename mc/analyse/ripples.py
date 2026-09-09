@@ -24,6 +24,7 @@ Design parameters are Sakon & Kahana (2022, PNAS 119:e2201657119) and He et al.
 """
 
 import os
+import re
 import glob
 
 import numpy as np
@@ -54,6 +55,18 @@ REWARDS = ('A', 'B', 'C', 'D')
 # like "error, while learning" is never drawn the same colour as its partner.
 VALENCE_COLOUR = {'correct': '#0E3D3A', 'error': '#B03A5B'}
 STAGE_LIGHTEN  = {'first uncovers': 0.0, 'while learning': 0.35, 'once known': 0.65}
+
+# When the four rewards are the thing being compared -- every row of `full` --
+# they take the project's fixed A-D ramp (CLAUDE.md), not a valence hue.
+REWARD_COLOUR = {'A': '#F15A29', 'B': '#F7931E', 'C': '#C7C6E2', 'D': '#6B60AA'}
+
+# When the three stages of ONE reward are compared -- the `stage` test -- the
+# stage is the variable, so it gets its own scale: what the participant is
+# doing at that point, first seeing it / planning the route / executing a known
+# route.
+STAGE_COLOUR = {'first uncovers': '#6E1410',      # first seeing  - dark red
+                'while learning': '#1D4B54',      # planning      - dark blue
+                'once known':     '#667F6C'}      # executing     - sage
 
 
 # ── 1) Loading ────────────────────────────────────────────────────────
@@ -224,37 +237,77 @@ def peri_event_rate(event_times, ripple_times, intervals, half_s=HALF_S,
         n = (np.searchsorted(t, stops, side='right')
              - np.searchsorted(t, starts, side='left')).astype(float)
         exposure = clean_seconds(intervals, starts, stops)
-        out[:, k] = np.where(exposure > 0, n / exposure, np.nan)
+        # `exposure > 0` is not a sufficient guard. A bin overlapping a clean
+        # interval by microseconds passes it, and n/exposure then returns a
+        # rate of 1e8 Hz which dominates every average it enters -- visible as
+        # a 1e8 y-axis on `full`, correct/once known. MIN_CLEAN_FRAC already
+        # states the intended rule ("a window must be at least half
+        # artifact-free") and `window_test` enforces it; this did not.
+        out[:, k] = np.where(exposure >= MIN_CLEAN_FRAC * bin_s,
+                             n / np.maximum(exposure, 1e-12), np.nan)
     return centres, out
 
 
-def rate_by_subject(bundle, events_per_session, half_s=HALF_S, bin_s=BIN_S):
-    """Peri-event rate per subject, averaged over that subject's derivations.
+def rate_by_unit(bundle, events_per_session, unit='subject',
+                 min_events=MIN_EVENTS, half_s=HALF_S, bin_s=BIN_S):
+    """Peri-event rate per analysis unit, averaged over its derivations.
 
-    `events_per_session` maps session -> event times. Returns
-    (bin centres, {subject: profile}, counts) where counts records how much data
-    went into the condition -- never left implicit.
+    `unit` is the thing the group test treats as independent:
+
+      'derivation' one value per bipolar pair per session -- the electrode
+                 level. Most units, least independence: pairs on the same probe
+                 in the same session see overlapping tissue.
+      'session'  one value per session, pairs pooled first. The convention used
+                 elsewhere in this project -- a cell recorded on a second day
+                 through the same electrode counts as a separate cell.
+      'subject'  one value per patient, sessions pooled first. Conservative:
+                 16 of 41 patients gave 2-3 sessions, sharing electrodes,
+                 anatomy and physiology.
+
+    All three are reported rather than one being chosen silently. They differ
+    in what they treat as exchangeable, not in the data that goes in.
+
+    `min_events` is the per-session floor AFTER dedup. A session below it
+    contributes nothing to that condition.
+
+    Returns (bin centres, {unit_key: profile}, counts).
     """
-    per_subject, centres = {}, None
+    per_unit, centres = {}, None
     counts = {'n_sessions': 0, 'n_derivations': 0,
-              'n_events_raw': 0, 'n_events_used': 0}
+              'n_events_raw': 0, 'n_events_used': 0, 'n_sessions_dropped': 0}
     for session, raw in events_per_session.items():
         t = dedup(raw)
         counts['n_events_raw'] += len(raw)
-        if t.size < MIN_EVENTS:
+        if t.size < min_events:
+            counts['n_sessions_dropped'] += 1
             continue
         counts['n_sessions'] += 1
         counts['n_events_used'] += int(t.size)
-        subject = subject_of(bundle, session)
         for pair_id, ripples, intervals in derivations(bundle, session):
             counts['n_derivations'] += 1
             centres, profile = peri_event_rate(t, ripples, intervals,
                                                half_s=half_s, bin_s=bin_s)
-            per_subject.setdefault(subject, []).append(np.nanmean(profile, axis=0))
-    per_subject = {s: np.nanmean(np.vstack(v), axis=0)
-                   for s, v in per_subject.items()}
-    counts['n_subjects'] = len(per_subject)
-    return centres, per_subject, counts
+            if unit == 'subject':
+                key = subject_of(bundle, session)
+            elif unit == 'derivation':
+                key = (int(session), str(pair_id))
+            else:
+                key = int(session)
+            per_unit.setdefault(key, []).append(np.nanmean(profile, axis=0))
+    per_unit = {k: np.nanmean(np.vstack(v), axis=0) for k, v in per_unit.items()}
+    counts['n_subjects'] = len({subject_of(bundle, s)
+                                for s in events_per_session
+                                if dedup(events_per_session[s]).size >= min_events})
+    counts['n_units'] = len(per_unit)
+    counts['unit'] = unit
+    counts['min_events'] = min_events
+    return centres, per_unit, counts
+
+
+def rate_by_subject(bundle, events_per_session, half_s=HALF_S, bin_s=BIN_S):
+    """Backwards-compatible wrapper: `rate_by_unit` with unit='subject'."""
+    return rate_by_unit(bundle, events_per_session, unit='subject',
+                        half_s=half_s, bin_s=bin_s)
 
 
 # ── 4) Tests ──────────────────────────────────────────────────────────
@@ -425,15 +478,306 @@ def window_test(profiles, centres, window, baseline=BASELINE_WIN,
 
 # ── 5) Plots ──────────────────────────────────────────────────────────
 
-def condition_colour(label, index=0):
-    """Valence sets the hue, stage sets the lightness."""
+def condition_colour(label, index=0, scheme=None):
+    """Colour by whatever the panel is actually contrasting.
+
+    `scheme='reward'` -- the four rewards are the comparison (every row of
+    `full`), so use the project's fixed A-D orange-to-purple ramp.
+    `scheme='stage'`  -- the three stages of one reward are the comparison
+    (the `stage` test), so use the stage scale.
+    Otherwise valence sets the hue and stage sets the lightness, which is what
+    a crossed label like "error, while learning" needs.
+    """
     low = str(label).lower()
+    if scheme == 'reward':
+        for r, c in REWARD_COLOUR.items():
+            if re.search(rf'\b{r}\b', str(label)):
+                return c
+    if scheme == 'stage':
+        for s, c in STAGE_COLOUR.items():
+            if s in low:
+                return c
     valence = next((v for v in VALENCE if v in low), None)
     if valence is None:
         return plt.get_cmap('tab10')(index % 10)
     lighten = next((f for s, f in STAGE_LIGHTEN.items() if s in low), 0.0)
     base = np.array(mcolors.to_rgb(VALENCE_COLOUR[valence]))
     return tuple(base + (1.0 - base) * lighten)
+
+
+# ── Figure geometry ───────────────────────────────────────────────────
+# One row is 16 cm x 4 cm on the page, which is the width of a two-column
+# manuscript figure and a height that stacks without becoming a full page.
+# Everything is set in points at that size: no post-hoc scaling, so the font
+# that comes out is the font asked for.
+ROW_W_CM, ROW_H_CM = 16.0, 4.0
+CM = 1 / 2.54
+FS = 9                                        # Arial 9 pt, per the house style
+LW_RATE = 1.2                                 # peri-event traces: thin enough
+LW = 2.0                                      # that the SEM band stays visible
+
+
+# The data rows are 4 cm each. The legend and the title get their own strips
+# on top of that rather than eating into the panels -- at 4 cm there is not
+# enough height to share.
+LEGEND_CM, TITLE_CM = 1.2, 0.6
+
+
+def _row_axes(n_rows, extra_cm=0.0):
+    fig, axes = plt.subplots(n_rows, 3, squeeze=False,
+                             figsize=(ROW_W_CM * CM,
+                                      (ROW_H_CM * n_rows + extra_cm) * CM),
+                             gridspec_kw=dict(width_ratios=[1.35, 0.85, 1.25]))
+    for ax in axes.ravel():
+        ax.tick_params(labelsize=FS - 1, length=2.5, width=0.8)
+        for sp in ax.spines.values():
+            sp.set_linewidth(0.8)
+    return fig, axes
+
+
+def _mean_sem(profiles):
+    X = np.vstack([profiles[s] for s in sorted(profiles)])
+    return (np.nanmean(X, axis=0),
+            np.nanstd(X, axis=0) / max(np.sqrt(X.shape[0]), 1), X.shape[0])
+
+
+def _n_label(label, n_units, counts=None):
+    """Legend text: the TEST unit first, then the other two levels.
+
+    `n_units` is whatever `unit` was -- derivations, sessions or subjects. It
+    was previously printed as "subj" regardless, so a session-level run read
+    "56 subj, 56 sess" when there are only 41 patients in the whole dataset.
+    """
+    c = (counts or {}).get(label, {})
+    unit = c.get('unit', 'subject')
+    short = {'derivation': 'deriv', 'session': 'sess', 'subject': 'subj'}[unit]
+    # Short: four conditions with the full three-level breakdown each pushed
+    # the figure to 26 cm wide. The breakdown goes in one footnote instead.
+    return f'{label} (n={n_units} {short})'
+
+
+def _win_vs_baseline(profiles, centres, win, baseline):
+    """Paired t across subjects, window vs baseline. Returns (t, p, stars)."""
+    mb = (centres >= baseline[0]) & (centres <= baseline[1])
+    mw = (centres >= win[0]) & (centres <= win[1])
+    b, w = [], []
+    for s in sorted(profiles):
+        vb, vw = np.nanmean(profiles[s][mb]), np.nanmean(profiles[s][mw])
+        if np.isfinite(vb) and np.isfinite(vw):
+            b.append(vb); w.append(vw)
+    if len(b) < 3:
+        return np.nan, np.nan, ''
+    tt, pp = stats.ttest_rel(w, b)
+    star = '***' if pp < 0.001 else '**' if pp < 0.01 else '*' if pp < 0.05 else ''
+    return float(tt), float(pp), star
+
+
+def _win_mean(profiles, centres, win):
+    """Per-subject mean rate inside a window -> (mean, sem, n)."""
+    m = (centres >= win[0]) & (centres <= win[1])
+    v = np.array([np.nanmean(profiles[s][m]) for s in sorted(profiles)], float)
+    v = v[np.isfinite(v)]
+    return (float(np.mean(v)) if v.size else np.nan,
+            float(np.std(v) / max(np.sqrt(v.size), 1)) if v.size else np.nan,
+            v.size)
+
+
+def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
+              suptitle=None, scheme=None, counts=None, share_y=False):
+    """Stacked rows of (title, profiles, sliding), 16 cm wide, 4 cm per row.
+
+    Per row, three panels:
+
+    left    peri-event rate, mean +- SEM across subjects. The BASELINE window is
+            shaded grey and the widest surviving cluster, if any, is shaded in
+            the condition's colour.
+    middle  the same rates as ABSOLUTE Hz in the baseline window and in the
+            test window, side by side. This replaces the permutation-null
+            histogram: the null says how surprising a cluster is, but not what
+            is being compared to what, and with events 1.25 s apart (median)
+            the baseline is the part of this analysis that needs looking at.
+    right   t at every window position with the surviving clusters shaded, and
+            the sliding width stated on the panel.
+    """
+    extra = LEGEND_CM + (TITLE_CM if suptitle else 0.0)
+    fig, axes = _row_axes(len(rows), extra_cm=extra)
+    legend_labels = {}
+    for r, (row_title, profiles_by_condition, sliding_by_condition) in enumerate(rows):
+        # ---- left: peri-event rate ---------------------------------------
+        ax = axes[r][0]
+        ax.axvspan(*baseline, color='0.88', lw=0, zorder=0)
+        for i, (label, profiles) in enumerate(profiles_by_condition.items()):
+            mean, sem, n = _mean_sem(profiles)
+            c = condition_colour(label, i, scheme)
+            ax.plot(centres_of(sliding_by_condition, profiles), mean, color=c,
+                    lw=LW_RATE, label=_n_label(label, n, counts),
+                    solid_capstyle='round', zorder=3)
+            ax.fill_between(centres_of(sliding_by_condition, profiles),
+                            mean - sem, mean + sem, color=c, alpha=0.22,
+                            lw=0, zorder=2)
+        ax.axvline(0, color='0.35', lw=1.0)
+        ax.set_ylabel('Ripple rate (Hz)', fontsize=FS)
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            if lab not in legend_labels:
+                legend_labels[lab] = h
+        ax.set_xlabel('Time from event (s)', fontsize=FS, labelpad=1)
+        if r == 0:
+            ax.set_title('Peri-event rate', fontsize=FS, pad=3)
+        # Rows are named down the left margin so the three panel titles can
+        # stay on the top row only. A single-row figure has nothing to
+        # distinguish, and the suptitle already says what it is.
+        if len(rows) > 1:
+            ax.annotate(row_title, xy=(-0.34, 0.5), xycoords='axes fraction',
+                        rotation=90, va='center', ha='center', fontsize=FS,
+                        fontweight='bold')
+
+        # ---- middle: what is compared to what ----------------------------
+        ax = axes[r][1]
+        cen = centres_of(sliding_by_condition,
+                         next(iter(profiles_by_condition.values())))
+        win = _test_window(sliding_by_condition, width_s)
+        for i, (label, profiles) in enumerate(profiles_by_condition.items()):
+            c = condition_colour(label, i, scheme)
+            bm, bs, _ = _win_mean(profiles, cen, baseline)
+            wm, ws, _ = _win_mean(profiles, cen, win)
+            x = np.array([0, 1]) + (i - (len(profiles_by_condition) - 1) / 2) * 0.13
+            ax.errorbar(x, [bm, wm], yerr=[bs, ws], color=c, lw=LW,
+                        marker='o', ms=3.5, capsize=2, elinewidth=1.0)
+            # Paired across subjects, window vs baseline. This is the
+            # comparison the panel draws, so it carries its own test rather
+            # than borrowing the cluster p from the sliding search.
+            _, pv, star = _win_vs_baseline(profiles, cen, win, baseline)
+            if star:
+                # At the top of the frame above the condition's own point.
+                # Placed at the data point they collided as soon as four
+                # conditions had similar means.
+                ax.annotate(star, xy=(x[1], 0.97), xycoords=('data', 'axes fraction'),
+                            ha='center', va='top', fontsize=FS, color=c)
+        lo, hi = ax.get_ylim()
+        ax.set_ylim(lo, hi + 0.14 * (hi - lo))       # headroom for the stars
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(['base', 'test'], fontsize=FS)
+        ax.set_xlim(-0.5, 1.5)
+        ax.set_ylabel('Ripple rate (Hz)', fontsize=FS)
+        ax.set_xlabel('base %.1f..%.1f s   test %.2f..%.2f s'
+                      % (*baseline, *win), fontsize=FS - 3, color='0.35',
+                      labelpad=2)
+        if r == 0:
+            ax.set_title('Baseline vs window', fontsize=FS, pad=3)
+
+        # ---- right: the sliding test --------------------------------------
+        ax = axes[r][2]
+        sig = []
+        for i, (label, sliding) in enumerate(sliding_by_condition.items()):
+            if sliding is None:
+                continue
+            c = condition_colour(label, i, scheme)
+            ax.plot(sliding['times'], sliding['t'], color=c, lw=1.6)
+            for cl in sliding['clusters']:
+                if cl['p'] < 0.05:
+                    ax.axvspan(cl['start_s'], cl['stop_s'], color=c,
+                               alpha=0.16, lw=0)
+                    sig.append((cl, c))
+            for sign in (1, -1):
+                ax.axhline(sign * sliding['threshold'], color='0.6', lw=0.7,
+                           ls=':')
+        # Headroom sized to the number of labels ACTUALLY drawn, then stack them
+        # from the top of the frame down. Staggering by condition index instead
+        # put a lone label from the 4th condition at 0.67 of the panel height,
+        # which is on top of the curves.
+        if sig:
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(lo, hi + 0.15 * len(sig) * (hi - lo))
+        for j, (cl, c) in enumerate(sig):
+            ax.annotate(f"p={cl['p']:.3f}",
+                        xy=(cl['peak_s'], 0.97 - 0.10 * j),
+                        xycoords=('data', 'axes fraction'),
+                        ha='center', va='top', fontsize=FS - 3, color=c)
+        ax.axhline(0, color='0.45', lw=0.8)
+        ax.axvline(0, color='0.35', lw=1.0)
+        ax.set_ylabel('t vs own baseline', fontsize=FS)
+        ax.set_xlabel('Sliding window centre (s)', fontsize=FS, labelpad=1)
+        if width_s is not None:
+            # State the window width on the panel and draw it to scale, so the
+            # smoothing implied by the test is visible rather than inferred.
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(lo - 0.16 * (hi - lo), hi)     # room for the scale bar
+            lo, hi = ax.get_ylim()
+            y = lo + 0.06 * (hi - lo)
+            ax.plot([-1.9, -1.9 + width_s], [y] * 2, color='0.25', lw=3.0,
+                    solid_capstyle='butt')
+            ax.annotate(f'{width_s:g} s', xy=(-1.9 + width_s / 2, y),
+                        xytext=(0, 4), textcoords='offset points', ha='center',
+                        fontsize=FS - 3, color='0.25')
+        if r == 0:
+            n_lab = sum(len(s['clusters']) for s in sliding_by_condition.values()
+                        if s is not None)
+            ax.set_title('Sliding test', fontsize=FS, pad=3)
+
+    if share_y and len(rows) > 1:
+        # One scale per COLUMN, across rows. Panels within a column then
+        # compare directly by eye; the cost is that a small effect in a row
+        # with a large one is flattened, which is why both versions are saved.
+        for col in range(3):
+            lims = [axes[r][col].get_ylim() for r in range(len(rows))]
+            lo, hi = min(l[0] for l in lims), max(l[1] for l in lims)
+            for r in range(len(rows)):
+                axes[r][col].set_ylim(lo, hi)
+
+    total_cm = ROW_H_CM * len(rows) + extra
+    fig.tight_layout(pad=0.4, h_pad=1.4, w_pad=1.3,
+                     rect=[0, LEGEND_CM / total_cm,
+                           1, 1 - (TITLE_CM / total_cm if suptitle else 0)])
+    if legend_labels:
+        ncol = min(len(legend_labels), 3 if len(legend_labels) > 4 else 4)
+        fig.legend(legend_labels.values(), legend_labels.keys(),
+                   loc='lower center', bbox_to_anchor=(0.5, 0.055),
+                   ncol=ncol, fontsize=FS - 2, frameon=False,
+                   handlelength=1.3, handletextpad=0.4, columnspacing=1.4,
+                   borderaxespad=0.0)
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=FS, y=0.998, va='top')
+    if counts:
+        # One line naming all three levels, so the legend can stay short while
+        # the sample is still stated on the figure.
+        c0 = next(iter(counts.values()))
+        fig.text(0.5, 0.005,
+                 f"test unit: {c0.get('unit', '?')}   |   "
+                 f"{c0.get('n_sessions', '?')} sessions, "
+                 f"{c0.get('n_subjects', '?')} subjects, "
+                 f"{c0.get('n_derivations', '?')} derivations   |   "
+                 f"min {c0.get('min_events', '?')} events per session",
+                 ha='center', va='bottom', fontsize=FS - 3, color='0.4')
+    os.makedirs(os.path.dirname(out_png), exist_ok=True)
+    fig.savefig(out_png, dpi=300, bbox_inches='tight')
+    fig.savefig(os.path.splitext(out_png)[0] + '.pdf', bbox_inches='tight')
+    plt.close(fig)
+    return out_png
+
+
+def centres_of(sliding_by_condition, profiles):
+    """Bin centres, taken from the profiles themselves."""
+    any_p = next(iter(profiles.values())) if isinstance(profiles, dict) else profiles
+    n = len(any_p)
+    return np.linspace(-HALF_S + BIN_S / 2, HALF_S - BIN_S / 2, n)
+
+
+A_PRIORI_WIN = (0.0, 0.5)      # the pre-specified post-event window
+
+
+def _test_window(sliding_by_condition, width_s):
+    """The window the middle panel tests: the PRE-SPECIFIED one, always.
+
+    This used to be the widest surviving cluster, which made the panel
+    circular. For `reward` that window was D's cluster (0.35-0.65 s), so every
+    other reward was tested in a window chosen by D's own data -- and A came
+    out starred at p = 0.0098 while surviving nothing in the corrected sliding
+    test. A fixed a-priori window cannot select itself.
+
+    The surviving cluster is still shown, shaded on the peri-event panel, so
+    nothing is hidden -- it is just no longer what defines the test.
+    """
+    return A_PRIORI_WIN
 
 
 def plot_condition(centres, profiles_by_condition, sliding_by_condition,

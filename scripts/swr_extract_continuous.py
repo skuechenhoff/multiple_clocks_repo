@@ -191,6 +191,40 @@ def extract_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
         np.save(os.path.join(out_dir, "continuous.npy"), sig)
         pairs.to_csv(os.path.join(out_dir, "pairs.csv"), index=False)
 
+        # The before/after spectra, for the adaptive-notch figure. Popped from
+        # meta because it holds arrays and meta is written as JSON.
+        psd = meta.pop("_psd", None)
+        if psd is not None:
+            np.savez_compressed(
+                os.path.join(out_dir, "notch_psd.npz"),
+                pair_ids=np.asarray(list(pairs.pair_id), dtype=object),
+                recording_site=str(meta.get("recording_site")),
+                session=int(session),
+                notch_applied_hz=np.asarray(
+                    sorted(float(k) for k in meta.get("notch_applied_hz", {}))),
+                # how many derivations were notched at each harmonic -- the
+                # decision is per derivation now, so "notched" is a count
+                n_notched=np.asarray(
+                    [meta.get("notch_applied_hz", {}).get(f"{f:.0f}", 0)
+                     for f in pp.LINE_FREQS], dtype=int),
+                n_pairs=int(sig.shape[0]),
+                # every measured ratio, not only the notched ones: the point
+                # of the figure is that some harmonics were left alone, and
+                # that is only legible next to the ratio that spared them.
+                # Column 1 is the MEDIAN across derivations; the full
+                # per-derivation set is in `ratios_per_pair`.
+                ratios=np.asarray(
+                    [[float(k), float(v)] for k, v in
+                     sorted(meta.get("line_noise_ratio_median", {}).items(),
+                            key=lambda kv: float(kv[0]))],
+                    dtype=float).reshape(-1, 2),
+                ratios_per_pair=np.asarray(
+                    [meta.get("line_noise_ratio", {}).get(f"{f:.0f}",
+                                                          [np.nan] * sig.shape[0])
+                     for f in pp.LINE_FREQS], dtype=float),
+                ratio_threshold=float(meta.get("notch_ratio_threshold", 2.0)),
+                **psd)
+
         res = _qc_psd(sig, pp.TARGET_FS, list(pairs.pair_id),
                       os.path.join(out_dir, "qc_psd.png"),
                       notch_hz=meta.get("notch_applied_hz"))

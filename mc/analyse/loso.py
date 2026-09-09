@@ -20,7 +20,7 @@ Everything empirical and every permutation goes through `tstat` /
 on the identity sign-flip, making that guarantee checkable rather than assumed.
 
 Input layout, one folder per TR:
-    {root}/{dir_pattern.format(tr=TR)}/
+    {root}/{fmt_level(dir_pattern, level)}/
         cropped_masked_smooth_fwhm5_{model}_beta_std.nii[.gz]   (X,Y,Z,n_subj)
         mask_all_32_subjects.nii[.gz]                           (X,Y,Z)
 
@@ -39,6 +39,38 @@ import nibabel as nib
 FILE_RE = re.compile(r"^cropped_masked_smooth_fwhm5_(.+)_beta_std\.nii(\.gz)?$")
 BETA_STEM = "cropped_masked_smooth_fwhm5_{model}_beta_std.nii"
 GROUP_MASK_NAME = "mask_all_32_subjects.nii"
+
+# ------------------------------------------------------- the third axis ----
+# Beta maps are stacked along one extra axis whose levels are either the TRs of
+# the instruction period (ordered seconds -- the original per-TR analysis) or a
+# set of named conditions (the instruction-epoch GLMs: 'instr_see-A-first',
+# ...). Everything below treats that axis as a plain list of LABELS and never
+# assumes they are numbers. Only the plotting cares which kind it is, because
+# a line drawn through unordered conditions asserts an ordering that does not
+# exist. The statistics are identical either way: max-t over voxels x levels.
+AXIS_KINDS = ("tr", "condition")
+
+
+def axis_is_numeric(levels):
+    """True if the axis levels are numbers, i.e. an ordered (TR) axis."""
+    return all(isinstance(v, (int, np.integer)) for v in levels)
+
+
+def fmt_level(pattern, level):
+    """Substitute one axis level into a directory pattern. `{tr}` stays the
+    placeholder name so every existing pattern keeps working; `{condition}`
+    and `{level}` are accepted too so a condition-wise pattern reads
+    naturally."""
+    return pattern.format(tr=level, condition=level, level=level)
+
+
+def _lab(v):
+    """One axis label, JSON-safe (numpy ints do not serialise)."""
+    return int(v) if isinstance(v, (int, np.integer)) else str(v)
+
+
+def level_labels(levels):
+    return [_lab(v) for v in levels]
 
 
 # --------------------------------------------------------------- inputs ----
@@ -72,7 +104,7 @@ def load_ref(root, dir_pattern, trs):
     ref, brain, used = None, None, []
     for tr in trs:
         try:
-            p = resolve_nii(os.path.join(root, dir_pattern.format(tr=tr),
+            p = resolve_nii(os.path.join(root, fmt_level(dir_pattern, tr),
                                          GROUP_MASK_NAME))
         except FileNotFoundError:
             continue
@@ -82,14 +114,14 @@ def load_ref(root, dir_pattern, trs):
         used.append(tr)
     if ref is None:
         raise FileNotFoundError(
-            f"no {GROUP_MASK_NAME} found in any of TR{trs} under "
+            f"no {GROUP_MASK_NAME} found in any of {list(trs)} under "
             f"{os.path.join(root, dir_pattern)}")
     if len(used) < len(trs):
-        print(f"[warn] group mask present for only {len(used)}/{len(trs)} TRs "
+        print(f"[warn] group mask present for only {len(used)}/{len(trs)} level(s) "
               f"{used}; brain mask is the intersection of those",
               file=sys.stderr)
     print(f"[info] brain mask: {int(brain.sum())} voxels "
-          f"(intersection over {len(used)} TR mask(s))", file=sys.stderr)
+          f"(intersection over {len(used)} level mask(s))", file=sys.stderr)
     return ref, brain
 
 
@@ -121,7 +153,7 @@ def load_masks(specs, ref, brain):
 
 def discover_models(root, dir_pattern, tr):
     """Every `{model}` with a beta map in this TR's folder, sorted."""
-    d = os.path.join(root, dir_pattern.format(tr=tr))
+    d = os.path.join(root, fmt_level(dir_pattern, tr))
     return [m.group(1) for m in
             (FILE_RE.match(f) for f in sorted(os.listdir(d))) if m]
 
@@ -173,7 +205,7 @@ def check_inputs(root, dir_pattern, models, trs):
     bad = []
     for model in models:
         for tr in trs:
-            p = os.path.join(root, dir_pattern.format(tr=tr),
+            p = os.path.join(root, fmt_level(dir_pattern, tr),
                              BETA_STEM.format(model=model))
             try:
                 f = resolve_nii(p)
@@ -221,7 +253,7 @@ def read_model_columns(root, dir_pattern, model, trs, ijk):
     ix, iy, iz = ijk
     out = None
     for j, tr in enumerate(trs):
-        f = resolve_nii(os.path.join(root, dir_pattern.format(tr=tr),
+        f = resolve_nii(os.path.join(root, fmt_level(dir_pattern, tr),
                                      BETA_STEM.format(model=model)))
         data = _load_with_retry(f)
         if data.ndim == 3:
@@ -343,13 +375,13 @@ def run_svc(D, ref, ijk, n_perm, seed, trs=None):
     return Tobs, nmt, dict(
         n_vox=int(n_vox), n_tr=int(n_tr), n_subj=int(n),
         peak_t=t_p, peak_p_FWE=float((nmt >= t_p).mean()),
-        peak_TR=int(trs[pk_p[1]]), peak_mni=mni_p,
+        peak_TR=_lab(trs[pk_p[1]]), peak_mni=mni_p,
         peak_t_neg=float(-t_n), peak_p_FWE_neg=float((nmt >= t_n).mean()),
-        peak_TR_neg=int(trs[pk_n[1]]), peak_mni_neg=mni_n,
+        peak_TR_neg=_lab(trs[pk_n[1]]), peak_mni_neg=mni_n,
         t_crit_FWE05=tcrit,
         n_supra_FWE05=int((Tobs >= tcrit).sum()),
         n_supra_FWE05_neg=int((-Tobs >= tcrit).sum()),
-        trs=[int(t) for t in trs],
+        trs=level_labels(trs),
         peak_voxel_t_by_TR=[float(v) for v in Tobs[pk_p[0], :]],
         max_t_by_TR=[float(v) for v in Tobs.max(0)],
         n_perm=int(n_perm), seed=int(seed))
@@ -378,7 +410,7 @@ def run_loso(D, k_values, n_perm, seed, trs=None):
         t = tstat(held)
         nm = null_max_t(held, n_perm=n_perm, seed=seed + 100 + kk)
         out[str(kk)] = dict(
-            k=int(kk), trs=[int(t) for t in trs],
+            k=int(kk), trs=level_labels(trs),
             mean=[float(v) for v in held.mean(0)],
             sem=[float(v) for v in held.std(0, ddof=1) / np.sqrt(n)],
             t=[float(v) for v in t],
@@ -410,8 +442,8 @@ def run_wholebrain(D, ref, ijk, n_perm, seed, want_neg=False, trs=None):
     mni = nib.affines.apply_affine(ref.affine, [ix[pk[0]], iy[pk[0]], iz[pk[0]]])
     summary = dict(
         n_vox=int(n_vox), n_tr=int(n_tr), n_subj=int(n), n_perm=int(n_perm),
-        seed=int(seed), peak_t=float(Tobs[pk]), peak_TR=int(trs[pk[1]]),
-        trs=[int(t) for t in trs],
+        seed=int(seed), peak_t=float(Tobs[pk]), peak_TR=_lab(trs[pk[1]]),
+        trs=level_labels(trs),
         peak_mni=[int(round(float(v))) for v in mni],
         peak_p_FWE=float((nmt >= Tobs[pk]).mean()),
         t_crit_FWE05=float(np.percentile(nmt, 95)),
@@ -497,9 +529,13 @@ def summary_row(svc, loso_rec=None):
                p_FWE_neg=svc["peak_p_FWE_neg"], n_supra_neg=svc["n_supra_FWE05_neg"])
     if loso_rec is not None:
         t = np.asarray(loso_rec["t"])
+        # the LEVEL of the peak, not its position along the axis -- with a
+        # subset like --trs 4,5,6 the position said 0/1/2 rather than 4/5/6.
+        i = int(t.argmax())
+        levels = loso_rec.get("trs") or list(range(len(t)))
         row.update(loso_k=int(loso_rec["k"]), loso_peak_t=round(float(t.max()), 3),
-                   loso_peak_TR=int(t.argmax()),
-                   loso_p_FWE=loso_rec["p_FWE"][int(t.argmax())])
+                   loso_peak_TR=_lab(levels[i]),
+                   loso_p_FWE=loso_rec["p_FWE"][i])
     return row
 
 
@@ -572,10 +608,17 @@ def load_settings(out_dir):
 
 # ------------------------------------------------------------- plotting ----
 # CLAUDE.md state palette -- the four reward channels ARE the A/B/C/D rewards.
-CHANNEL_COLOURS = {"curr_rew": "#F15A29", "next_rew": "#F7931E",
-                   "two_next_rew": "#C7C6E2", "three_next_rew": "#6B60AA"}
-CHANNEL_LABELS = {"curr_rew": "reward A (curr)", "next_rew": "reward B (next)",
-                  "two_next_rew": "reward C (+2)", "three_next_rew": "reward D (+3)"}
+# Keyed by the CURRENT split-channel names (fMRI_run_RSA_instruction.py renamed
+# curr_rew -> A_rew etc.; see its LEGACY_MODEL_NAMES). Colours are the fixed
+# project state colours A/B/C/D, orange -> purple.
+CHANNEL_COLOURS = {"a_rew": "#F15A29", "b_rew": "#F7931E",
+                   "c_rew": "#C7C6E2", "d_rew": "#6B60AA"}
+CHANNEL_LABELS = {"a_rew": "reward A", "b_rew": "reward B",
+                  "c_rew": "reward C", "d_rew": "reward D"}
+# Result folders written before the rename still hold the old names, so they
+# keep their colours instead of silently falling back to grey.
+LEGACY_CHANNEL_ALIASES = {"curr_rew": "a_rew", "next_rew": "b_rew",
+                          "two_next_rew": "c_rew", "three_next_rew": "d_rew"}
 # From mc/latest_experiment/3x3_fMRI_part1.py `show_rewards`: ONE reward on
 # screen at a time, a 1.5 s/reward first pass then a 1 s/reward refresh.
 REWARD_SCHEDULE = [(0.0, 1.5, "A", "#F15A29"), (1.5, 3.0, "B", "#F7931E"),
@@ -602,12 +645,14 @@ def set_figure_style():
 def base_channel(model):
     """Reduce a map name to its reward channel, for colouring.
 
-    'CURR_REW-split_rew_DSR_combo', 'curr_rew' and 'curr_rew_instr' all ->
-    'curr_rew', so a channel keeps one colour whether it is the execution or
-    the instruction variant and whether it stands alone or sits inside a
-    combo."""
+    'A_REW-split_rew_DSR_combo', 'A_rew' and 'A_rew_instr' all -> 'a_rew', so a
+    channel keeps one colour whether it is the execution or the instruction
+    variant and whether it stands alone or sits inside a combo. Pre-rename
+    names ('curr_rew') map onto the same channel."""
     stem = model.split("-")[0].lower()
-    return stem[:-len("_instr")] if stem.endswith("_instr") else stem
+    if stem.endswith("_instr"):
+        stem = stem[:-len("_instr")]
+    return LEGACY_CHANNEL_ALIASES.get(stem, stem)
 
 
 def _draw_schedule(ax, x_max=12):
@@ -626,45 +671,82 @@ def _draw_schedule(ax, x_max=12):
 
 
 def plot_per_TR_timecourses(out_dir, models, masks=None, k="100",
-                            out_name="per_TR_timecourses", show=True):
-    """LOSO held-out beta against instruction-period second, one panel per mask.
+                            out_name="per_TR_timecourses", show=True,
+                            axis_kind="tr"):
+    """LOSO held-out beta along the third axis, one panel per mask.
 
     Plots exactly the values `run_loso` wrote -- nothing is refitted, rescaled
-    or smoothed. Reward-reveal schedule along the top; seconds with
-    p_FWE < .05 are ringed. Returns the per-model peak rows."""
+    or smoothed. Levels with p_FWE < .05 are ringed. Returns the per-model
+    peak rows.
+
+    `axis_kind` decides how that axis is drawn, and the difference is not
+    cosmetic:
+      'tr'         ordered seconds of the instruction period. Points joined by
+                   a line, reward-reveal schedule along the top -- a timecourse.
+      'condition'  named conditions (the instruction-epoch GLMs). Points only,
+                   no joining line and no schedule: the conditions have no
+                   ordering, so a line between them would assert a progression
+                   the design does not contain.
+    A non-numeric axis is always drawn as 'condition' whatever is asked for."""
     from matplotlib import pyplot as plt
     from matplotlib.lines import Line2D
     set_figure_style()
     masks = masks or result_masks(out_dir)
 
-    fig, axes = plt.subplots(1, len(masks), figsize=(3.0 * len(masks), 3.2),
+    # Levels come from the first record read; the axis kind is downgraded to
+    # categorical if they are not numbers, so a mislabelled call cannot draw a
+    # timecourse through condition names.
+    _probe = load_loso(out_dir, masks[0], models[0], k)
+    _levels = _probe.get("trs") or list(range(len(_probe["mean"])))
+    categorical = (axis_kind == "condition") or not axis_is_numeric(_levels)
+    width = (3.4 if categorical else 3.0) * len(masks)
+    fig, axes = plt.subplots(1, len(masks), figsize=(width, 3.9 if categorical else 3.2),
                              sharey=True)
     axes = np.atleast_1d(axes)
     peak_rows = []
     for ax, mask in zip(axes, masks):
-        for model in models:
+        for mi, model in enumerate(models):
             rec = load_loso(out_dir, mask, model, k)
             mean = np.asarray(rec["mean"]); sem = np.asarray(rec["sem"])
             p = np.asarray(rec["p_FWE"])
-            x = np.asarray(rec.get("trs") or range(len(mean)))
+            levels = list(rec.get("trs") or range(len(mean)))
             col = CHANNEL_COLOURS.get(base_channel(model), "#666666")
-            ax.plot(x, mean, "-o", color=col, ms=3, lw=1.4)
-            ax.fill_between(x, mean - sem, mean + sem, color=col, alpha=0.18, lw=0)
+            if categorical:
+                # Position along the axis; the labels go on the ticks. Models
+                # are nudged apart horizontally so overlapping points stay
+                # readable -- the axis is categorical, so the offset carries no
+                # meaning and no value is altered.
+                dodge = (mi - (len(models) - 1) / 2) * 0.16
+                x = np.arange(len(mean)) + dodge
+                ax.errorbar(x, mean, yerr=sem, fmt="o", color=col, ms=3.5,
+                            lw=0, elinewidth=1.1, capsize=2)
+            else:
+                x = np.asarray(levels)
+                ax.plot(x, mean, "-o", color=col, ms=3, lw=1.4)
+                ax.fill_between(x, mean - sem, mean + sem, color=col,
+                                alpha=0.18, lw=0)
             sig = p < 0.05
             if sig.any():
                 ax.plot(x[sig], mean[sig], "o", color=col, ms=6.5,
                         mec=OBSERVED_MARKER_COLOUR, mew=1.0, zorder=5)
             t = np.asarray(rec["t"])
             peak_rows.append(dict(mask=mask, model=model, k=int(rec["k"]),
-                                  peak_TR=int(x[int(np.argmax(t))]),
+                                  peak_TR=_lab(levels[int(np.argmax(t))]),
                                   peak_t=round(float(t.max()), 3),
                                   p_at_peak=float(p[int(np.argmax(t))]),
                                   n_sig_TR=int(sig.sum())))
         ax.axhline(0, color="#999999", lw=0.8, ls="--")
         ax.set_title(ROI_DISPLAY_NAMES.get(mask, mask), pad=14)
-        ax.set_xlabel("instruction period (s)")
-        ax.set_xticks([v for v in x if v % 2 == 0])
-        _draw_schedule(ax, x_max=int(x.max()) + 1)
+        if categorical:
+            ax.set_xlabel("")
+            ax.set_xticks(np.arange(len(levels)))
+            ax.set_xticklabels([str(v).replace("instr_", "") for v in levels],
+                               rotation=45, ha="right")
+            ax.set_xlim(-0.5, len(levels) - 0.5)
+        else:
+            ax.set_xlabel("instruction period (s)")
+            ax.set_xticks([v for v in x if v % 2 == 0])
+            _draw_schedule(ax, x_max=int(x.max()) + 1)
     axes[0].set_ylabel("held-out beta\n(LOSO cross-validated)")
     handles = [Line2D([], [], color=c, marker="o", ms=3, lw=1.4,
                       label=CHANNEL_LABELS[n]) for n, c in CHANNEL_COLOURS.items()]
@@ -672,7 +754,9 @@ def plot_per_TR_timecourses(out_dir, models, masks=None, k="100",
                           mec=OBSERVED_MARKER_COLOUR, mew=1.0, label="p$_{FWE}$ < .05"))
     fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False,
                bbox_to_anchor=(0.5, -0.10))
-    fig.suptitle("Reward-channel representation across the instruction period",
+    fig.suptitle("Reward-channel representation "
+                 + ("per instruction epoch" if categorical
+                    else "across the instruction period"),
                  y=1.13, fontsize=11)
     fig.tight_layout()
     for ext in ("pdf", "jpeg"):

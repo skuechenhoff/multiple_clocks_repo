@@ -56,17 +56,37 @@ XYZ = ["mni_x", "mni_y", "mni_z"]
 
 
 def _load(group_dir):
-    """The three tables the figure needs, and a loud failure if one is absent."""
-    need = {"contacts": os.path.join(group_dir, "macro_contacts_all.csv"),
-            "pairs": os.path.join(group_dir, "bundle", "pairs.csv"),
-            "qc": os.path.join(group_dir, "bundle", "channel_qc.csv")}
+    """The tables the figure needs.
+
+    Two shapes are accepted, because a bundle downloaded from the cluster does
+    not carry `macro_contacts_all.csv`:
+
+      full     macro_contacts_all.csv + bundle/  -- coordinates are the ANCHOR
+               contact, i.e. the hippocampal contact itself
+      bundle   bundle/ only -- coordinates are the derivation MIDPOINT, which is
+               where a bipolar derivation is actually sensitive
+
+    The two differ by about half the inter-contact distance (~2.6 mm) and the
+    figure says which it used. `group_dir` may be the group folder or the bundle
+    folder itself.
+    """
+    if os.path.isfile(os.path.join(group_dir, "pairs.csv")):
+        bdir = group_dir
+    else:
+        bdir = os.path.join(group_dir, "bundle")
+    need = {"pairs": os.path.join(bdir, "pairs.csv"),
+            "qc": os.path.join(bdir, "channel_qc.csv")}
     missing = [f"{k}: {v}" for k, v in need.items() if not os.path.isfile(v)]
     if missing:
         raise FileNotFoundError(
             "cannot draw the figure without the analysed set --\n  "
             + "\n  ".join(missing)
-            + "\nPoint --group_dir at the run that produced the bundle.")
-    return {k: pd.read_csv(v) for k, v in need.items()}
+            + "\nPoint --group_dir at a run's group folder or its bundle/.")
+    out = {k: pd.read_csv(v) for k, v in need.items()}
+
+    mc = os.path.join(group_dir, "macro_contacts_all.csv")
+    out["contacts"] = pd.read_csv(mc) if os.path.isfile(mc) else None
+    return out
 
 
 def build_contact_sets(group_dir):
@@ -83,17 +103,26 @@ def build_contact_sets(group_dir):
         on=["session", "pair_id"], how="left")
     pairs["excluded"] = pairs["excluded"].fillna(True).astype(bool)
 
-    hpc = t["contacts"][t["contacts"]["is_hpc"].fillna(False).astype(bool)].copy()
-    hpc = hpc.dropna(subset=XYZ)
-
-    kept = set(zip(pairs.loc[~pairs.excluded, "session"],
-                   pairs.loc[~pairs.excluded, "anat_label_a"]))
-    hpc["analysed"] = [(s, l) in kept for s, l in zip(hpc.session, hpc.anat_label)]
+    if t["contacts"] is not None:
+        coord_source = "anchor contact (macro_contacts_all.csv)"
+        hpc = t["contacts"][t["contacts"]["is_hpc"].fillna(False).astype(bool)].copy()
+        hpc = hpc.dropna(subset=XYZ)
+        kept = set(zip(pairs.loc[~pairs.excluded, "session"],
+                       pairs.loc[~pairs.excluded, "anat_label_a"]))
+        hpc["analysed"] = [(s, l) in kept
+                           for s, l in zip(hpc.session, hpc.anat_label)]
+        dedup_on = ["subject_label", "anat_label"]
+    else:
+        coord_source = "derivation midpoint (bundle pairs.csv)"
+        hpc = pairs.dropna(subset=XYZ).copy()
+        hpc["analysed"] = ~hpc["excluded"]
+        hpc["anat_label"] = hpc["anat_label_a"]
+        dedup_on = ["subject_label", "pair_id"]
 
     # A site is analysed if any of its sessions was; take that session's row so
     # the coordinate belongs to the derivation actually used.
     hpc = hpc.sort_values("analysed", ascending=False)
-    sites = hpc.drop_duplicates(["subject_label", "anat_label"], keep="first")
+    sites = hpc.drop_duplicates(dedup_on, keep="first")
 
     analysed_sessions = set(pairs.session)
     return {
@@ -103,6 +132,7 @@ def build_contact_sets(group_dir):
         "n_sessions": int(pairs.loc[~pairs.excluded, "session"].nunique()),
         "n_subjects": int(pairs.loc[~pairs.excluded, "subject_label"].nunique()),
         "n_derivations_dropped": int(pairs.excluded.sum()),
+        "coord_source": coord_source,
         "n_hpc_contacts": int(len(hpc)),
         "n_hpc_unanalysed_sessions": int((~hpc.session.isin(analysed_sessions)).sum()),
     }
@@ -135,6 +165,7 @@ def make_figure(group_dir=None, out_dir=None,
     if hpc_color:
         kw["hpc_color"] = hpc_color
 
+    print(f"coordinates       : {s['coord_source']}")
     print(f"contacts analysed : {len(inc):3d} sites  "
           f"({s['n_derivations']} derivations, {s['n_sessions']} sessions, "
           f"{s['n_subjects']} subjects)")
@@ -189,6 +220,7 @@ def make_figure(group_dir=None, out_dir=None,
                    "projection": "parallel (orthographic)",
                    "lateral_views": "show only that hemisphere's contacts",
                    "coords": "MNI152 -> MNI305 (fsaverage surface RAS)",
+                   "coord_source": s["coord_source"],
                    "dedup": "one sphere per subject x contact",
                    "created": datetime.now().isoformat(timespec="seconds")},
                   f, indent=2)

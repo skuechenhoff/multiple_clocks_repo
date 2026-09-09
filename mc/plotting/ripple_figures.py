@@ -223,13 +223,20 @@ def _panel_trace(ax, t_ms, y, color, ylabel, title=None, sem=None, xlim=250,
                  overlay=None, overlay_label=None):
     ax.plot(t_ms, y, color=color, lw=1.1)
     if overlay is not None:
-        # A single unaveraged hippocampal trace is busy -- Chen's example panel
-        # is too -- so the band-passed signal is drawn over it, scaled to the
-        # axis, to show where the ripple actually is.
-        sc = np.nanmax(np.abs(y)) / max(np.nanmax(np.abs(overlay)), 1e-9) * 0.55
-        ax.plot(t_ms, overlay * sc, color=RIPPLE_C, lw=0.8,
-                label=overlay_label or f"80–120 Hz (x{sc:.0f})")
-        ax.legend(frameon=False, fontsize=FS_TICK - 2, loc="lower right")
+        # The band-passed trace gets its OWN axis, in its own colour, rather
+        # than being multiplied by a factor named in the legend. A ripple is
+        # 1-2 uV against tens of uV of broadband LFP; a "(x5)" in small type is
+        # easy to miss, and a reader who misses it reads the ripple as five
+        # times its real amplitude.
+        ax2 = ax.twinx()
+        ax2.plot(t_ms, overlay, color=RIPPLE_C, lw=0.8)
+        lim = 1.15 * np.nanmax(np.abs(overlay))
+        ax2.set_ylim(-lim, lim)
+        ax2.set_ylabel(overlay_label or r"80–120 Hz ($\mu$V)",
+                       color=RIPPLE_C, fontsize=FS_LABEL - 1)
+        ax2.tick_params(axis="y", colors=RIPPLE_C, labelsize=FS_TICK - 1)
+        ax2.spines["right"].set_color(RIPPLE_C)
+        ax2.spines["top"].set_visible(False)
     if sem is not None:
         ax.fill_between(t_ms, y - sem, y + sem, color=color, alpha=0.20, lw=0)
     ax.axvline(0, color="0.65", ls=":", lw=0.8)
@@ -323,47 +330,65 @@ def chen_figure(raw_by_pair, fs, events, coords=None, rois=None,
 
 def chen_panels(ga_raw, ga_tfr, t_ms, ex_raw, ex_tfr, coords=None, rois=None,
                 out_stem=None, title="", ga_bp=None, n_contacts=None,
-                ex_bp=None):
+                ex_bp=None, show_contacts=True, panel_cm=2.5):
     """Draw Chen Fig 2a-b from already-averaged data.
 
     ga_raw : (n_ripples, n_times) or (n_contacts, n_times) stack to average
     """
+    # `show_contacts=False` drops panel (a) and reclaims its width. The
+    # standalone `contact_coverage_3d_figure` renders the same coverage on a
+    # surface rather than as a projection, so in any figure that carries both
+    # this panel is a worse duplicate.
     ga_raw = np.atleast_2d(ga_raw)
     n_ev = len(ga_raw)
-    lab = (f"Grand average ({n_contacts} contacts)" if n_contacts
-           else f"Grand average (n = {n_ev})")
+    # At 2.5 cm a panel there is room for two words. The n belongs in the
+    # caption, where it is not competing with the data for width.
+    lab = "Grand average"
 
     with plt.rc_context(_rc()):
-        fig = plt.figure(figsize=(18 * CM, 10.5 * CM))
+        ncol = 3 if show_contacts else 2
+        wr = [1.35, 1, 1] if show_contacts else [1, 1]
+        # `panel_cm` is the size of ONE data subpanel; the figure is that plus
+        # the margins the labels need, so the printed panel is the size asked
+        # for rather than the size left over after tight_layout.
+        n_data_col = ncol - (1 if show_contacts else 0)
+        w_in = (n_data_col * panel_cm * 1.62 +
+                (panel_cm * 1.35 if show_contacts else 0)) * CM
+        h_in = (panel_cm * 1.72 * 2) * CM
+        fig = plt.figure(figsize=(w_in, h_in))
         gs = gridspec.GridSpec(
-            2, 3, figure=fig, width_ratios=[1.35, 1, 1],
-            height_ratios=[0.72, 1], hspace=0.12, wspace=0.42,
-            left=0.06, right=0.97, top=0.90, bottom=0.11)
+            2, ncol, figure=fig, width_ratios=wr,
+            height_ratios=[0.72, 1], hspace=0.14, wspace=0.46,
+            left=0.055 if show_contacts else 0.155, right=0.97,
+            top=0.86, bottom=0.13)
+        c0 = 1 if show_contacts else 0
 
         # (a) contacts -----------------------------------------------------
-        ax_a = fig.add_subplot(gs[:, 0])
-        if coords is not None and len(coords):
-            _panel_glassbrain(ax_a, coords, rois)
-        else:
-            ax_a.axis("off")
-        ax_a.text(-0.02, 1.02, "a", transform=ax_a.transAxes,
-                  fontsize=FS_TITLE + 2, fontweight="bold", va="bottom")
+        if show_contacts:
+            ax_a = fig.add_subplot(gs[:, 0])
+            if coords is not None and len(coords):
+                _panel_glassbrain(ax_a, coords, rois)
+            else:
+                ax_a.axis("off")
+            ax_a.text(-0.02, 1.10, "a", transform=ax_a.transAxes,
+                      fontsize=FS_TITLE + 1, fontweight="bold", va="bottom")
 
         # (b) grand average -------------------------------------------------
-        ax_b1 = fig.add_subplot(gs[0, 1])
+        ax_b1 = fig.add_subplot(gs[0, c0])
         _panel_trace(ax_b1, t_ms, ga_raw.mean(0), RAW_C,
                      r"Voltage ($\mu$V)", lab,
                      sem=ga_raw.std(0) / np.sqrt(len(ga_raw)))
-        ax_b1.text(-0.28, 1.06, "b", transform=ax_b1.transAxes,
-                   fontsize=FS_TITLE + 2, fontweight="bold", va="bottom")
-        ax_b2 = fig.add_subplot(gs[1, 1])
+        ax_b1.text(-0.34, 1.16, "b" if show_contacts else "a",
+                   transform=ax_b1.transAxes,
+                   fontsize=FS_TITLE + 1, fontweight="bold", va="bottom")
+        ax_b2 = fig.add_subplot(gs[1, c0])
         _panel_tfr(ax_b2, ga_tfr, t_ms, TFR_FREQS)
 
         # (c) example -------------------------------------------------------
-        ax_c1 = fig.add_subplot(gs[0, 2])
+        ax_c1 = fig.add_subplot(gs[0, c0 + 1])
         _panel_trace(ax_c1, t_ms, ex_raw, RAW_C, r"Voltage ($\mu$V)",
                      "Example ripple", overlay=ex_bp)
-        ax_c2 = fig.add_subplot(gs[1, 2])
+        ax_c2 = fig.add_subplot(gs[1, c0 + 1])
         _panel_tfr(ax_c2, ex_tfr, t_ms, TFR_FREQS, cbar=True)
 
         if title:
@@ -684,10 +709,21 @@ def sharp_wave_examples(raw_by_pair, fs, events, sw_table, out_stem=None,
                     label="broadband")
             ax.plot(t, sw[p - half:p + half], color=SW_C, lw=1.6,
                     label=f"< {SW_BAND_HZ:g} Hz")
-            sc = np.abs(raw[p - half:p + half]).max() / max(
-                np.abs(rb[p - half:p + half]).max(), 1e-9) * 0.45
-            ax.plot(t, rb[p - half:p + half] * sc, color=RIPPLE_C, lw=0.9,
-                    label=f"80–120 Hz (x{sc:.0f})")
+            # Ripple band on its own axis -- see `_panel_trace`. Here it matters
+            # twice over: the panel exists to compare the timing of a ~1 uV
+            # ripple against a ~30 uV sharp wave, and a hidden scale factor
+            # makes the two look comparable in size when they are not.
+            ax2 = ax.twinx()
+            seg_rb = rb[p - half:p + half]
+            ax2.plot(t, seg_rb, color=RIPPLE_C, lw=0.9)
+            lim = 1.15 * np.abs(seg_rb).max()
+            ax2.set_ylim(-lim, lim)
+            ax2.tick_params(axis="y", colors=RIPPLE_C, labelsize=FS_TICK - 2)
+            ax2.spines["right"].set_color(RIPPLE_C)
+            ax2.spines["top"].set_visible(False)
+            if j % ncol == ncol - 1:
+                ax2.set_ylabel(r"80–120 Hz ($\mu$V)", color=RIPPLE_C,
+                               fontsize=FS_TICK - 1)
             ax.axvline(0, color="0.65", ls=":", lw=0.8)
             ax.set_title(f"t = {p / fs:.1f} s", fontsize=FS_TICK)
             if j // ncol == nrow - 1:
@@ -1874,8 +1910,12 @@ def contact_coverage_figure(contacts, out_stem=None, height_cm=3.5,
 FSAVERAGE_ENV = "SUBJECTS_DIR"
 CORTEX_C = (0.78, 0.78, 0.78)     # pial surface, drawn nearly invisible
 CORTEX_ALPHA = 0.085
-HPC_BODY_C = "#23677E"            # project convention: hippocampus
-HPC_BODY_ALPHA = 0.62
+HPC_BODY_C = "#8FC2D4"            # a light tint of the project HC teal
+# The full-strength #23677E is too dark for this figure: black contacts sit
+# ON the structure, and against it they disappeared. The tint keeps the hue
+# the project uses for hippocampus while giving the markers something to
+# read against.
+HPC_BODY_ALPHA = 0.72
 CONTACT_C = "#0d0d0d"
 CONTACT_EXCLUDED_C = "#b9b9b9"
 
@@ -2140,7 +2180,8 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
 # point, at the size it will be printed.
 
 def ied_vs_ripple_figure(ied_raw, ripple_raw, fs, out_stem=None,
-                         width_cm=8.0, band=RIPPLE_BAND, title=None):
+                         width_cm=3.5, height_cm=3.5, band=RIPPLE_BAND,
+                         title=None, xlim_ms=200.0, lw=0.9):
     """A rejected discharge and an accepted ripple, on ONE voltage axis.
 
     The whole case for artifact rejection in an epilepsy cohort is that these
@@ -2160,49 +2201,88 @@ def ied_vs_ripple_figure(ied_raw, ripple_raw, fs, out_stem=None,
     n = min(len(ied), len(rip))
     ied, rip = ied[:n], rip[:n]
     t = (np.arange(n) - n / 2) / fs * 1000.0
+    # Band-pass on the FULL snippet, then crop for display: filtering a window
+    # that has already been cut rings at both ends.
     ied_bp, rip_bp = _bp(ied, fs, *band), _bp(rip, fs, *band)
+    keep = np.abs(t) <= xlim_ms
+    t, ied, rip = t[keep], ied[keep], rip[keep]
+    ied_bp, rip_bp = ied_bp[keep], rip_bp[keep]
 
-    raw_lim = 1.08 * max(np.abs(ied).max(), np.abs(rip).max())
-    bp_lim = 1.08 * max(np.abs(ied_bp).max(), np.abs(rip_bp).max())
+    def _nice(v):
+        """A round tick value at or just below v -- 736 is not a tick."""
+        if v <= 0:
+            return 1.0
+        mag = 10.0 ** np.floor(np.log10(v))
+        for m in (10, 5, 2.5, 2, 1):
+            if m * mag <= v:
+                return m * mag
+        return mag
 
-    w_in = width_cm * CM
-    with plt.rc_context(_rc()):
-        fig, axes = plt.subplots(2, 2, figsize=(w_in, w_in * 0.62),
+    raw_lim = 1.10 * max(np.abs(ied).max(), np.abs(rip).max())
+    bp_lim = 1.10 * max(np.abs(ied_bp).max(), np.abs(rip_bp).max())
+    raw_tick, bp_tick = _nice(raw_lim / 1.4), _nice(bp_lim / 1.4)
+
+    # At print size the panel is ~1.5 cm a cell, so everything optional goes:
+    # two ticks an axis, short labels, and the condition named in two words.
+    rc = dict(_rc())
+    rc.update({"font.size": 9, "xtick.labelsize": 9, "ytick.labelsize": 9,
+               "axes.labelsize": 9, "axes.titlesize": 9,
+               "xtick.major.size": 2, "ytick.major.size": 2,
+               "xtick.major.pad": 1.5, "ytick.major.pad": 1.5})
+    with plt.rc_context(rc):
+        fig, axes = plt.subplots(2, 2, figsize=(width_cm * CM, height_cm * CM),
                                  sharex=True, gridspec_kw=dict(
-                                     height_ratios=[1.6, 1], hspace=0.28,
-                                     wspace=0.28))
+                                     height_ratios=[1.5, 1], hspace=0.24,
+                                     wspace=0.22))
         for col, (x, xb, name, colour) in enumerate(
-                [(ied, ied_bp, "rejected: interictal discharge", CRIT_C["ied_janca"]),
-                 (rip, rip_bp, "accepted: ripple", RIPPLE_C)]):
+                [(ied, ied_bp, "discharge", CRIT_C["ied_janca"]),
+                 (rip, rip_bp, "ripple", RIPPLE_C)]):
             ax = axes[0, col]
-            ax.plot(t, x, color="0.3", lw=0.7)
+            ax.plot(t, x, color="0.3", lw=lw)
             ax.set_ylim(-raw_lim, raw_lim)
-            ax.set_title(name, fontsize=FS_TICK, color=colour, pad=3)
-            ax.axvline(0, color="0.75", ls=":", lw=0.7)
+            ax.set_title(name, fontsize=9, color=colour, pad=2)
+            ax.set_yticks([-raw_tick, 0, raw_tick])
             if col == 0:
-                ax.set_ylabel(r"raw ($\mu$V)")
+                # "raw (uV)" rotated is longer than a 1.2 cm row is tall, so the
+                # two row labels overlapped. The unit goes on the axis and the
+                # row identity goes inside, where there is space.
+                ax.set_ylabel(r"$\mu$V", labelpad=1)
+                ax.text(0.02, 0.97, "broadband", transform=ax.transAxes,
+                        ha="left", va="top", fontsize=7.5, color="0.45")
             else:
                 ax.set_yticklabels([])
 
             ax = axes[1, col]
-            ax.plot(t, xb, color=colour, lw=0.8)
+            ax.plot(t, xb, color=colour, lw=lw)
             ax.set_ylim(-bp_lim, bp_lim)
-            ax.axvline(0, color="0.75", ls=":", lw=0.7)
-            ax.set_xlabel("Time (ms)")
+            ax.set_xlim(-xlim_ms, xlim_ms)
+            # Only the left column carries x labels: at 3.5 cm the "200" of one
+            # panel and the "-200" of the next collide.
+            ax.set_xticks([-xlim_ms, 0, xlim_ms])
+            ax.set_yticks([-bp_tick, 0, bp_tick])
             if col == 0:
-                ax.set_ylabel(f"{band[0]:g}–{band[1]:g} Hz\n" + r"($\mu$V)")
+                ax.set_xticklabels([f"{-xlim_ms:.0f}", "0", ""])
+                ax.set_ylabel(r"$\mu$V", labelpad=1)
+                ax.text(0.02, 0.97, f"{band[0]:g}–{band[1]:g} Hz",
+                        transform=ax.transAxes, ha="left", va="top",
+                        fontsize=7.5, color="0.45")
+                ax.set_xlabel("ms", labelpad=1)
             else:
+                ax.set_xticklabels(["", "0", f"{xlim_ms:.0f}"])
                 ax.set_yticklabels([])
+                ax.set_xlabel("ms", labelpad=1)
         if title:
-            fig.suptitle(title, fontsize=FS_TITLE, y=1.0)
+            fig.suptitle(title, fontsize=9, y=1.02)
+        fig.subplots_adjust(left=0.22, right=0.995, top=0.87, bottom=0.20)
         if out_stem:
             fig.savefig(out_stem + ".pdf")
-            fig.savefig(out_stem + ".png", dpi=300)
+            fig.savefig(out_stem + ".png", dpi=400)
         return fig
 
 
-def padding_figure(x, fs, per, bad, out_stem=None, width_cm=12.0,
-                   t0_s=0.0, title=None, overall_frac=None):
+def padding_figure(x, fs, per, bad, out_stem=None, width_cm=6.0,
+                   height_cm=3.5, t0_s=0.0, title=None, overall_frac=None,
+                   mark_ms=250.0, lw=0.45):
     """Where the rejected fraction comes from: crossings, then +-1 s padding.
 
     The equivalent of Chen's Supplemental Fig. S1, and the panel this analysis
@@ -2217,37 +2297,55 @@ def padding_figure(x, fs, per, bad, out_stem=None, width_cm=12.0,
     printed beside the excerpt's own -- the caller picks a REPRESENTATIVE
     excerpt rather than the worst minute, and the two numbers agreeing is what
     shows the reader that it did.
+
+    `mark_ms` widens each criterion crossing for DISPLAY ONLY. A crossing can be
+    a handful of samples; across a minute of recording drawn at 6 cm that is a
+    fraction of a pixel and simply does not render, which would make the panel
+    argue the opposite of the truth. The widened marks are not the mask -- the
+    mask is the bottom row, drawn from `bad` unmodified -- and the caption says
+    so.
     """
     import matplotlib.pyplot as plt
+
+    from scipy.ndimage import binary_dilation
 
     x = np.asarray(x, float)
     t = t0_s + np.arange(len(x)) / fs
     crits = [c for c in CRIT_C if c in per]
+    grow = max(1, int(round(mark_ms * 1e-3 * fs / 2)))
 
-    w_in = width_cm * CM
-    with plt.rc_context(_rc()):
-        fig = plt.figure(figsize=(w_in, w_in * 0.42))
+    rc = dict(_rc())
+    rc.update({"font.size": 9, "xtick.labelsize": 9, "ytick.labelsize": 9,
+               "axes.labelsize": 9, "axes.titlesize": 9,
+               "xtick.major.size": 2, "ytick.major.size": 2,
+               "xtick.major.pad": 1.5, "ytick.major.pad": 1.5})
+    with plt.rc_context(rc):
+        fig = plt.figure(figsize=(width_cm * CM, height_cm * CM))
         gs = gridspec.GridSpec(3, 1, figure=fig,
-                               height_ratios=[2.0, 1.5, 0.45], hspace=0.42,
-                               left=0.17, right=0.99, top=0.88, bottom=0.15)
+                               height_ratios=[1.7, 1.5, 0.40], hspace=0.30,
+                               left=0.34, right=0.995, top=0.88, bottom=0.20)
 
         ax = fig.add_subplot(gs[0])
-        ax.plot(t, x, color="0.35", lw=0.4)
-        ax.set_ylabel(r"raw ($\mu$V)")
+        ax.plot(t, x, color="0.35", lw=lw)
+        ax.set_ylabel(r"$\mu$V", labelpad=1)
         ax.set_xlim(t[0], t[-1])
         ax.set_xticklabels([])
-        ax.set_title(title or "", fontsize=FS_TITLE, pad=3)
+        ax.tick_params(bottom=False)
+        # the title is set at the end, once the removed fraction is known
 
         # what each criterion flagged, one row each, unpadded
         ax = fig.add_subplot(gs[1])
         for i, c in enumerate(crits):
-            m = np.asarray(per[c], bool)
-            ax.fill_between(t, i + 0.12, i + 0.88, where=m, color=CRIT_C[c], lw=0)
-            ax.text(t[0] - 0.010 * (t[-1] - t[0]), i + 0.4,
+            m = binary_dilation(np.asarray(per[c], bool),
+                                structure=np.ones(2 * grow + 1, bool))
+            ax.fill_between(t, i + 0.10, i + 0.90, where=m, color=CRIT_C[c], lw=0)
+            ax.text(t[0] - 0.015 * (t[-1] - t[0]), i + 0.5,
                     CRIT_SHORT.get(c, c), ha="right", va="center",
-                    fontsize=FS_TICK - 1, color=CRIT_C[c])
-        ax.set_ylim(-0.2, len(crits))
+                    fontsize=7.5, color=CRIT_C[c])
+        ax.set_ylim(-0.1, len(crits))
         ax.set_yticks([]); ax.set_xlim(t[0], t[-1]); ax.set_xticklabels([])
+        # These stray tick marks read as a sixth, unlabelled criterion row.
+        ax.tick_params(bottom=False, left=False)
         for s in ("left", "bottom"):
             ax.spines[s].set_visible(False)
 
@@ -2256,30 +2354,32 @@ def padding_figure(x, fs, per, bad, out_stem=None, width_cm=12.0,
         ax.fill_between(t, 0, 1, where=np.asarray(bad, bool),
                         color=RIPPLE_C, lw=0)
         ax.set_ylim(0, 1); ax.set_yticks([]); ax.set_xlim(t[0], t[-1])
-        ax.set_xlabel("Time in recording (s)")
-        ax.text(t[0] - 0.010 * (t[-1] - t[0]), 0.5, f"after ±{PAD_S_LABEL:g} s",
-                ha="right", va="center", fontsize=FS_TICK - 1, color=RIPPLE_C)
+        ax.set_xlabel("Time in recording (s)", labelpad=1)
+        ax.tick_params(left=False)
+        ax.text(t[0] - 0.012 * (t[-1] - t[0]), 0.5, f"±{PAD_S_LABEL:g} s pad",
+                ha="right", va="center", fontsize=8, color=RIPPLE_C)
         for sp in ("left",):
             ax.spines[sp].set_visible(False)
         frac = float(np.mean(np.asarray(bad, bool)))
-        note = f"{100 * frac:.0f}% of this excerpt removed"
+        note = f"{100 * frac:.0f}% removed"
         if overall_frac is not None:
-            note += f"  (derivation overall {100 * overall_frac:.0f}%)"
-        fig.axes[0].text(0.995, 0.97, note, transform=fig.axes[0].transAxes,
-                         ha="right", va="top", fontsize=FS_TICK - 1,
-                         color=RIPPLE_C)
+            note += f" (derivation {100 * overall_frac:.0f}%)"
+        head = fig.axes[0]
+        head.set_title((title + "  ·  " if title else "") + note,
+                       fontsize=8, pad=2, color=RIPPLE_C if not title else None)
 
         if out_stem:
-            fig.savefig(out_stem + ".pdf", bbox_inches="tight")
-            fig.savefig(out_stem + ".png", dpi=300, bbox_inches="tight")
+            fig.savefig(out_stem + ".pdf")
+            fig.savefig(out_stem + ".png", dpi=400)
         return fig
 
 
 PAD_S_LABEL = 1.0          # only for the axis label; the value lives in swr_artifact
 
 
-def contamination_group_figure(channel_qc, out_stem=None, width_cm=8.0,
-                               max_contam=2.0 / 3.0, title=None):
+def contamination_group_figure(channel_qc, out_stem=None, width_cm=4.0,
+                               height_cm=3.5, max_contam=2.0 / 3.0,
+                               title=None, histogram=False):
     """Contamination of every derivation in the study, against the 2/3 rule.
 
     `artifact_figure` panel (b) shows this for one session. The manuscript
@@ -2296,22 +2396,48 @@ def contamination_group_figure(channel_qc, out_stem=None, width_cm=8.0,
     order = np.argsort(v)
     v, exc = v[order], exc.to_numpy()[order]
 
-    w_in = width_cm * CM
-    with plt.rc_context(_rc()):
-        fig, (ax, axh) = plt.subplots(
-            1, 2, figsize=(w_in, w_in * 0.5),
-            gridspec_kw=dict(width_ratios=[2.6, 1], wspace=0.30))
+    rc = dict(_rc())
+    rc.update({"font.size": 9, "xtick.labelsize": 9, "ytick.labelsize": 9,
+               "axes.labelsize": 9, "axes.titlesize": 9,
+               "xtick.major.size": 2, "ytick.major.size": 2,
+               "xtick.major.pad": 1.5, "ytick.major.pad": 1.5})
+    with plt.rc_context(rc):
+        # At 4 cm the companion histogram is unreadable, and the ranked curve
+        # already shows the distribution's shape; `histogram=True` restores it
+        # for a larger version.
+        if histogram:
+            fig, (ax, axh) = plt.subplots(
+                1, 2, figsize=(width_cm * CM, height_cm * CM),
+                gridspec_kw=dict(width_ratios=[2.6, 1], wspace=0.30))
+        else:
+            fig, ax = plt.subplots(figsize=(width_cm * CM, height_cm * CM))
+            axh = None
 
         ax.bar(np.arange(len(v)), v, width=1.0,
                color=np.where(exc, CRIT_C["ied_janca"], HPC_BODY_C),
                linewidth=0)
-        ax.axhline(100 * max_contam, color="0.25", ls="--", lw=0.9)
-        ax.text(0, 100 * max_contam + 2, "excluded above ⅔", fontsize=FS_TICK - 1,
-                color="0.25", va="bottom")
-        ax.set_xlabel(f"Derivation (n = {len(v)}, ranked)")
-        ax.set_ylabel("% of recording rejected")
+        ax.axhline(100 * max_contam, color="0.25", ls="--", lw=1.0)
+        ax.text(0.02, 100 * max_contam + 2, "excluded above ⅔", fontsize=7.5,
+                color="0.25", va="bottom", transform=ax.get_yaxis_transform())
+        ax.set_xlabel(f"Derivation (n = {len(v)})", labelpad=1)
+        ax.set_ylabel("% rejected", labelpad=1)
         ax.set_ylim(0, 100)
+        ax.set_yticks([0, 50, 100])
         ax.set_xlim(-0.5, len(v) - 0.5)
+        ax.set_xticks([0, len(v) - 1])
+        ax.set_xticklabels(["1", f"{len(v)}"])
+        if not histogram:
+            ax.text(0.03, 0.97, f"{int(exc.sum())} excluded", transform=ax.transAxes,
+                    ha="left", va="top", fontsize=7.5, color=CRIT_C["ied_janca"])
+
+        if axh is None:
+            if title:
+                ax.set_title(title, fontsize=8, pad=2)
+            fig.subplots_adjust(left=0.26, right=0.99, top=0.90, bottom=0.22)
+            if out_stem:
+                fig.savefig(out_stem + ".pdf")
+                fig.savefig(out_stem + ".png", dpi=400)
+            return fig
 
         axh.hist(v[~exc], bins=np.arange(0, 102, 5), orientation="horizontal",
                  color=HPC_BODY_C, edgecolor="w", linewidth=0.4)
@@ -2326,6 +2452,240 @@ def contamination_group_figure(channel_qc, out_stem=None, width_cm=8.0,
                  fontsize=FS_TICK - 1)
         if title:
             fig.suptitle(title, fontsize=FS_TITLE, y=1.02)
+        if out_stem:
+            fig.savefig(out_stem + ".pdf", bbox_inches="tight")
+            fig.savefig(out_stem + ".png", dpi=300, bbox_inches="tight")
+        return fig
+
+
+# ================================================= the adaptive notch, shown ==
+NOTCH_BEFORE_C = "#b9b9b9"
+NOTCH_AFTER_C = "#23677E"
+
+
+def notch_gallery_figure(entries, out_stem=None, ncol=5, panel_cm=(4.0, 3.4),
+                         band=RIPPLE_BAND, fmax=210.0, title=None):
+    """A grid of before/after spectra: why the notch is adaptive, not blanket.
+
+    Each panel is one session: every derivation's PSD before the notch in grey,
+    after it in colour, with the ripple band shaded and the measured
+    peak-to-flank ratio printed at each line harmonic. Sessions where nothing
+    was notched are the point of the figure, not filler -- they are the evidence
+    that 120 Hz, which sits on the upper edge of the ripple band, is only ever
+    touched where a peak was actually measured.
+
+    `entries` is a list of dicts from `notch_psd.npz`, each with freq,
+    psd_before, psd_after, recording_site, session, ratios, ratio_threshold and
+    notch_applied_hz. Ordering is the caller's business -- group by site.
+
+    Panels are `panel_cm` (w, h), default 4 x 3 cm, at 9 pt: the size these are
+    actually printed at, so nothing has to be rescaled afterwards.
+    """
+    import matplotlib.pyplot as plt
+
+    n = len(entries)
+    if not n:
+        return None
+    ncol = min(ncol, n)
+    nrow = int(np.ceil(n / ncol))
+    w_in = ncol * panel_cm[0] * CM
+    h_in = nrow * panel_cm[1] * CM
+
+    rc = dict(_rc())
+    rc.update({"font.size": 9, "xtick.labelsize": 8, "ytick.labelsize": 8,
+               "axes.labelsize": 9, "axes.titlesize": 9})
+    with plt.rc_context(rc):
+        fig, axes = plt.subplots(nrow, ncol, figsize=(w_in, h_in),
+                                 squeeze=False, sharex=True)
+        for ax in axes.ravel():
+            ax.set_axis_off()
+
+        for k, e in enumerate(entries):
+            ax = axes.ravel()[k]
+            ax.set_axis_on()
+            f = np.asarray(e["freq"], float)
+            keep = f <= fmax
+            pb = np.asarray(e["psd_before"], float)[:, keep]
+            pa = np.asarray(e["psd_after"], float)[:, keep]
+            for i in range(len(pb)):
+                ax.semilogy(f[keep], pb[i], color=NOTCH_BEFORE_C, lw=0.9)
+            for i in range(len(pa)):
+                ax.semilogy(f[keep], pa[i], color=NOTCH_AFTER_C, lw=0.7)
+            ax.axvspan(band[0], band[1], color=RIPPLE_C, alpha=0.10, lw=0)
+
+            # A notch cuts six orders of magnitude out of one bin. Left to
+            # autoscale, that single bin sets the y-range and squashes the whole
+            # spectrum -- including the line peak the panel exists to show -- into
+            # a flat smear. Bound the axis by the SPECTRUM instead, away from the
+            # harmonics, and let the notch run off the bottom: how deep it goes is
+            # not the point, that it was applied is.
+            core = np.ones(keep.sum(), bool)
+            for f0 in (60.0, 120.0, 180.0):
+                core &= np.abs(f[keep] - f0) > 2.5
+            if core.any():
+                lo = max(np.percentile(pa[:, core], 1) * 0.25, 1e-12)
+                hi = max(pb.max(), pa.max()) * 3.0
+                ax.set_ylim(lo, hi)
+
+            applied = set(float(v) for v in np.atleast_1d(e["notch_applied_hz"]))
+            ratios = np.asarray(e["ratios"], float).reshape(-1, 2)
+            # the notch is decided per derivation, so the panel reports the
+            # worst derivation's ratio, not a session average: a peak on one
+            # contact is the thing the criterion is meant to catch
+            per = e.get("ratios_per_pair")
+            for k, (f0, r) in enumerate(ratios):
+                if f0 > fmax:
+                    continue
+                if per is not None and np.size(per):
+                    row = np.asarray(per, float)
+                    if row.ndim == 2 and k < len(row):
+                        vals = row[k][np.isfinite(row[k])]
+                        if vals.size:
+                            r = float(np.max(vals))
+                hit = f0 in applied
+                # No guide line at the harmonic: it would be drawn in the same
+                # grey as the BEFORE spectrum, and the whole point of the panel
+                # is the grey spike standing at that frequency. The x-ticks are
+                # already at 60/120/180, which is guide enough.
+                # The ratio is the number that decided it, so it is the number
+                # printed -- a tick mark alone would not explain the decision.
+                ax.text(f0, 1.02, f"{r:,.0f}" if r >= 10 else f"{r:.1f}",
+                        transform=ax.get_xaxis_transform(), ha="center",
+                        va="bottom", fontsize=7,
+                        color="#a30d6c" if hit else "0.55")
+
+            site = str(e.get("recording_site", "")).title()
+            sess = int(e.get("session", -1))
+            n_notched = e.get("n_notched")
+            n_pairs = int(e.get("n_pairs", 0) or 0)
+            if applied and n_notched is not None and n_pairs:
+                nn = {float(f): int(n) for f, n in
+                      zip([60.0, 120.0, 180.0], np.atleast_1d(n_notched))}
+                note = ", ".join(f"{v:.0f}" for v in sorted(applied)) + " Hz"
+                k_ = max(nn.get(v, 0) for v in applied)
+                note += f" ({k_}/{n_pairs})"
+            elif applied:
+                note = ", ".join(f"{v:.0f}" for v in sorted(applied)) + " Hz"
+            else:
+                note = "none needed"
+            ax.set_title(f"s{sess:02d} · {site}\nnotch: {note}",
+                         fontsize=8, pad=12, linespacing=1.25)
+            ax.set_xlim(0, fmax)
+            ax.set_xticks([0, 60, 120, 180])
+            if k % ncol == 0:
+                ax.set_ylabel(r"PSD ($\mu$V$^2$/Hz)", fontsize=8)
+            if k >= n - ncol:
+                ax.set_xlabel("Frequency (Hz)", fontsize=8)
+
+        from matplotlib.lines import Line2D
+        fig.legend(handles=[
+            Line2D([], [], color=NOTCH_BEFORE_C, lw=1.2, label="before notch"),
+            Line2D([], [], color=NOTCH_AFTER_C, lw=1.2, label="after notch"),
+            Line2D([], [], color=RIPPLE_C, lw=4, alpha=0.25,
+                   label=f"ripple band {band[0]:g}–{band[1]:g} Hz")],
+            loc="lower center", ncol=3, frameon=False, fontsize=8,
+            bbox_to_anchor=(0.5, 0.0))
+        if title:
+            fig.suptitle(title, fontsize=10, y=1.0)
+        # Explicit, not tight_layout: a figure-level legend is invisible to it,
+        # so it kept shrinking the axes to make room for a title it had already
+        # accounted for. Panel geometry is fixed by `panel_cm` and must survive.
+        legend_frac = 0.9 / (nrow * panel_cm[1])
+        fig.subplots_adjust(left=0.085, right=0.995, top=0.80,
+                            bottom=0.16 + legend_frac, wspace=0.42, hspace=0.75)
+        if out_stem:
+            fig.savefig(out_stem + ".pdf", bbox_inches="tight")
+            fig.savefig(out_stem + ".png", dpi=300, bbox_inches="tight")
+        return fig
+
+
+# ============================================== ripple attributes, pooled ==
+ATTR_SPECS = [
+    ("rate_hz", "Ripple rate (Hz)", (0.17, 0.24), "per derivation", 1.0),
+    ("duration_ms", "Duration (ms)", (50.0, 90.0), "per event", 1.0),
+    ("peak_freq_hz", "Peak frequency (Hz)", RIPPLE_BAND, "per event", 1.0),
+    ("amp_peak_uv", r"Amplitude ($\mu$V)", None, "per event", 1.0),
+]
+
+
+def ripple_attributes_figure(events, channel_qc, out_stem=None, width_cm=17.0,
+                             height_cm=5.4, title=None, ref_label="Chen et al."):
+    """The four attributes Chen report, pooled across the study.
+
+    Rate is one value per DERIVATION; duration, frequency and amplitude are one
+    value per EVENT. Mixing the two would let a single high-rate derivation
+    dominate a distribution that is supposed to describe ripples, so each panel
+    says which unit it is counting.
+
+    Shaded bands are the published reference ranges. They are drawn to be
+    checked against, not to be hit: the detector's thresholds were set by the
+    1/f surrogate control, and agreement with the reference is a result rather
+    than a target.
+    """
+    import matplotlib.pyplot as plt
+
+    ev = events.copy()
+    if "duration_s" in ev.columns and "duration_ms" not in ev.columns:
+        ev["duration_ms"] = ev["duration_s"] * 1000.0
+    qc = channel_qc[~channel_qc["excluded"].fillna(False).astype(bool)]
+
+    data = {"rate_hz": qc["rate_hz"].dropna(),
+            "duration_ms": ev["duration_ms"].dropna(),
+            "peak_freq_hz": ev["peak_freq_hz"].dropna(),
+            "amp_peak_uv": ev["amp_peak_uv"].dropna()}
+
+    with plt.rc_context(_rc()):
+        fig, axes = plt.subplots(1, 4, figsize=(width_cm * CM, height_cm * CM))
+        for ax, (key, label, ref, unit, _) in zip(axes, ATTR_SPECS):
+            v = data[key]
+            med = float(np.median(v))
+            lo, hi = np.percentile(v, [25, 75])
+
+            # Clip the display, never the statistics: the medians and IQRs above
+            # are computed on everything, but a 500 ms duration ceiling and a
+            # long amplitude tail leave most of the axis empty and the mode
+            # unreadable.
+            shown, clipped = v, 0
+            if key in ("duration_ms", "amp_peak_uv"):
+                cut = np.percentile(v, 99.5)
+                shown = v[v <= cut]
+                clipped = len(v) - len(shown)
+            if key == "peak_freq_hz":
+                # peak frequency is resolved on the 2.5 Hz spectral grid, so
+                # arbitrary bins alias into a comb. Bin ON the grid.
+                step = 2.5
+                bins = np.arange(RIPPLE_BAND[0] - step / 2,
+                                 RIPPLE_BAND[1] + step, step)
+            else:
+                bins = np.histogram_bin_edges(shown, bins=36)
+
+            if ref is not None:
+                ax.axvspan(ref[0], ref[1], color=RIPPLE_C, alpha=0.13, lw=0,
+                           zorder=0)
+            ax.hist(shown, bins=bins, color=HPC_BODY_C, edgecolor="w",
+                    linewidth=0.3, zorder=2)
+            ax.axvline(med, color=OBS_LINE_C, lw=1.2, zorder=3)
+            ax.set_xlabel(label)
+            ax.set_ylabel("Derivations" if unit == "per derivation" else "Events")
+            ax.set_title(f"{med:.3g}  ({lo:.3g}–{hi:.3g})", fontsize=FS_TICK,
+                         pad=4)
+            note = f"n = {len(v):,}"
+            if clipped:
+                note += f"\n({clipped} beyond axis)"
+            ax.text(0.97, 0.97, note, transform=ax.transAxes, ha="right",
+                    va="top", fontsize=FS_TICK - 2, color="0.4",
+                    linespacing=1.3)
+
+        from matplotlib.patches import Patch
+        from matplotlib.lines import Line2D
+        fig.legend(handles=[
+            Patch(facecolor=RIPPLE_C, alpha=0.25, label=f"{ref_label} range"),
+            Line2D([], [], color=OBS_LINE_C, lw=1.4, label="median")],
+            loc="lower center", ncol=2, frameon=False, fontsize=FS_TICK,
+            bbox_to_anchor=(0.5, -0.06))
+        if title:
+            fig.suptitle(title, fontsize=FS_TITLE, y=1.03)
+        fig.tight_layout(rect=(0, 0.06, 1, 1.0))
         if out_stem:
             fig.savefig(out_stem + ".pdf", bbox_inches="tight")
             fig.savefig(out_stem + ".png", dpi=300, bbox_inches="tight")

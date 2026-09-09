@@ -410,15 +410,28 @@ NOTCH_RATIO_THRESHOLD = 2.0    # notch a harmonic only if it exceeds this
 
 
 def measure_line_noise(x, fs, freqs=LINE_FREQS, halfwidth=1.5, side=(4.0, 12.0)):
-    """Peak-to-flank power ratio at each line harmonic. 1.0 = no peak.
+    """Peak-to-flank power ratio at each line harmonic, PER DERIVATION.
+
+    Returns {f0: array of one ratio per channel}. 1.0 = no peak.
+
+    Both halves of the ratio are computed within the same channel. That sounds
+    obvious and was not what this did until 2026-09-08: the numerator was the
+    mean ACROSS channels of each channel's in-band maximum, and the denominator
+    the median POOLED over all channels and flank frequencies. When derivations
+    differ in overall power -- s03's three span a factor of 158 -- the numerator
+    follows the loudest and the denominator the quietest, and the ratio measures
+    how unequal the channels are rather than whether a line peak exists. That
+    put s03's 180 Hz at 2.01 with no channel above 1.22 (a notch applied for
+    nothing), and simultaneously diluted a real 2.84 peak on one s12 derivation
+    to a session value of 1.54 (a notch not applied where it was needed).
 
     Measured across sites: Baylor is essentially clean (60 Hz ratio ~1.1),
     UCLA has strong referential line noise that bipolar removes (60.9 -> 1.14),
     and Utah is heavily contaminated even after bipolar (1.1e8 -> 5.5e4).
     """
     from scipy.signal import welch
-    f, P = welch(np.asarray(x, float), fs=fs,
-                 nperseg=min(4096, np.shape(x)[-1]), axis=-1)
+    X = np.atleast_2d(np.asarray(x, float))
+    f, P = welch(X, fs=fs, nperseg=min(4096, X.shape[-1]), axis=-1)
     out = {}
     for f0 in freqs:
         if f0 >= fs / 2.0:
@@ -427,33 +440,46 @@ def measure_line_noise(x, fs, freqs=LINE_FREQS, halfwidth=1.5, side=(4.0, 12.0))
         sd = (np.abs(f - f0) >= side[0]) & (np.abs(f - f0) <= side[1])
         if not inb.any() or not sd.any():
             continue
-        out[float(f0)] = float(np.max(P[..., inb], axis=-1).mean()
-                               / max(np.median(P[..., sd]), 1e-30))
+        num = P[:, inb].max(axis=-1)
+        den = np.maximum(np.median(P[:, sd], axis=-1), 1e-30)
+        out[float(f0)] = (num / den).astype(float)
     return out
 
 
 def notch_filter(x, fs, freqs=LINE_FREQS, q=NOTCH_Q,
                  ratio_threshold=NOTCH_RATIO_THRESHOLD):
-    """Zero-phase narrow notches, applied ONLY where line noise is present.
+    """Zero-phase narrow notches, PER DERIVATION, only where line noise is present.
 
-    Returns (filtered, applied) where `applied` maps frequency -> measured
-    ratio for the harmonics that were actually notched.
+    Returns (filtered, applied, ratios):
+      `applied`  {f0: list of channel indices notched at that harmonic}
+      `ratios`   {f0: array of one peak-to-flank ratio per channel}
 
     Adaptive rather than blanket because 120 Hz sits on the upper edge of the
     80-120 Hz ripple band: notching it where there is no line noise discards
     real ripple-band signal for nothing. Baylor needs no notch at all, Utah
     needs it badly, UCLA is cleaned by the bipolar montage alone.
+
+    The decision is per derivation, not per session (changed 2026-09-08). Line
+    noise is a property of a contact pair -- one derivation on a probe can carry
+    a large 60 Hz peak while its neighbour carries none -- so a session-level
+    decision either filters clean channels or leaves contaminated ones alone.
+    See `measure_line_noise` for the measurement error this replaced.
     """
-    ratios = measure_line_noise(x, fs, freqs)
-    y = np.asarray(x, dtype=np.float64)
+    X = np.atleast_2d(np.asarray(x, dtype=np.float64))
+    ratios = measure_line_noise(X, fs, freqs)
     applied = {}
     for f0, r in ratios.items():
-        if r < ratio_threshold:
+        hit = np.flatnonzero(np.asarray(r) >= ratio_threshold)
+        if not hit.size:
             continue
         b, a = iirnotch(f0, q, fs)
-        y = sosfiltfilt(tf2sos(b, a), y, axis=-1)
-        applied[f0] = r
-    return y.astype(np.float32), applied, ratios
+        sos = tf2sos(b, a)
+        X[hit] = sosfiltfilt(sos, X[hit], axis=-1)
+        applied[f0] = [int(i) for i in hit]
+    out = X.astype(np.float32)
+    if np.ndim(x) == 1:
+        out = out[0]
+    return out, applied, ratios
 
 
 def resample_to(x, fs_in, fs_out=TARGET_FS):
@@ -628,11 +654,30 @@ def preprocess_session(session, pairs, data_root=None, verbose=True,
         row_ids = list(pairs.pair_id)
     del raw_all
 
+    # PSD before and after the notch, kept so the adaptive notch can be SHOWN
+    # rather than asserted. Welch on a decimated grid: this is a figure, and a
+    # full-resolution PSD of every derivation would dominate the meta file.
+    # ~50 kB per session against several GB of recording.
+    from scipy.signal import welch as _welch
+    _f, _P_before = _welch(np.asarray(sig, float), fs=TARGET_FS,
+                           nperseg=int(4 * TARGET_FS), axis=-1)
+
     sig, notch_applied, notch_ratios = notch_filter(sig, TARGET_FS)
+
+    _, _P_after = _welch(np.asarray(sig, float), fs=TARGET_FS,
+                         nperseg=int(4 * TARGET_FS), axis=-1)
+    _keep = _f <= 250.0
+    _psd = {"freq": _f[_keep].astype(np.float32),
+            "psd_before": _P_before[:, _keep].astype(np.float32),
+            "psd_after": _P_after[:, _keep].astype(np.float32)}
+
     if verbose:
-        print("    line-noise ratio (1.0 = none): "
-              + ", ".join(f"{f:.0f}Hz={r:.2f}" for f, r in notch_ratios.items()))
-        print(f"    notched: {[f'{f:.0f}Hz' for f in notch_applied] or 'none needed'}")
+        print("    line-noise ratio per derivation (1.0 = none): "
+              + "; ".join(f"{f:.0f}Hz=" + "/".join(f"{v:.2f}" for v in np.atleast_1d(r))
+                          for f, r in notch_ratios.items()))
+        print("    notched: " + (", ".join(
+            f"{f:.0f}Hz on {len(v)}/{len(sig)}" for f, v in notch_applied.items())
+            or "none needed"))
 
     meta = {
         "session": int(session),
@@ -646,9 +691,20 @@ def preprocess_session(session, pairs, data_root=None, verbose=True,
         "pair_ids": list(row_ids),
         "blocks": blocks.to_dict("records"),
         "clock": "behavioural = cumulative file duration; sample = t*fs",
+        "_psd": _psd,                      # popped by the caller, not JSON
         "notch_candidates_hz": list(LINE_FREQS),
-        "notch_applied_hz": {f"{k:.0f}": v for k, v in notch_applied.items()},
-        "line_noise_ratio": {f"{k:.0f}": v for k, v in notch_ratios.items()},
+        # per harmonic: which derivations were notched, and every channel's
+        # measured ratio. `notch_applied_hz` keeps its name and its meaning as
+        # "the harmonics that were notched at all", so downstream readers of
+        # meta.json are unaffected; the detail is in the two fields below it.
+        "notch_applied_hz": {f"{k:.0f}": len(v)
+                             for k, v in notch_applied.items()},
+        "notch_applied_pairs": {f"{k:.0f}": [row_ids[i] for i in v]
+                                for k, v in notch_applied.items()},
+        "line_noise_ratio": {f"{k:.0f}": [float(v) for v in np.atleast_1d(r)]
+                             for k, r in notch_ratios.items()},
+        "line_noise_ratio_median": {f"{k:.0f}": float(np.median(r))
+                                    for k, r in notch_ratios.items()},
         "notch_ratio_threshold": NOTCH_RATIO_THRESHOLD,
         "resample": "scipy.signal.resample_poly",
     }

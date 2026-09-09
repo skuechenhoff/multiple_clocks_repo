@@ -10,18 +10,28 @@
 %%
 
 
+% clear all
+% source_dir = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans"
+% if ~exist(source_dir, 'dir')
+%     source_dir = '/ceph/behrens/svenja/human_ABCD_ephys'
+%     %abcd_data = load(sprintf("%s/beh_cells/abcd_data_FIXED_19-Feb-2025.mat", source_dir));
+%     abcd_data = load(sprintf("%s/beh_cells/abcd_data_24-Apr-2025.mat", source_dir));
+% 
+% else
+%     %abcd_data = load(sprintf("%s/abcd_data_FIXED_19-Feb-2025.mat", source_dir));
+%     %abcd_data = load(sprintf("%s/abcd_data_10-Jul-2025.mat", source_dir));
+%     %abcd_data = load(sprintf("%s/derivatives/abcd_passed.mat", source_dir));
+%     abcd_data = load(sprintf("%s/abcd_data_08-Sep-2025.mat", source_dir));
+% end
+
 clear all
-source_dir = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans"
+source_dir = "/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans";
 if ~exist(source_dir, 'dir')
-    source_dir = '/ceph/behrens/svenja/human_ABCD_ephys'
-    %abcd_data = load(sprintf("%s/beh_cells/abcd_data_FIXED_19-Feb-2025.mat", source_dir));
-    abcd_data = load(sprintf("%s/beh_cells/abcd_data_24-Apr-2025.mat", source_dir));
-    
+    source_dir = '/ceph/behrens/svenja/human_ABCD_ephys';
+    abcd_data = load(sprintf("%s/beh_cells/abcd_data_08-Sep-2025.mat", source_dir));
 else
-    %abcd_data = load(sprintf("%s/abcd_data_FIXED_19-Feb-2025.mat", source_dir));
-    %abcd_data = load(sprintf("%s/abcd_data_10-Jul-2025.mat", source_dir));
-    %abcd_data = load(sprintf("%s/derivatives/abcd_passed.mat", source_dir));
-    abcd_data = load(sprintf("%s/abcd_data_08-Sep-2025.mat", source_dir));
+    abcd_data = load(sprintf("%s/derivatives/abcd_passed.mat", source_dir));
+    abcd_data = abcd_data.abcd_passed;
 end
 
 deriv_dir = sprintf("%s/derivatives/", source_dir);
@@ -286,64 +296,6 @@ for sub = 1:length(subject_list)
         if timings_curr_grid_in_bins(1,1) > 1
             display('doesnt start with first bin, first value is')
             timings_curr_grid_in_bins(1,1)
-            % wtf this is something I absolutely don't get. 
-            % go back and understand this in more detail!!!
-            % for sub 24, i get 356, sub26 47, sub27 18, sub42 35, sub43
-            % 194, sub51 12. 
-            % maybe that's also ok???
-            % just make sure you understand where these timing files start.
-            % also, if they are supposed to refer to bins, then adjust the
-            % bins to the python counting -> first bin = 0
-
-            % i think it might be due to a wrong start_idx_bin ??? 
-            % check this next!
-            % hmmm or not. still double check, but what this line actually
-            % means:
-            %
-                    
-            % change timings to bins that always start with the first bin that
-            % I cut the timings and locations to 
-            % timings_curr_grid_in_bins = ceil(timings_curr_grid/bin_size)-start_idx_bin; 
-            
-            % is, take the time in which you're starting to look for the
-            % curent grid and subtract it from the timings. however, the
-            % first row (start_looking_for_A) and start_idx_bin aren't 
-            % necessarily the same, so this means it's not necessarily 0.
-
-            % right in fact, this is what they are:
-            % start_looking_for_A = arrayfun(@(x) x.end_trial_timestamp, subj.trial_vars(prev_last_repeat:last_repeat-1));
-            % so first column is alywas when previous trial ended.
-            % start_idx = t_found_reward(prev_last_repeat, end);
-            % does this make sense??? so i am always cutting the grids 
-            % by when the previous ended; and the start looking for A
-            % check if subj.trial_vars.state_change_times(end) is always the
-            % same as subj.trial_vars.end_trial_timestamp... does this
-            % maybe overlap with the trials in which I am not starting at
-            % 0? hmm no this is 0. subj.trial_vars(143).state_change_times(end)-subj.trial_vars(143).end_trial_timestamp
-            % ok this is still weird, I should got to the same point.
-            % I think the last entry of state_change_times which is in
-            % timings_curr_grid should be the same (actually coming from
-            % start_looking_for_A) as t_found_reward_previous. 
-
-            % right now so I know why it happens- it's when the previous
-            % trial had a nan recorded and I therefore needed to adjust the
-            % start idx. but how do I cut the neurons? How is it aligned?
-
-            % now the important bit is - how do I cut the neurons and the 
-            % grids??? this needs to be the same.
-            % hmmm no this should be ok. 
-            % all_cells_curr_grid = all_cells(:, start_idx_bin:end_idx_bin);
-            % I always use start_idx_bin.
-            % this just means that the timings are fine.
-            % the snippets are slightly longer, but because sometimes they
-            % don't immenantly start with looking for a reward in a grid,
-            % I can just substract the no of bins from both neurons,locs
-            % and then I have the appropriate bin I need to look at!
-            % only thing now is to actually reduce it by 1 more, to have
-            % python coding (starting with 0)
-
-
-            % keyboard
         end
 
         for i = 1:(size(timings_curr_grid_in_bins,1))
@@ -371,64 +323,6 @@ for sub = 1:length(subject_list)
                 end
             end
         end
-
-
-            
-
-        % % Constants
-        % num_columns = size(timings_curr_grid, 2);
-        % 
-        % % Create the figure
-        % figure;
-        % hold on;
-        % 
-        % % Plot each segment
-        % for i = 1:num_columns
-        %     % Find indices for start and end times
-        %     start_time = timings_curr_grid(1, i);
-        %     end_time = timings_curr_grid(end, i);
-        % 
-        %     start_idx = find(all_positions_time >= start_time, 1, 'first');
-        %     end_idx = find(all_positions_time <= end_time, 1, 'last');
-        % 
-        %     % Extract and plot the segment
-        %     if ~isempty(start_idx) && ~isempty(end_idx)
-        %         segment_times = all_positions_time(start_idx:end_idx);
-        %         segment_positions = all_positions(start_idx:end_idx);
-        %         plot(segment_times, segment_positions, '-o'); % Change '-o' to another marker if preferred
-        %     end
-        % end
-        % 
-        % % Mark specific times
-        % for i = 1:(size(timings_curr_grid,1))
-        %     for j = 1:(size(timings_curr_grid,2)-1)
-        %         % Find index for the time to mark
-        %         mark_time = timings_curr_grid(i,j+1);
-        %         all_locations_before_reward = find(all_positions_time <= mark_time);
-        % 
-        %         if all_locations_before_reward
-        %             mark_idx = all_locations_before_reward(end);
-        %             plot(all_positions_time(mark_idx), configurations(last_repeat, j), 'ko', 'MarkerFaceColor', 'k'); % Black filled dot
-        %             plot(all_positions_time(mark_idx), all_positions(mark_idx), 'rx', 'MarkerSize', 20); % Red 'x' marker
-        %         end
-        %     end
-        % end
-        % 
-        % % Label the plot
-        % xlabel('Time');
-        % ylabel('Position');
-        % 
-        % title(sprintf('Position Plot with rewards for grid%d and sub%02d', grid_num(last_repeat), sub));
-        % legend('Positions', 'Reward Times');
-        % hold off;
-
-
-
-        %disp(sprintf("cell length in repeat %d is %d , loc length is %d and last timing is %d", g_i, size(all_cells_curr_grid,2), size(locations_per_50ms_curr_grid,2), timings_curr_grid_in_bins(end)))
-        
-        % save the timings in the binned format
-        % and reduce it by one such that they reflect python indexing and I
-        % can just use it to refer to the respective bins I need!
         csvwrite(sprintf("%s/timings_rewards_grid%d_sub%02d.csv", subject_folder, grid_num(last_repeat), sub), timings_curr_grid_in_bins-1);
     end
     % for each subject, save the configurations
