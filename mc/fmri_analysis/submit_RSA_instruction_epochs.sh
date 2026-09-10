@@ -31,6 +31,18 @@ analysisDir="/home/fs0/xpsy1114/scratch/analysis"
 scriptname="fMRI_run_RSA_instruction.py"
 base_config="rsa_instruction_cumulative_rew.json"
 
+# Wall-time estimate in minutes for one RSA job. This was 30, which is nowhere
+# near enough: one job fits 28 whole-brain searchlight OLS models (21 single +
+# 7 combo) over ~126k searchlights, and jobs were being killed about two thirds
+# of the way through, leaving partial results/ folders that looked plausible.
+# fMRI_run_RSA_instruction.py now resumes, so a job that still runs out of time
+# picks up where it stopped instead of starting over. Override with
+# FSLSUB_T=<minutes>.
+jobTime="${FSLSUB_T:-240}"
+
+# Audits are logs, not results: keep them next to the analysis code.
+logDir="${analysisDir}/logs_mid_sept"
+
 # this script, check_RSA_ran.py and the job wrapper all live in the repo
 scriptDir=$(dirname "$0")
 jobWrapper="${scriptDir}/update_fMRI/wrapper_python_fMRI_RSA_clean_config.sh"
@@ -40,7 +52,7 @@ module load fsl
 todoFile="$1"
 
 if [ -z "$todoFile" ]; then
-    auditDir="${scratchDir}/derivatives/group/rsa_audit_$(date +%F)"
+    auditDir="${logDir}/rsa_audit_$(date +%F)"
     echo "No list given -- auditing first, so that finished RSAs are not rerun."
     pythonBin=$(command -v python3 || command -v python)
     if [ -z "$pythonBin" ]; then
@@ -76,10 +88,10 @@ n_submitted=0
 while read -r subjectTag epoch_config; do
     [ -z "$subjectTag" ] && continue
     if [ -n "${DRYRUN:-}" ]; then
-        echo "DRYRUN would submit: sub-${subjectTag}  ${epoch_config}"
+        echo "DRYRUN would submit (-T ${jobTime}): sub-${subjectTag}  ${epoch_config}"
     else
         echo "submitting sub-${subjectTag}  ${epoch_config}"
-        fsl_sub -T 30 bash "${jobWrapper}" \
+        fsl_sub -T "${jobTime}" bash "${jobWrapper}" \
             "${subjectTag}" "${epoch_config}" "${scriptname}"
     fi
     n_submitted=$((n_submitted+1))

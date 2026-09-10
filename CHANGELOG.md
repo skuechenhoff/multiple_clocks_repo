@@ -1,5 +1,58 @@
 # CHANGELOG
 
+## 2026-09-10 — RSA jobs were being killed on walltime; raised -T and made them resumable
+
+**Cause, confirmed from the job log:** `JOB 2348457 ... CANCELLED AT
+2026-09-09T15:17:18 DUE TO TIME LIMIT`. `submit_RSA_instruction_epochs.sh`
+passed `fsl_sub -T 30`, but one RSA job fits 28 whole-brain searchlight OLS
+models (21 single + 7 combo) over ~126k searchlights. Jobs died about two
+thirds of the way through, leaving `results/` folders that looked plausible:
+sub-01 `instr_see-A-first` held 20 of 41 beta maps -- every single model in
+config order up to `D_rew`, then nothing, and no combo maps at all. The
+`.pdf`/`.png` panels are drawn before any OLS runs, so the folder looked full.
+`check_RSA_ran.py` was right to list those runs; the diff against
+`expected_map_names` showed 21 missing and 0 unexpected, i.e. what was on disk
+was a strict prefix of what should be.
+
+**Fix 1 -- time.** `-T 30` -> `jobTime="${FSLSUB_T:-240}"`, overridable per
+submission.
+
+**Fix 2 -- resume.** `fMRI_run_RSA_instruction.py` now skips any map whose
+`_beta` / `_t_val` / `_p_val` volumes are all present and non-empty, so a job
+that still runs out of time picks up where it stopped instead of starting over.
+Without this a resubmission recomputes all 28 fits and dies at the same
+wall-clock point, so it never converges.
+
+Skipping is gated on settings, because otherwise a rerun silently mixes two
+analyses in one folder:
+  * the settings summary is only written at the END of a run, so a killed job
+    never leaves one -- the script now writes `{sub}_run_settings.json` at the
+    START and resumes only when it matches;
+  * a folder left by a run that FINISHED has no such file but does have a
+    settings summary, which is compared against instead (same settings under
+    their own key names);
+  * a folder with maps and neither file cannot be verified and is NOT resumed,
+    unless `"resume_unverified": true` is set in the config. That flag is
+    deliberately narrow: it only applies when there is no evidence at all, so
+    it cannot trust maps from a different completed analysis.
+  * `"resume": false` disables it entirely.
+Combos are skipped only when ALL of a combo's maps exist (one OLS produces them
+all); the regressor-correlation record is computed either way, so the settings
+summary keeps its collinearity entry for skipped combos. The summary records
+`resume_enabled` and `resumed_maps`, so a folder completed across several jobs
+says so.
+
+**Audit location.** Both audits now write to `analysis/logs_mid_sept/` rather
+than `derivatives/group/` -- they are logs, not results. On a laptop
+`$analysisDir` is the repo itself, so the shell wrapper redirects there to the
+data tree instead; nothing generated ever lands in the repo.
+
+Verified by executing the real resume block out of the script against eight
+folder states: fresh, matching rerun, partial map (beta only, no t_val),
+changed settings, no run-settings file, `resume_unverified`, `resume: false`,
+and an old completed run with different settings plus `resume_unverified` (the
+one that must still refuse). All behaved as intended.
+
 ## 2026-09-09 — RSA audit emits a per-wrapper resubmission plan
 
 `check_RSA_ran.py` now tracks all five pipeline stages and writes

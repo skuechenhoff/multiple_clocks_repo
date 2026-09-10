@@ -57,7 +57,7 @@ directory the RSA reads is broken, so the cleanup has to run first.
     written by an older version of the RSA script that lacks a compared field
     also counts as changed: the settings cannot be shown to match.
 
-WHAT IT WRITES  (--out-dir, default derivatives/group/rsa_audit_<name>_<date>/)
+WHAT IT WRITES  (--out-dir, default analysis/logs_mid_sept/rsa_audit_<name>_<date>/)
     report.txt        the per-stage table, and every (subject, epoch) that is
                       not complete, with the reason
     missing_maps.txt  one line per individual map that is not on disk
@@ -500,7 +500,7 @@ def main():
     with open(f"{config_dir}/{args.base_config}") as f:
         base_config = json.load(f)
     name_RSA = base_config.get("name_of_RSA")
-    out_dir = args.out_dir or f"{glmcheck.data_dir_deriv}/group/rsa_audit_{name_RSA}_{stamp}"
+    out_dir = args.out_dir or f"{glmcheck.logs_dir}/rsa_audit_{name_RSA}_{stamp}"
 
     epochs = args.epochs or glmcheck.glm_names_from_config(args.ev_config)
     print(f"RSA '{name_RSA}' from {args.base_config}")

@@ -53,7 +53,14 @@ echo Scratch directory is $scratchDir
 todoFile="$1"
 
 if [ -z "$todoFile" ] && [ -z "$ALL" ]; then
-    auditDir="$scratchDir/derivatives/group/glm_audit_${version}_$(date +%F)"
+    # Audits are logs, not results. On the cluster they sit next to the
+    # analysis code; on a laptop $analysisDir IS the repo, so they go under the
+    # data tree instead -- nothing generated ever belongs in the repo.
+    logDir="${analysisDir}/logs_mid_sept"
+    case "$analysisDir" in
+      *multiple_clocks_repo*) logDir="$scratchDir/derivatives/group/logs_mid_sept";;
+    esac
+    auditDir="${logDir}/glm_audit_${version}_$(date +%F)"
     echo "No list given -- auditing first, so that finished GLMs are not run again."
     echo "Audit goes to $auditDir"
     pythonBin=$(command -v python3 || command -v python)

@@ -1038,6 +1038,89 @@ for sub in subjects:
     # matches the current data RDM layout — full ravel of the (n, n) A block
     # in 'across_only' mode, strict lower-tri of the (2n, 2n) full block in
     # 'full_no_diag' mode.
+    # ── Resume: skip maps that already ran to completion ─────────────────
+    # A killed job (walltime, memory) leaves a partial results/ folder. Without
+    # this, every resubmission recomputes all 28 fits from scratch and dies at
+    # the same wall-clock point, so it never converges.
+    #
+    # Skipping is only safe if the maps already there were made with the SAME
+    # settings -- otherwise a rerun silently mixes two analyses in one folder.
+    # The settings summary is written at the very END of a run, so a killed job
+    # never leaves one; this writes a `_run_settings.json` at the START instead,
+    # and resumes only when it matches. A folder with maps but no such file
+    # predates this mechanism and cannot be verified, so by default it is NOT
+    # resumed -- set "resume_unverified": true in the config to trust it anyway.
+    run_settings = {
+        "EV_string": EV_string, "regression_version": regression_version,
+        "TR": TR, "RDM_version": RDM_version, "data_rdm_scope": data_rdm_scope,
+        "smoothing": smoothing, "fwhm": fwhm,
+        "searchlight_mask": searchlight_mask,
+        "selected_models": selected_models,
+        "single_model_scopes": single_scope_cfg,
+        "run_single_models": run_single_models,
+        "run_combo_models": run_combo_models,
+        "combo_models": combo_cfg,
+    }
+    run_settings_path = os.path.join(results_dir, f"{sub}_run_settings.json")
+    resume = config.get("resume", True)
+    resume_unverified = config.get("resume_unverified", False)
+    previous = None
+    if os.path.exists(run_settings_path):
+        try:
+            with open(run_settings_path) as f:
+                previous = json.load(f)
+        except ValueError:
+            previous = None
+    else:
+        # No run-settings file, but a folder left by a run that FINISHED has a
+        # settings summary, which records the same settings under its own key
+        # names. Comparing against that is what stops `resume_unverified` from
+        # trusting maps that belong to a different analysis: it only ever
+        # applies when there is no evidence at all.
+        summary_path = os.path.join(results_dir, f"{sub}_settings_summary.json")
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path) as f:
+                    old = json.load(f)
+                shared = [k for k in run_settings if k != "single_model_scopes"]
+                key_in_summary = {"selected_models": "models_evaluated"}
+                if all(key_in_summary.get(k, k) in old for k in shared):
+                    previous = dict(run_settings)
+                    for k in shared:
+                        previous[k] = old[key_in_summary.get(k, k)]
+            except ValueError:
+                pass
+
+    if not resume:
+        resume_ok, why = False, "resume disabled in config"
+    elif previous == run_settings:
+        resume_ok, why = True, "settings match the previous run"
+    elif previous is not None:
+        resume_ok, why = False, ("settings DIFFER from the previous run -- every "
+                                 "map is recomputed so the folder cannot end up "
+                                 "holding two analyses")
+    elif resume_unverified:
+        resume_ok, why = True, ("no run-settings file, but resume_unverified is "
+                                "set -- trusting the existing maps")
+    else:
+        resume_ok, why = False, ("no run-settings file to verify the existing "
+                                 "maps against; set resume_unverified to trust them")
+    print(f"\n[resume] {'ON' if resume_ok else 'OFF'} -- {why}")
+    with open(run_settings_path, "w") as f:
+        json.dump(run_settings, f, indent=2)
+
+    skipped_maps = []
+
+    def already_done(out_name):
+        """True if this map's three volumes are all present and non-empty."""
+        if not resume_ok:
+            return False
+        for suffix in ("beta", "t_val", "p_val"):
+            f = os.path.join(results_dir, f"{out_name}_{suffix}.nii.gz")
+            if not os.path.exists(f) or os.path.getsize(f) == 0:
+                return False
+        return True
+
     # Pre-flight: every design that is about to be fitted must be full rank,
     # otherwise the OLS returns NaN and the maps are written as all-zero.
     # Checked here, once, before any searchlight OLS runs.
@@ -1080,6 +1163,10 @@ for sub in subjects:
             for scope in scopes:
                 out_name = (f"{model}_{SCOPE_TAGS[scope]}"
                             if tag_outputs else model)
+                if already_done(out_name):
+                    print(f"  [resume] skipping {out_name}, already complete")
+                    skipped_maps.append(out_name)
+                    continue
                 model_flat = _model_regressor(model, scope)
                 RSA_results[out_name] = Parallel(n_jobs=3)(
                     delayed(mc.analyse.my_RSA.evaluate_model)(model_flat, d)
@@ -1157,6 +1244,18 @@ for sub in subjects:
                     show=True,
                 )
 
+                # One OLS produces every regressor's map, so the combo is only
+                # skipped when ALL of them are already there. The correlation
+                # record above is computed either way -- it is cheap and belongs
+                # in the settings summary regardless.
+                combo_out_names = [f"{m.upper()}-{combo_out_name}"
+                                   for m in models_to_combine]
+                if all(already_done(n) for n in combo_out_names):
+                    print(f"  [resume] skipping combo {combo_out_name}, "
+                          f"all {len(combo_out_names)} maps already complete")
+                    skipped_maps.extend(combo_out_names)
+                    continue
+
                 estimates_combined_model_rdms = Parallel(n_jobs=3)(delayed(mc.analyse.my_RSA.evaluate_model)(stacked_model_RDMs, d) for d in tqdm(combo_data_RDMs, desc=f"running GLM for all searchlights in {combo_out_name}"))
                 for i, model in enumerate(models_to_combine):
                     # TODO: Change the type of similarity to not throw away half of the matrix.
@@ -1190,6 +1289,12 @@ for sub in subjects:
         "combo_regressor_correlations": combo_regressor_correlations,
         # Execution-vs-instruction shared variance, per model pair per scope.
         "exec_vs_instr_correlations": exec_instr_correlations,
+        # Which maps this invocation reused rather than recomputed. Empty on a
+        # first run; non-empty means the folder was completed across several
+        # jobs, all of them under the settings recorded above.
+        "resume_enabled": bool(resume_ok),
+        "resumed_maps": skipped_maps,
+        "n_resumed_maps": len(skipped_maps),
         "data_dir": data_dir,
         "results_dir": results_dir
     }

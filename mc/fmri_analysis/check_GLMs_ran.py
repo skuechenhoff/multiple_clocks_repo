@@ -84,10 +84,14 @@ source_dir = "/Users/xpsy1114/Documents/projects/multiple_clocks"
 if os.path.isdir(source_dir):
     data_dir_deriv = f"{source_dir}/data/derivatives"
     config_path = f"{source_dir}/multiple_clocks_repo/condition_files"
+    logs_dir = f"{source_dir}/analysis/logs_mid_sept"
 else:
     source_dir = "/home/fs0/xpsy1114/scratch"
     data_dir_deriv = f"{source_dir}/data/derivatives"
     config_path = f"{source_dir}/analysis/multiple_clocks_repo/condition_files"
+    logs_dir = f"{source_dir}/analysis/logs_mid_sept"
+# Audits are logs, not results: they go next to the analysis code, never inside
+# the git repo and not under derivatives/group.
 
 DEFAULT_SUBJECTS = [f"{i:02}" for i in range(1, 36) if i not in (21, 29)]
 # written by FILM at the very end of a first-level run
@@ -427,7 +431,7 @@ def main():
                          'exists, else the cluster one.')
     ap.add_argument('--out-dir', default=None,
                     help='where report.txt, cleanup_feat_dirs.sh and todo_submit.txt go. '
-                         'Default: derivatives/group/glm_audit_<version>_<date>/')
+                         'Default: analysis/logs_mid_sept/glm_audit_<version>_<date>/')
     ap.add_argument('--no-write', action='store_true',
                     help='only print the overview, write no files')
     args = ap.parse_args()
@@ -439,7 +443,7 @@ def main():
     glms = args.glms if args.glms else glm_names_from_config(args.ev_config)
     stamp = datetime.date.today().isoformat()
     tag = os.path.splitext(args.ev_config)[0].replace('EV_config_', '') if not args.glms else 'custom'
-    out_dir = args.out_dir or f"{data_dir_deriv}/group/glm_audit_{tag}_{stamp}"
+    out_dir = args.out_dir or f"{logs_dir}/glm_audit_{tag}_{stamp}"
 
     print(f"checking {len(glms)} GLM(s) x {len(args.subjects)} subjects x "
           f"{len(args.task_halves)} halves = "
