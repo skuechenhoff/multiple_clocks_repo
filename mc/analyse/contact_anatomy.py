@@ -349,12 +349,14 @@ def load_channel_list(session, data_root, verbose=False):
         return ([os.path.splitext(os.path.basename(f))[0] for f in files[0]],
                 "ncs filenames", os.path.dirname(files[0][0]))
     try:
-        import neo
-        # Use the format DETECTED on disk, not the config's: s50/s51 are marked
-        # `LFP_file_format: ncs` but are Blackrock .ns3.
+        import mc.analyse.swr_preproc as pre
+        # Share the extraction reader rather than reimplementing it here.  It
+        # trusts the stream actually present on disk (important for s39: YAML
+        # says ns2, recovered file is .ns6) and tolerates a companion .nev whose
+        # segment structure disagrees with the NSx file.
         ext = os.path.splitext(files[0])[1].lstrip(".")
-        nsx = int(ext[2:]) if ext.startswith("ns") and ext[2:].isdigit() else 3
-        reader = neo.io.BlackrockIO(filename=files[0], nsx_to_load=nsx)
+        nsx = pre._nsx_number(files[0], cfg_s)
+        reader = pre._blackrock_reader(files[0], nsx)
         names = [str(e) for e in reader.header["signal_channels"]]
         return ([n.split(",")[0].strip("('") for n in names],
                 f"raw header ({ext})", files[0])

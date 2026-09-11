@@ -439,7 +439,15 @@ def build_micro_label_map(mat):
 
 # NB: macOS is case-insensitive, so listing both "Registered" and "registered"
 # would scan the same directory twice.
-UTAH_SEARCH_SUBDIRS = ("", "electrodes", "Registered-selected", "Registered")
+# Utah exports are not laid out consistently.  Most registered files sit at
+# sXX/Registered, while s39 keeps the complete set one level deeper at
+# s39/electrodes/Registered.  Scan both layouts; identity is still established
+# from each MAT file's own Fname, never from its directory name.
+UTAH_SEARCH_SUBDIRS = (
+    "", "electrodes", "Registered-selected", "Registered",
+    os.path.join("electrodes", "Registered-selected"),
+    os.path.join("electrodes", "Registered"),
+)
 UTAH_MAT_NAMES = ("Electrodes.mat", "ChannelMap.mat", "ChannelMap2.mat")
 
 
@@ -729,5 +737,4 @@ def discover_utah_mats(path_to_subject_folders=DEFAULT_SUBJECT_FOLDERS,
             mapping[subj_label.strip("'\" ")] = (
                 best[0], folder_mats[best[0]][1])
     return mapping
-
 

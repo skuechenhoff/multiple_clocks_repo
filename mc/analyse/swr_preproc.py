@@ -238,11 +238,21 @@ def _nsx_number(path, cfg):
     do `int('ncs')` and raise -- losing both sessions to a config typo rather
     than to anything about the data.
     """
-    fmt = (cfg or {}).get('LFP_file_format')
-    if fmt in (2, 3, '2', '3'):
-        return int(fmt)
+    # The file on disk is the authority.  In particular, s39 is configured as
+    # ns2 but the recovered continuous recording is an .ns6.  Letting the YAML
+    # win here makes Neo look for stream 2 inside that file, so the header read
+    # fails and the otherwise single-recording session is reported as having
+    # an unresolved/ambiguous run.
     ext = os.path.splitext(path)[1]
-    return int(ext[-1]) if ext[:-1] == '.ns' and ext[-1].isdigit() else 3
+    if ext[:-1].lower() == '.ns' and ext[-1:].isdigit():
+        return int(ext[-1])
+
+    # Only use the config when the path itself does not identify an NSx
+    # stream (kept for callers/tests that pass an extensionless base name).
+    fmt = (cfg or {}).get('LFP_file_format')
+    if fmt in (2, 3, 5, 6, '2', '3', '5', '6'):
+        return int(fmt)
+    return 3
 
 
 def resolve_run(durations, bt, tol=CLOCK_TOLERANCE_S, override=None):
