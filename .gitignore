@@ -7,3 +7,12 @@ logs/
 
 # SWR condition files are generated per-machine state, not code
 condition_files/swr_*.txt
+
+# Python bytecode: regenerated on every import, and specific to the
+# interpreter version (cpython-38 here), so committing it produces spurious
+# diffs and can go stale against the .py it was built from.
+__pycache__/
+*.py[cod]
+
+# macOS Finder metadata. Noise everywhere, and meaningless on the cluster.
+.DS_Store
