@@ -1,5 +1,1078 @@
 # CHANGELOG
 
+## 2026-09-14 (b) — Pad to 100 ms; subfield moderator; He et al. methods obtained
+
+### 1. `PAD_S` 0.25 → 0.1 s
+
+**0.1 s is He et al. 2026's own figure** — their Methods (now in hand) discard
+"any ripple occurring within 100 ms of IED" and likewise within 100 ms of a
+pathological HFO. Recovers ~56% more artifact-free seconds than the 1 s pad.
+
+Chosen as a **lower bound**, not as optimal. Because every event carries
+`dist_to_artifact_s` and the bundle carries the unpadded crossings, any
+stricter pad can be re-imposed downstream for free — so the cheap mistake is
+padding too little here, not too much. Supported by the 2026-09-14 measurement:
+ripple properties are flat across distance-to-artifact bins (peak frequency
+98.1–98.5 Hz, duration 65.8–67.1 ms from 0.25 s out to ∞).
+
+### 2. Correction — the `swr_v1` bundle CANNOT be re-padded
+
+Stated carelessly yesterday. To be exact about what was measured where:
+
+- the **pad sweep** and the **event-property measurement** were computed on the
+  laptop from `continuous.npy` (present locally for 21 sessions), NOT from a
+  bundle;
+- the **re-padding demonstration** used the *new* s29 `swr_v2` proof-run bundle,
+  built by the new code.
+
+The downloaded `swr_v1` bundle (2026-09-08, 61 sessions, 212 derivations) has
+no `dist_to_artifact_s` and no `artifact_intervals`, and was built at a 1 s pad.
+Events outside that pad were never detected and do not exist in it at any price.
+Re-padding only ever goes **stricter**, and only for bundles built by the new
+code. This is precisely why the new pad is set at the lower bound.
+
+### 3. `scripts/swr_subfield_moderator.py` — runs on the EXISTING bundle
+
+Is the F5 first-D ripple increase stronger on CA-weighted derivations, as
+Sakon et al. report for CA1 vs DG? Subfield is a pure MNI lookup and `pairs`
+already carries coordinates, so **no cluster run and no LFP are needed**.
+
+Result (212 derivations, 61 sessions, 42 subjects):
+
+| condition | moderator `delta ~ ca_dg_index + (1\|subject)` |
+|---|---|
+| first_D | β = −0.078, p = 0.285 |
+| later_D | β = +0.008, p = 0.711 |
+
+No CA gradient, and the first-D point estimate runs *opposite* to Sakon.
+
+**But the sample cannot test that contrast.** Only 2 of 199 derivations have
+P(DG) > P(CA); the lower half of the index still has P(CA) > P(DG) in 95 of 97.
+That is `select_hpc_contacts` **working as intended** — it takes the deepest
+hippocampal contact per probe, which mostly sees cornu ammonis — so the montage
+is already concentrated where Sakon put the effect, which helps detect F5 at
+all. The narrow cost is that the CA-vs-DG contrast has no DG arm: a null on the
+moderator is uninformative about the gradient and says nothing about F5 itself.
+Testing it properly needs the runner-up contacts per probe (56 of 128 clear the
+25% threshold, `methods.md` §4.2), which this montage deliberately excludes.
+
+The script prints this as a precondition rather than leaving it to be inferred.
+Its Eq. 2 figure is a derivation-level sanity check, not the canonical F5 —
+`fit_eq2` expects trial-level rows and drops subjects below its 10-row floor
+(13 of 42 survive). The moderator uses all derivations and is the actual test.
+
+### 4. He et al. 2026 Methods — what they actually did
+
+Obtained, resolving what was previously flagged as unverifiable:
+
+- **Hippocampal contacts are referenced against a nearby WHITE MATTER contact
+  on the same probe**, not against an adjacent contact. This project rejected
+  white-matter referencing for hippocampus deliberately (`methods.md` §4.2:
+  it doubles inter-contact distance and enlarges the lead field). A real
+  divergence, and a pre-existing decision — not changed here.
+- All other contacts: adjacent-bipolar on the same probe. **Confirms the
+  cortical montage choice**: every in-ROI contact, not one per probe.
+- Ripple band **70–180 Hz**, 4 SD threshold extended to 2 SD, 20–200 ms,
+  30 ms merge. This pipeline follows Chen (80–120 Hz, dual 1.5/3.0 SD,
+  38–500 ms) — a deliberate, documented difference.
+- HFB **80–140 Hz**, *overlapping* 10 Hz sub-bands at 5 Hz steps, each divided
+  by its own channel-and-band mean, summed, averaged, rescaled by the grand
+  mean, then 10·log10 to dB. Ours: 70–150 Hz, contiguous 10 Hz sub-bands,
+  log-then-z-score per band. Both are standard normalisations; ours follows
+  `criterion_broadband_power` already in this codebase.
+- They recorded at 50 Hz line frequency, so **100 Hz sits inside their
+  80–140 Hz HFB band and they simply notch through it.** Our notch-aware
+  sub-band dropping has no counterpart in their pipeline.
+- Also: contacts >3 mm from the cortical ribbon excluded; a common-average
+  control removes ripples coincident across contacts.
+
+
+## 2026-09-14 (b) — Exploratory mistake sweep (all null), and the final figures rebuilt
+
+### Exploratory: do ripples predict mistakes? No.
+
+`scripts/swr_explore_ripples_and_mistakes.py`, results in
+`swr/explore_ripples_mistakes_2026-09-14/`. **EXPLORATORY** — .png only, nothing
+confirmatory. Window +0.35 to +0.75 s (where the stillness-matched cluster
+peaked), two measures: `delta` (window minus the same trial's baseline) and
+`raw` (window alone). Paired t-tests at session level: within each session the
+mean over grids WITH the outcome against the mean over grids WITHOUT.
+
+| question | measure | horizon | no mistake | mistake | Δ Hz | p_perm | n |
+|---|---|---|---|---|---|---|---|
+| first D | delta | all later repeats | +0.1009 | +0.1012 | +0.0003 | 0.996 | 44 |
+| first D | delta | next 3 repeats | +0.0449 | +0.0847 | +0.0398 | 0.685 | 29 |
+| first D | raw | all later repeats | +0.2840 | +0.2427 | −0.0413 | 0.307 | 46 |
+| first D | raw | next 3 repeats | +0.2857 | +0.2379 | −0.0478 | 0.351 | 36 |
+| all first uncovers | delta | all later | +0.0634 | +0.0717 | +0.0083 | 0.796 | 53 |
+| all first uncovers | delta | next 3 | +0.0693 | +0.0677 | −0.0015 | 0.968 | 51 |
+| all first uncovers | raw | all later | +0.2575 | +0.2464 | −0.0112 | 0.607 | 53 |
+| all first uncovers | raw | next 3 | +0.2496 | +0.2511 | +0.0015 | 0.958 | 51 |
+
+Nothing, in either measure or either horizon. The `raw` first-D tests lean the
+predicted way (more ripples → fewer later D errors, ≈ −0.04 Hz) but at p ≈ 0.3.
+
+### Descriptive: mistakes have strong structure
+
+27,538 errors, 100% with a location.
+
+- **Immediate repetition is AVOIDED.** In the transition matrix of consecutive
+  errors while seeking the same reward, the diagonal is **4.5%** against ~12.5%
+  chance. Having just tried a tile, subjects do not retry it.
+- **The heavy off-diagonal cells are grid-adjacent** (1→4, 4→7, 2→5): the
+  search walks to neighbouring tiles.
+- **But errors do recur across repeats:** **23.6%** are eventually repeated at
+  the same reward *and* the same location — roughly double chance — evenly
+  across A–D (21.9, 22.5, 25.3, 25.1%).
+- **Ripples at an error do not prevent repeating it**, and the non-significant
+  trend runs the wrong way: repeated errors had *higher* rates
+  (delta +0.0450 vs +0.0022, p = 0.151; raw +0.2075 vs +0.1871, p = 0.288).
+
+### Final figures rebuilt
+
+The 3.5 cm eight-panel grid and the raster are retired — the raster showed
+nothing at 0.2 Hz over 4 s (under one ripple per row). Replaced by two figures
+in the house 16 cm × 4 cm format:
+
+- **`ripple_main_figure`** — three rows through `rip.plot_rows`: positive
+  feedback and negative feedback against their own baselines (the
+  `feedback_stage` panel), then the same headline cell against its
+  stillness-matched control press. One figure, both references.
+- **`ripple_methods_figure`** — the controls at the same scale (2 × 2, 16 cm).
+
+**Display smoothing added.** `rip.triangle_smooth` implements Sakon & Kahana's
+5-bin triangle, and `plot_rows(smooth_bins=…)` applies it to the LEFT panel
+only. The middle and right panels, and every statistic, still read the
+unsmoothed profiles — this is why their PVTHs look smooth and ours did not.
+
+**Two `plot_rows` parameters added.** `colours=` overrides `condition_colour`
+for labels the project's valence/stage naming cannot colour (the control press
+is neither, and was falling through to a tab10 orange — the hue reserved for
+state A); `legend_cm=` sizes the legend strip, which a three-row figure with
+eight entries overflowed into the bottom row.
+
+On the current bundle the `feedback_stage` rows give: correct/first uncovers
+increase +0.25…+0.65 s, p = 0.005; error/while learning decrease +1.15…+1.45 s,
+p = 0.046; the other four none. Row 3 (matched) gives +0.35…+0.75 s, p = 0.004.
+
+
+## 2026-09-14 — Hippocampal subfield, a matched temporal control, and post-hoc re-padding
+
+Follow-up to 2026-09-13 (f), on the same branch `swr-mpfc-hfb`.
+
+### 1. The pad now has evidence, not just a rationale
+
+The 0.25 s choice was a reasoned prior, **not a measurement** — stated as such
+at the time. The measurement has now been run: 15,036 accepted events on 29
+derivations across 11 sessions, comparing events a 1 s pad would have kept
+(`dist_to_artifact_s >= 1`) against those the 0.25 s pad newly admits.
+
+| | kept by 1 s pad | newly admitted | diff |
+|---|---|---|---|
+| peak frequency (Hz) | 98.12 | 98.38 | +0.3% |
+| duration (ms) | 66.3 | 67.0 | +1.1% |
+| RMS peak (z) | 3.847 | 3.918 | +1.8% |
+| amplitude (µV) | 1.553 | 1.680 | **+8.2%** |
+
+29.5% of events are newly admitted. By distance bin the profile is **flat and
+monotonic, with no discontinuity near the artifact**: peak frequency
+98.1–98.5 Hz and duration 65.8–67.1 ms across every bin from 0.25 s to ∞.
+
+**Caveats, both real.** The +8.2% amplitude difference is a genuine monotonic
+gradient (rms z 3.92 nearest → 3.80 farthest); events near crossings are
+slightly larger. That is consistent with contamination *and* with epileptogenic
+tissue genuinely producing larger ripples, and this measurement cannot separate
+the two. Separately, `spectral_passed_strict` reads 1.000 in every bin only
+because the comparison is over events that already passed — it carries no
+information here and should not be quoted as if it did.
+
+### 2. Any pad can now be re-imposed on the laptop
+
+Previously impossible, and **`dist_to_artifact_s` was being silently dropped by
+the bundle's column filter** — so the per-event distance stored on 2026-09-13
+would never have reached the laptop at all.
+
+- detection writes `artifact_intervals.csv`, the **unpadded** criterion union
+- `swr_artifact.clean_intervals_at_pad` rebuilds the exposure denominator at
+  any pad from it. Verified EXACT against the cluster-side mask at 0.1 / 0.25 /
+  0.5 / 1.0 s (dilation distributes over union, so this is not an approximation)
+- the bundle carries both, plus `dist_to_artifact_s` per event
+
+⚠ Both halves are needed. Filtering events without shrinking the denominator
+inflates the rate; the bundle `meta` says so.
+
+### 3. Hippocampal subfield — as probabilities, not a label
+
+Every contact and hippocampal derivation now carries Jülich `p_CA`, `p_DG`,
+`p_SUB` and `ca_dg_index` = (P(CA) − P(DG)) / (P(CA) + P(DG)).
+
+**Three limits, all load-bearing:**
+
+1. **This is not CA1 vs CA3.** Jülich's "cornu ammonis" is one volume covering
+   all CA fields. Nothing in this project's atlas stack resolves CA1 from CA3.
+2. **A hard label would be a volume artefact** — max-prob gives 88 CA / 5 DG /
+   7 SUB of 103 derivations. Probabilities overlap heavily on the same contact
+   (median P(CA) 78, P(DG) 38) because the subfields interdigitate below this
+   resolution. Use `ca_dg_index` as a continuous moderator only.
+3. **ASHS was the right tool and is not available** — populated for 3 of 103
+   selected contacts. Obtaining ASHS segmentations is the real fix.
+
+Also surfaced: **12 of 103 selected hippocampal contacts are called *amygdala*
+by Jülich** while the Harvard–Oxford rule that selected them says hippocampus.
+Worth a sensitivity analysis (`bRAMY2-bRAMY3` in s29 is one such derivation).
+
+### 4. A matched temporal control (SK's suggestion, and it is the better one)
+
+A temporal depth electrode is inserted laterally, so its outer contacts sit in
+lateral temporal cortex **on the same shaft as the hippocampal contact** — same
+amplifier, reference chain, noise environment and trajectory.
+
+Measured: **353 TemporalLateral derivations over 31 sessions, 158 of them on a
+probe that also carries the selected hippocampal contact**, plus 54 Auditory
+(Heschl / planum). Flagged per derivation as `same_probe_as_hpc`.
+
+This is strictly better than Visual, which differs from mPFC in every one of
+those respects at once. Visual is kept anyway for like-for-like comparison
+with He et al.
+
+Labels come from the Harvard–Oxford **cortical** atlas via the new
+`contact_anatomy.add_swr_roi`, writing a new `roi_swr` column. It only fills in
+contacts the shared ROI ladder had already returned `leftover` for, so
+`anatomy_atlas.assign_atlas_roi` — which is byte-for-byte shared with the cell
+pipeline — is untouched.
+
+`CORTICAL_ROIS` is now `mPFC, mOFC, TemporalLateral, Auditory, Visual`. Insula
+(172 derivations) and PCC (27) were dropped from the default: neither target
+nor matched control, and every extra derivation is extra channels on the one
+I/O-bound stage.
+
+### 5. Two bugs found by the proof-run
+
+- **Ripple detection was running on the cortical derivations.** They share the
+  pairs table so extraction reads every channel in one pass, but Chen's band,
+  thresholds and duration gate are hippocampal. This would have emitted a table
+  that looks exactly like a ripple table and means nothing. Detection now
+  filters on `role == 'ripple'` and says how many rows it skipped.
+- **Stale `bipolar_pairs_*.csv` files** from before the cortical montage (s13,
+  s24 locally) carry no `role` column. They would extract hippocampus-only and
+  look complete. `swr_make_conditions.py` now detects and reports them.
+
+### 6. Montage figure
+
+`ripple_figures.montage_figure`, drawn automatically by `swr_build_contacts.py`
+to `group/swr/figures/montage_coverage.pdf/.jpg`. Derivation midpoints — where
+a bipolar derivation is actually sensitive — coloured by ROI, with same-shaft
+controls ringed in black. Targets take the project's Showgirl2 colours; controls
+are grey, so target and control are distinguishable without reading the key.
+
+### 7. Proof-run on the laptop (s29, full chain)
+
+`build_contacts → extract_continuous → detect_session → extract_hfb`, all green:
+
+- 15 derivations: 3 hippocampal, 3 mPFC, 5 mOFC, 3 TemporalLateral, 1 Visual
+- 30 unique channels in one raw pass; residual line noise 0.00 at all harmonics
+- detection: 3 hippocampal rows, 12 cortical correctly skipped; rate 0.178 Hz
+  (Chen 0.17–0.24); 22% of events within 1 s of a crossing
+- **120 Hz was notched on 8 of 15 derivations**, so 8 dropped to 6 HFB
+  sub-bands. Without the notch-aware band, more than half this session's HFB
+  would have been measured through a notch
+- **positive control: all 3 hippocampal derivations positive** (+0.099, +0.120,
+  +0.085 z peri-ripple vs flanks)
+- `hfb.npz` 43 MB for 15 derivations × 0.87 h ≈ 3.3 MB/derivation/hour,
+  projecting to ~1.9 GB for the cohort
+
+
+## 2026-09-14 — Figures split, and two framing corrections
+
+Follow-up to (e), after SK's questions.
+
+**Two figures instead of one.** `ripple_results_figure` shows the data: a
+Sakon-style raster (one row per trial × derivation, one tick per ripple), the
+peri-event rate for uncovering and its matched control, the sliding *t* curve
+with the surviving cluster, and the baseline-vs-test window means.
+`ripple_methods_figure` shows the controls: the stillness imbalance that
+motivates the design, the matching balance, control neutrality across the four
+arrow keys, and the matched-vs-unmatched selection check. All panels measured
+to 3.51 × 3.51 cm.
+
+**Correction 1 — "raw / no baseline" was the wrong name.** The matched control
+*is* a baseline; it is a different EVENT rather than a different TIME. Renamed
+throughout to "own-baseline reference" and "matched-event reference", with a
+table in the methods stating what each does and does not control for.
+
+**Correction 2 — the primary/secondary ordering was backwards.** Sakon &
+Kahana's Eq. 2 (own-baseline) is the field's statistic and is now the headline:
++0.059 Hz [+0.011, +0.106], t(60) = +2.46, p = 0.018, cluster +0.25…+0.75 s,
+p = 0.008. The matched-event contrast (+0.035 Hz, cluster +0.35…+0.75 s,
+p = 0.004) is now presented as the control analysis showing the effect is not
+stillness. Both readings were always reported; only which leads has changed.
+
+**New observation from the window table.** The effect is a CROSSOVER, not an
+offset: at the −1.6…−1.1 s baseline the uncovering sits *below* its matched
+control (0.180 vs 0.204 Hz) and by 0–0.5 s it sits above it (0.225 vs
+0.190 Hz). The matched-event difference crosses zero about 1 s before the press
+and is already positive in the pre-event window (+0.039 Hz, p = 0.074;
+own-baseline +0.063 Hz, p = 0.027). A rise beginning before the press resembles
+Sakon's PRE effect, though the pre-event portion does not survive cluster
+correction alone. Worth pursuing.
+
+**On whether the controls are too strict.** Sakon & Kahana never match on a
+behavioural covariate: their PRE and BASE windows both sit in the same silent
+pre-vocalisation stretch, so motor state is constant across the comparison by
+construction. Our window is post-press and therefore downstream of what the
+participant does next, which is exactly what differs between conditions — so
+the control is warranted here and would be redundant there. Their 1st-vs-≥2nd
+recall comparison probably does carry an analogous timing confound that they
+address only with the 2 s exclusion.
+
+## 2026-09-13 (f) — Artifact pad 1.0 s → 0.25 s, and a cortical (HFB) branch
+
+Two changes on branch `swr-mpfc-hfb`, both additive. Motivated by He et al.
+2026 (*Nat Neurosci* 29:1711), who show hippocampal ripples update mPFC
+representations — the "how is the action plan loaded" step this project has not
+yet tested. Ideas the new data makes testable are listed in
+`data/final_results/ripple_analysis/POTENTIAL_IDEAS.md`; none has been run.
+
+### 1. Artifact pad (`mc/analyse/swr_artifact.py`)
+
+`PAD_S` 1.0 → **0.25 s**. Measured across 27 derivations in 11 sessions, by
+re-dilating the *same* per-criterion masks:
+
+| pad | mean clean fraction | derivations >2/3 contaminated | exposure vs 1.0 s |
+|---|---|---|---|
+| 1.0 s (old) | 0.569 | 3/27 | — |
+| 0.5 s | 0.723 | 0 | +27% |
+| **0.25 s (new)** | **0.819** | 0 | **+44%** |
+| 0.1 s | 0.885 | 0 | +56% |
+
+The five criteria flag ~2.6% of samples between them but
+`frac_combined_after_pad` was 47.6% across the cluster bundle — the pad, not
+the criteria, was doing essentially all of the rejection.
+
+The binding reason is cross-regional: a peri-ripple window needs ±750 ms clean
+in the hippocampal **and** the cortical derivation. Measured on the bundle, only
+56.7% of accepted ripples had a clean ±750 ms in their own derivation, which
+against an independent cortical mask leaves ~32% usable.
+
+Detector metrics are stable across the change (s38): rate 0.222 → 0.213 Hz
+(Chen 0.17–0.24), spectral rejection 30.3% → 30.1%. Only exposure moves.
+
+Three guards, because this is a parameter change made after seeing the data:
+
+- **`EXCLUSION_PAD_S = 1.0`, fixed.** Contamination is judged at the old pad so
+  the set of included derivations cannot move with `PAD_S`. Otherwise "more
+  exposure" and "dirtier contacts added" are confounded.
+- **`dist_to_artifact_s` is stored per event** — distance to the nearest
+  *unpadded* criterion crossing. Any larger pad can be re-imposed by filtering
+  that column, so a 0.25 s run reduces exactly to the 1 s result with no
+  re-detection. The pad is no longer a decision that must precede the analysis.
+- **Rejected metric, recorded so it is not retried:** "fraction of accepted
+  events within 100 ms of a crossing" is identically **zero** for any pad above
+  100 ms, because detection only ever runs on clean samples. It cannot
+  discriminate between pads. The distance distribution can.
+
+`swr_detect_session.py` gained `--pad_s` and `--clean_name` (which extraction to
+*read*), so a pad sweep costs no raw I/O. Refactor verified: `criteria_masks` +
+`combine_criteria` reproduce the stored pad-1.0 numbers to 5 decimal places.
+
+### 2. Cortical branch — HFB (`mc/analyse/swr_hfb.py`, `scripts/swr_extract_hfb.py`)
+
+`bipolar_pairs_{XX}.csv` now holds both montages, keyed by `role`:
+
+- `ripple` — hippocampal, one derivation per probe. **Unchanged**, verified
+  identical to the committed `bipolar_pairs_38.csv`.
+- `hfb` — cortical (mPFC, mOFC, Visual, Insula, PCC), non-overlapping adjacent
+  pairs anchored on each in-ROI contact. Verified invariant across 6 sessions:
+  **no contact appears in two derivations.** One-per-probe was not used here —
+  He et al. ran on 47 dmPFC contacts, which that rule cannot reach — but the
+  independence it protects is kept.
+
+Cortical pairs ride in the same table so stage 2 reads them in the **same
+raw-file pass**; extraction is the only I/O-bound stage and running it twice
+would cost hours for nothing. Resources bumped 64G/4h → 96G/8h.
+
+`swr_extract_hfb.py` is a **sibling of detection**, not a successor — both read
+`continuous.npy`. Per derivation it writes HFB (70–150 Hz, per-sub-band log +
+z-score, averaged) plus `ripple`/`theta`/`beta` envelopes and `theta_phase`, all
+continuous at 100 Hz, float16.
+
+- **Notch-aware.** 120 Hz sits inside any HFB band and this pipeline's notch is
+  adaptive *per derivation*, so a fixed band would mean different things on
+  different contacts of the same session. Sub-bands on a notched harmonic are
+  dropped and `n_sub_bands` is carried per derivation.
+- **z-scored on artifact-free samples only**, else the flagged samples — by
+  construction the largest excursions — set the SD.
+- **Nothing is epoched.** Windows, baselines and phase splits stay free choices
+  on the laptop; that was the point of the stage.
+- **Positive control built in:** peri-ripple HFB at hippocampal derivations is
+  computed and printed. On s38: **+0.115 and +0.147** z against flanks. If this
+  is not positive the clocks disagree and no cortical number means anything.
+
+Coverage (local 32-session subset; the cluster has ~46): mPFC 80 contacts / 23
+sessions / 17 subjects, mOFC 225 / 26 / 18, Visual 179 / 19 / 13. Every session
+with an mPFC contact also has a hippocampal one. He et al. worked with 47 dmPFC
++ 12 vmPFC. ⚠ s26/27/28 are one subject contributing 10 mPFC contacts each —
+subject-level inference stays mandatory.
+
+### 3. Bundle — still the final stage
+
+`export_bundle(with_hfb=True)` copies the HFB stores to `bundle/hfb/s{NN}_hfb.npz`,
+one per session, read back with `swr_bundle.load_hfb` (casts to float32; float16
+accumulates error over the long sums that averaging epochs is). Kept beside the
+pickle, not inside it, so `swr_bundle.pkl` stays a few MB and loadable alone;
+the HFB half is ~1–2 GB. `--hfb_arrays` narrows the transfer.
+
+**Bug found and fixed while testing:** `export_bundle` read `pairs.csv` from
+`LFP-clean/{analysis_name}`, so for any run using `--clean_name` the pairs table
+came back **empty** — and the `FileNotFoundError` then skipped that session's
+behaviour and uncover tables too, silently. It now reads `clean_name` from the
+detection settings. This would have hit every pad-sweep bundle.
+
+
+## 2026-09-13 (e) — Final consolidated ripple analysis, figure and manuscript drafts
+
+The analyses SK settled on are now in one runnable script rather than spread
+across five exploratory ones.
+
+**`scripts/swr_final_ripple_analysis.py`** — self-contained (imports only
+`mc.analyse.ripples`, `swr_io`, `swr_behaviour`), one command, no hard-coded
+bundle. It builds `swr/press_categories.csv` from the raw 25 ms button series
+if that cache is missing or older than the bundle, so pointing `--bundle` at
+new data is the only change needed when more sessions arrive. The cache build
+is the only slow step (~15 min, I/O bound); everything after it is minutes.
+
+It runs, in order: control validity (four arrow keys compared), matching
+balance, selection check (matched vs unmatched targets), per-cell contrasts
+against stillness-matched controls in two readings (raw = primary, own-baseline
+= secondary), and the five between-cell contrasts including the valence × stage
+interaction.
+
+**Outputs** in `swr/ripple_final_<date>/`:
+- `ripple_final_figure.png` / `.pdf` — 8 panels, each measured to
+  3.51 × 3.51 cm (the layout iterates until the axes hit the requested 3.5 cm,
+  because `tight_layout` otherwise gives panels whatever the text leaves over).
+  Figure 20.1 × 10.7 cm overall. Type steps to 8/7.5/7 pt: the house 9 pt fills
+  a third of a 3.5 cm panel.
+- `ripple_statistics.csv` — 72 rows, one per test: analysis, contrast, reading,
+  window, n_units, mean, SEM, 95% CI, t, df, p, p_perm, Cohen's d, n_events.
+- `ripple_statistics.json` — the same plus every setting, the descriptives and
+  the full time courses, for provenance.
+
+**Manuscript drafts**, in `data/final_results/ripple_analysis/manuscript/`:
+- `statistics_methods_DRAFT.md`
+- `statistics_results_DRAFT.md`
+
+Both quote only numbers present in the statistics files. The results draft leads
+with the raw reading, states the own-baseline reading as secondary and says why
+it is inflated, reports the interaction as underpowered rather than null with
+its CI, and carries four caveats into the discussion (exploratory status, button
+stillness only, the control not being a blank, and the 57% matched subset).
+
+All values reproduce the exploratory runs of entries (b)–(d) exactly.
+
+## 2026-09-13 (d) — CORRECTION: with 1:1 stillness matching the first-traversal effect SURVIVES
+
+This supersedes the conclusion of entries (b) and (c) for one cell. SK proposed
+matching each uncover press against a press of a category carrying no
+hypothesis — an arrow key — with the same following stillness, rather than
+against a pooled or coarsely binned control. Done properly, the effect that
+binning had washed out comes back.
+
+New scripts: `scripts/swr_build_press_categories.py` (one slow read of the
+25 ms button series, cached as `swr/press_categories.csv`) and
+`scripts/swr_matched_control_presses.py`. Results in
+`.../swr/matched_control_presses_2026-09-13/`.
+
+**Press categories.** 248,737 presses, 61 sessions: Return 97,661;
+RightArrow 40,554; LeftArrow 37,751; DownArrow 37,173; UpArrow 35,598.
+97,660 of 97,661 uncover presses carry a valence/stage label.
+
+**Matching.** Per session, 1:1 nearest neighbour on `still_next_s`, WITHOUT
+replacement, caliper max(0.15 s, 10%), targets served in seeded random order
+(seed 42), both sides de-duplicated at 2 s before matching. Achieved balance is
+essentially exact — target and control median stillness agree to 3 decimals in
+every category (e.g. 0.500 vs 0.500 s; 1.175 vs 1.175 s).
+
+**The control is neutral.** Rate after each arrow key, gaps 1–2.5 s:
+Left 0.1879, Right 0.2069, Up 0.2041, Down 0.1957 Hz — all within 0.02 Hz with
+overlapping SEMs, so "an arrow key" is one category and direction need not
+enter the matching.
+
+### Results, 0–0.5 s, uncover minus its matched arrow key
+
+| target | matched | vs own baseline | raw (no baseline) | raw cluster |
+|---|---|---|---|---|
+| **correct, first uncovers** | 3,074 (57%) | **+0.0586, p = 0.018** | **+0.0349, p = 0.055** | **+0.35…+0.75 s, p = 0.004** |
+| correct, while learning | 4,061 (90%) | +0.0409, p = 0.024 | +0.0198, p = 0.090 | none |
+| correct, once known | 10,412 (80%) | +0.0343, p = 0.118 | +0.0062, p = 0.611 | none |
+| error, first uncovers | 5,671 (94%) | +0.0001, p = 0.996 | +0.0054, p = 0.617 | none |
+| error, later | 3,891 (91%) | +0.0231, p = 0.287 | +0.0026, p = 0.875 | none |
+| first D (F5) | 1,085 (76%) | +0.0302, p = 0.503 | +0.0036, p = 0.918 | none |
+
+n = 61 sessions for all but error/later (57) and first D (54).
+
+### What this changes
+
+1. **The first-traversal correct uncovering is NOT explained by stillness.**
+   Against a press matched on stillness to three decimals, with no baseline
+   window anywhere in the statistic, it carries +0.035 Hz more and produces a
+   cluster surviving correction over all window positions (p = 0.004; still
+   p < 0.05 after Bonferroni over the six targets). Entries (b) and (c)
+   concluded otherwise from coarse binning, which compared a target at 1.6 s
+   with a control at 2.4 s inside the same bin and lost most of the sample
+   (n fell to 32); that was a power and matching failure, not an absence.
+
+2. **The stage gradient is real in the matched data.** Raw: first uncovers
+   +0.035 > while learning +0.020 > once known +0.006, with errors flat at
+   every stage (+0.005, +0.003). This is the pattern SK saw in
+   `feedback_stage`, now with stillness removed by construction.
+
+3. **F5's D-specific claim does not survive; the general first-traversal
+   claim does.** `first D` gives +0.0036 Hz (p = 0.92) while all first-traversal
+   correct uncoverings give +0.035 Hz. The effect is about uncovering a reward
+   for the first time, not about D. Since F5 was the one pre-declared claim,
+   this needs stating plainly in any write-up.
+
+4. **The own-baseline reading is inflated and should not be the headline.**
+   It exceeds the raw reading in every one of the six cells (+0.059 vs +0.035,
+   +0.041 vs +0.020, +0.034 vs +0.006, …). That is the pre-event stillness
+   imbalance predicted in entry (b), Limitation 2, showing up exactly as
+   expected: controls sit in already-quiet stretches, so their baselines are
+   ripple-richer and their (window − baseline) is depressed. The raw reading is
+   the one to quote.
+
+### The unmatched 43% are not a favourable selection
+
+The obvious worry about a 57% match rate is that matching kept the events with
+the smaller effect. It did not — it kept the ones with the SMALLER effect in the
+opposite sense, i.e. the drop is conservative. Each subset against its own
+baseline, 0-0.5 s:
+
+| target | matched | still | unmatched | still | paired Δ |
+|---|---|---|---|---|---|
+| **correct, first uncovers** | **+0.0446** (n=61) | 1.05 s | **+0.0647** (n=55) | 2.19 s | −0.019, t = −0.82, p = 0.42 |
+| correct, while learning | +0.0209 (n=61) | 0.52 s | −0.0235 (n=13) | 3.32 s | +0.051, p = 0.38 |
+| correct, once known | +0.0167 (n=61) | 0.50 s | −0.0124 (n=45) | 0.53 s | +0.043, p = 0.075 |
+| correct, later | +0.0162 (n=61) | 0.52 s | — | 0.57 s | — |
+| error, first uncovers | −0.0108 (n=61) | 0.52 s | — | 0.64 s | — |
+| first D (F5) | +0.0385 (n=54) | 1.17 s | — | 3.03 s | — |
+
+The unmatched first-traversal events are the LONG-stillness ones (median 2.19 s
+vs 1.05 s) and they carry a BIGGER own-baseline effect (+0.065 vs +0.045), with
+no significant difference between subsets (p = 0.42). So matching did not
+cherry-pick the events that show the effect; it discarded the ones that show it
+most, precisely because their stillness had no arrow-key partner. How much of
+that extra +0.02 Hz is signal and how much is their doubled stillness cannot be
+separated — which is exactly why they are excluded rather than included.
+
+### The valence x stage interaction does NOT hold under matching
+
+Each cell is already `uncover − its own stillness-matched arrow key`, so
+differencing two cells is a stillness-adjusted comparison. Raw reading, 0-0.5 s:
+
+| contrast | n | Δ Hz | t | p_perm | 95% CI | cluster |
+|---|---|---|---|---|---|---|
+| stage within correct (first − later) | 61 | +0.0205 | +1.07 | 0.291 | [−0.018, +0.059] | none |
+| stage within error (first − later) | 57 | +0.0008 | +0.05 | 0.957 | — | none |
+| valence at first (correct − error) | 61 | +0.0295 | +1.45 | 0.152 | [−0.011, +0.070] | none |
+| valence later (correct − error) | 57 | +0.0118 | +0.77 | 0.449 | — | none |
+| **INTERACTION valence × stage** | 57 | **+0.0211** | +0.80 | **0.439** | **[−0.032, +0.074]** | none |
+
+Every contrast points the predicted way — the stage effect lives in the correct
+cells (+0.021) and not in the error cells (+0.001), and valence separates more
+at first (+0.030) than later (+0.012) — but not one of them reaches
+significance, and no cluster survives.
+
+This is the same dissociation the 2026-09-11 entry found and it is now
+confirmed under the cleanest control available: **the simple effect at
+correct/first-uncovers holds against its matched control; the between-cell
+contrasts, including the interaction, do not.** The interaction CI spans
+[−0.032, +0.074] Hz, which is consistent with anything from a small negative to
+a substantial positive interaction — this is underpowered, not clearly null,
+and should be reported as such rather than as an absence.
+
+Arithmetically the reason is plain: a between-cell contrast is the difference
+of two control-adjusted quantities, so its variance roughly doubles while its
+expected size shrinks relative to the simple effect.
+
+### Limitations
+
+- **57% match rate for correct/first-uncovers.** Long-stillness targets are the
+  hardest to match (the arrow-key pool thins out past 2 s), so the matched
+  subset skews shorter than the full set (median 1.050 s vs 1.375 s). The
+  contrast is stillness-balanced by construction, but it is established on that
+  subset, not on all first-traversal uncoverings. See the subset comparison
+  above: the omission is conservative.
+- Matching without replacement discards targets that find no partner; counts
+  are reported per category, never silently dropped.
+- `first D` has the lowest match rate (76%) and the smallest n (54 sessions);
+  its null is weakly powered and should not be read as evidence against F5, only
+  as a failure to confirm it under this control.
+
+
+## 2026-09-13 (c) — What stillness is; ripples are flat inside a pause; task-free rest is the highest rate in the dataset
+
+SK's four objections to the stillness control, each answered.
+`scripts/swr_stillness_anatomy.py`; results in
+`data/ephys_humans/derivatives/group/swr/stillness_anatomy_2026-09-13/`.
+61 sessions, unit = session, min 8 events, rates are RAW (no baseline
+subtraction anywhere in this entry).
+
+### Q1 — what "stillness" actually is, and what it was conflating
+
+`still_next_s` = time from the event to the NEXT key press of any kind
+(movement or uncover), from the 25 ms button series. It CLASSIFIES the event;
+it is not a comparison with baseline, and "the window is more still than
+baseline" was never the claim.
+
+It bundles two different problems, which the earlier entries did not separate:
+
+1. **Window contamination.** `correct, first uncovers` has a median gap of
+   1.375 s, so the 0–0.5 s test window contains nothing else. `correct, later`
+   has 0.425 s, so the same window usually CONTAINS THE NEXT BUTTON PRESS. That
+   is a mechanical difference in window content, no theory of brain state
+   needed.
+2. **Brain state.** Longer quiet → more LIA → more ripples.
+
+Q2 below separates them.
+
+**Limitation of the measure itself:** this is BUTTON stillness. No eye
+tracking, no motion capture, no accelerometry. A subject sitting motionless and
+thinking hard is indistinguishable from one resting.
+
+### Q2 — inside a long pause, ripples are FLAT
+
+Raw rate in 0.5 s slices from the press that opens each gap ≥ 2.5 s:
+
+| source | 0–0.5 | 0.5–1 | 1–1.5 | 1.5–2 | 2–2.5 |
+|---|---|---|---|---|---|
+| correct uncovering (n=61, 3,734 ev) | 0.230 | 0.219 | 0.188 | 0.186 | 0.199 |
+| movement press (n=43, 1,522 ev) | 0.244 | 0.239 | 0.148 | 0.218 | 0.180 |
+| grid end, task-free (n=61, 945 ev) | 0.176 | 0.216 | 0.195 | 0.230 | 0.201 |
+
+**No ramp, no decay — roughly 0.18–0.24 Hz throughout.** Aligning to the END of
+the gap gives the same flat picture.
+
+This matters for interpretation. The stillness "dose-response" reported on
+2026-09-13 (−0.004 Hz for gaps < 0.5 s rising to +0.075 Hz for gaps ≥ 2.5 s)
+is therefore **not** ripples accumulating as a pause lengthens. It is a
+difference between two behavioural regimes — quiet stretches sit at ~0.20 Hz
+throughout, busy stretches lower — plus, for short gaps, the next press landing
+inside the measurement window. Problem 1 above, not problem 2.
+
+### Q3 — task-free rest has the HIGHEST rate in the dataset
+
+SK's idea: after the last D of a grid the subject has finished and the next
+grid has not started, so that gap is stillness with no task on it. It works —
+1,431 grid endings, 945 with a gap of 2.5–60 s, median 5.92 s, all 61 sessions
+contribute (~16 usable per session).
+
+Raw rate 1.5–2.5 s into the gap, by what opened it:
+
+| source | n | rate |
+|---|---|---|
+| correct uncovering | 61 | 0.1923 Hz |
+| movement press | 43 | 0.1988 Hz |
+| **grid end (task-free)** | 61 | **0.2157 Hz** |
+
+Paired:
+
+| contrast | Δ Hz | t | p_perm |
+|---|---|---|---|
+| correct uncovering − grid end | **−0.0234** | t(60) = −2.08 | **0.046** |
+| movement press − grid end | +0.0034 | t(42) = +0.14 | 0.894 |
+| correct uncovering − movement press | −0.0183 | t(42) = −1.06 | 0.298 |
+
+**The task-free period carries MORE ripples than in-task stillness**, and it is
+the highest rate of the three. This is the opposite of "task events drive
+ripples" and it is what the classical view predicts: ripples are maximal in
+quiet rest with no task demand. It also gives the project a clean reference
+rate for "still, nothing to do" — 0.216 Hz — which no task-locked condition in
+this dataset exceeds.
+
+Caveat: a grid-end gap still BEGINS with a D uncovering, so it is the aftermath
+of a task event rather than a truly neutral epoch; reading it at 1.5–2.5 s is
+what keeps any D transient out. The next grid's onset is a median 4.5 s away,
+so it is outside the read window for most grids.
+
+### Q4 — event vs stillness-matched control, with no baseline window at all
+
+SK's suggestion, and it is the better design: let the matched pause BE the
+reference instead of measuring both against their own pre-event baselines. That
+also removes the pre-event stillness imbalance flagged as Limitation 2 in the
+previous entry, since no pre-event window enters the statistic.
+
+Restricted to gaps ≥ 2.5 s so both sides are stillness-matched, raw Hz,
+sliding cluster test over all positions:
+
+| feedback cell | n | 0–0.5 s Δ Hz | t | p | cluster |
+|---|---|---|---|---|---|
+| correct, first uncovers | 32 | +0.0202 | +0.58 | 0.56 | none |
+| correct, later | 43 | −0.0264 | −0.91 | 0.37 | none |
+| error, first uncovers | 7 | −0.0482 | −1.17 | 0.29 | none |
+| error, later | 14 | −0.0673 | −2.17 | 0.050 | decrease +0.25…+0.55 s, p = 0.011 |
+
+`correct, first uncovers` — the cell the whole question is about — is +0.020 Hz
+and not significant, with no surviving cluster, under the cleanest design
+available. The `error, later` cluster rests on 14 sessions and is one of four
+tests; not interpreted.
+
+Cost of the design: requiring a ≥ 2.5 s gap on BOTH sides drops n hard
+(61 → 32 for correct/first, → 7 for error/first). This is the least biased and
+least powered of the three controls run; it agrees with the other two.
+
+### Where the three controls now stand
+
+Stratification (62% of the stage effect attributable to stillness), matched
+movement presses (feedback − pause ≈ +0.01 Hz, ns), and now the no-baseline
+matched contrast (+0.020 Hz, ns) all point the same way. Against that,
+task-free rest carries MORE ripples than any feedback moment. F5 (first-D) has
+still not been put through any of these and remains the outstanding job.
+
+
+## 2026-09-13 (b) — Feedback moments are not distinguishable from pauses of the same length
+
+SK's proposed control, and it is the decisive one: compare feedback moments
+against **randomly occurring moments of matched stillness**. Implemented as
+`scripts/swr_feedback_vs_matched_stillness.py`. Results in
+`data/ephys_humans/derivatives/group/swr/feedback_vs_matched_stillness_2026-09-13/`.
+
+**Control events.** Every MOVEMENT press — a button press that uncovers
+nothing, so no information arrives — with its own time-to-next-press.
+151,076 of them. Chosen over random time points because a random time point
+has no motor onset and would differ from an uncovering in two ways at once;
+N1 already showed movement presses carry no ripple modulation on their own.
+
+**Design.** Stratify both feedback events and movement presses by time to the
+next key press of any kind, then contrast feedback − pause WITHIN each bin,
+paired by session. Same session, same stillness, same motor act; the only
+remaining difference is whether information arrived. Stratification rather
+than 1:1 matching, so nothing is sampled or discarded (the ≥2.5 s bin holds
+only 1,608 movement presses, so 1:1 matching would need replacement there).
+
+### 1. How much does stillness alone do? A lot.
+
+Movement presses vs their own baseline, 0–0.5 s, by how long the subject then
+sat still — no feedback anywhere in this analysis:
+
+| stillness after the press | Δ rate 0–0.5 s | t | p_perm |
+|---|---|---|---|
+| 0–0.5 s | −0.0043 | −0.78 | 0.44 |
+| 0.5–1 s | +0.0062 | +1.11 | 0.28 |
+| 1–1.5 s | +0.0183 | +1.39 | 0.17 |
+| 1.5–2.5 s | **+0.0607** | **+3.09** | **0.0023** |
+| ≥ 2.5 s | **+0.0751** | **+3.03** | **0.0026** |
+
+**A pause with nothing in it produces +0.06 to +0.075 Hz — larger than the
+entire correct/first-uncovers effect (+0.056 Hz).** Any event class enriched
+for long pauses inherits a rise of this size for free.
+
+### 2. Is feedback more than that? No.
+
+Feedback − matched pause, stillness-standardised across bins:
+
+| feedback cell | n | Δ Hz | t | p_perm | cluster |
+|---|---|---|---|---|---|
+| correct, first uncovers | 58 | +0.0105 | +0.58 | 0.56 | none |
+| correct, later | 61 | −0.0020 | −0.19 | 0.85 | none |
+| error, first uncovers | 58 | −0.0057 | −0.61 | 0.54 | none |
+| error, later | 40 | +0.0016 | +0.13 | 0.90 | none |
+
+**None of the four cells differs from a movement press followed by the same
+amount of stillness**, at any bin-standardised estimate or in any surviving
+cluster. Per-bin, `correct, first uncovers` runs +0.016, +0.021, +0.015,
++0.007, +0.010 Hz — consistently positive but never significant and an order of
+magnitude smaller than the stillness effect it sits on.
+
+Two of twenty bin-level tests reach p < 0.05 — `error, first uncovers` at
+1.5–2.5 s (+0.114, p = 0.006, n = 17) and `error, later` at ≥2.5 s (−0.116,
+p = 0.015, n = 12). One is expected by chance, they have opposite signs, both
+have the smallest n in the table, and neither survives standardisation. They
+are noise.
+
+### What this means, and what it does not
+
+The feedback-locked ripple rise in this dataset is, as far as this control can
+tell, the pause. Three independent lines now agree: stratification removes it,
+direct standardisation attributes 62% of the stage difference to stillness, and
+a matched non-feedback press reproduces it entirely.
+
+**This does not by itself overturn F5** (ripples after the first uncovering of
+D), which was the one claim stated before any analysis. F5 was tested on a
+different contrast — first-D against its own baseline with a sliding cluster
+test — and has NOT been put through this control. It should be, and that is
+the obvious next job: first-D is exactly the kind of event followed by a long
+pause, so it is the most exposed claim in the project, not the least.
+
+**Limitation 1 — the control is not neutral either.** A movement press followed
+by 2 s of stillness is not a blank moment: the subject may have arrived
+somewhere and stopped to think. If deliberation pauses carry ripples, the
+control absorbs genuine signal and the test is conservative. Separating pause
+TYPES rather than pause LENGTHS is the way past this: VTE-like deliberation
+pauses are theta-rich and ripple-poor, quiet-rest pauses the reverse. The LFP
+needed for that split exists (`continuous.npy` per session) but no theta
+measure is in the bundle yet.
+
+**Limitation 2 — matching on following stillness leaves PRECEDING stillness
+unbalanced.** Median time since the previous press, within each
+following-stillness bin:
+
+| bin (time to next press) | correct, first | correct, later | movement press |
+|---|---|---|---|
+| 0–0.5 s | 0.275 | 0.400 | 0.425 |
+| 0.5–1 s | 0.312 | 0.500 | 0.550 |
+| 1–1.5 s | 0.350 | 0.625 | 0.800 |
+| 1.5–2.5 s | 0.350 | 0.738 | **1.025** |
+| ≥ 2.5 s | 0.400 | 0.500 | **1.200** |
+
+A movement press with a long pause after it tends to have a long pause before
+it too — it is an isolated press in an already-idle stretch — whereas a
+feedback event with a long pause after it was reached by active walking. The
+baseline window sits at −1.6 to −1.1 s, so the control's baseline should be the
+more ripple-rich one, which would DEFLATE the control's (window − baseline) and
+therefore INFLATE feedback − pause. The observed feedback − pause is ~+0.01 Hz
+and non-significant even with that bias pushing in its favour, so the null
+conclusion is the safe direction. This is a reasoned direction, not a measured
+one — the rigorous fix is to stratify on preceding AND following stillness
+jointly, which is the next thing to build if this control is to be quoted.
+
+
+## 2026-09-13 — Positive feedback early vs late: 62% of it is stillness
+
+Follow-up to 2026-09-11. SK pointed out that the contrast she is actually
+looking at is not the interaction I had tested: it is **positive feedback
+early vs positive feedback late** (correct only, across stages), not
+`(correct − error) × stage`. Tested directly, with the stillness controls the
+project's own F1 demands.
+
+New script: `scripts/swr_stillness_control.py`. Results in
+`data/ephys_humans/derivatives/group/swr/stillness_control_correct_2026-09-11/`.
+Bundle `swr/bundle` (2026-09-08), 61 sessions, unit = session, min 10 events
+per session per cell per bin, 0–0.5 s vs the same trial's baseline.
+
+### Which number is which
+
+Worth stating because the two are easy to conflate, and the `feedback_stage`
+figure shows the first while the question is about the second:
+
+| quantity | value | verdict |
+|---|---|---|
+| `correct, first uncovers` vs **its own baseline** (the `**` in the figure) | +0.056 Hz, t = +2.76, p_perm = 0.006; cluster +0.25…+0.75 s, p = 0.006 | **holds**, survives cluster correction |
+| `correct, first` − `correct, once known` | +0.0396 Hz, t = +2.14, p_perm = 0.034 | one of 3 windows, no cluster |
+| `correct, first` − `correct, while learning` | +0.0249 Hz, t = +1.16, p_perm = 0.257 | no |
+| `correct, first` − `correct, later` (pooled) | +0.0360 Hz, t = +2.03, p_perm = 0.044 | one of 3 windows, no cluster |
+
+A condition can beat its own baseline strongly and still not beat another
+condition: the second test is paired and has to clear the other condition's
+rise as well.
+
+### Stillness is a five-fold effect on this very window
+
+Measured on the correct uncoverings themselves, pooled over stages so it
+carries no stage information, binned by time to the next key press of any kind:
+
+| stillness after the event | Δ rate 0–0.5 s |
+|---|---|
+| 0–0.5 s | +0.010 Hz |
+| 0.5–1 s | +0.015 Hz |
+| 1–1.5 s | +0.029 Hz |
+| 1.5–2.5 s | +0.052 Hz |
+| ≥ 2.5 s | +0.039 Hz |
+
+And the two stages sit in completely different places on that curve:
+
+| stillness bin | % of `first uncovers` | % of `later` |
+|---|---|---|
+| 0–0.5 s | 16.9 | 58.2 |
+| 0.5–1 s | 18.4 | 28.0 |
+| 1–1.5 s | 17.8 | 6.4 |
+| 1.5–2.5 s | 23.0 | 3.5 |
+| ≥ 2.5 s | 23.9 | 3.8 |
+
+### Stratifying removes most of it
+
+Same contrast computed INSIDE each stillness bin, so like is compared with
+like:
+
+| stratum | n | Δ Hz | t | p_perm |
+|---|---|---|---|---|
+| unstratified | 61 | +0.0360 | +2.03 | 0.044 |
+| 0–0.5 s | 32 | +0.0281 | +0.74 | 0.489 |
+| 0.5–1 s | 35 | +0.0059 | +0.17 | 0.874 |
+| 1–1.5 s | 38 | +0.0214 | +0.73 | 0.472 |
+| 1.5–2.5 s | 33 | +0.0242 | +0.71 | 0.496 |
+| ≥ 2.5 s | 38 | −0.0281 | −0.50 | 0.629 |
+| **stillness-standardised** | **58** | **+0.0169** | **+0.72** | **0.488** |
+
+No surviving cluster for the standardised contrast at either width.
+
+**Direct standardisation.** Taking the rate-vs-stillness curve above (measured
+with both stages pooled, so it is stage-blind) and applying each stage's own
+stillness distribution to it:
+
+- observed: +0.0360 Hz (t = +2.03)
+- predicted by the stillness imbalance alone: **+0.0223 Hz (t = +2.70)**
+- residual: +0.0136 Hz, t = +0.89, **p = 0.376**
+- **stillness accounts for 62% of the observed difference**, and the remaining
+  38% is not distinguishable from zero.
+
+Caveat, stated because it cuts the other way: stratifying costs sessions
+(61 → 32–38 per bin), so "not significant within bins" is partly power. The
+informative part is that the effect SIZE drops with it (+0.036 → +0.017
+standardised), which power loss alone would not do.
+
+### Interpretation, and why this is not automatically a confound
+
+Stillness may be a MEDIATOR rather than a confounder: uncovering a reward for
+the first time may cause the pause, and the pause carries the ripples. That is
+a real possibility and controlling for stillness then removes part of the
+causal path. But the claim that survives in that case is "discovering a reward
+makes people pause, and pauses carry ripples", not "the hippocampus signals
+discovery". Distinguishing them needs a comparison against pauses of the same
+length that contain no feedback — see the next entry.
+
+
+## 2026-09-11 — Valence × stage is a stillness effect; ripples do not predict later errors
+
+Two questions from SK about the `feedback_stage` panel at `--unit=session
+--min_events=15`: (1) the six cells look crossed — positive feedback raises the
+rate early in a grid, negative feedback late — can that be tested as an
+interaction? (2) does a higher ripple rate early predict fewer mistakes later?
+
+Two new scripts, both reusing the existing test functions rather than
+re-implementing them:
+`scripts/swr_valence_stage_interaction.py`, `scripts/swr_ripples_predict_errors.py`.
+Two new helpers in `mc/analyse/ripples.py`: `contrast_profiles` and
+`hotelling_signflip`.
+
+Results: `data/ephys_humans/derivatives/group/swr/valence_x_stage_2026-09-11/`
+and `.../ripples_predict_errors_2026-09-11/`. Bundle `swr/bundle` (2026-09-08),
+61 sessions, 41 subjects, 180 derivations, 64,760 ripples.
+
+### How the interaction is built
+
+Baseline subtraction is linear, so a weighted combination of RAW per-session
+rate profiles, baselined afterwards, is identical to combining already-baselined
+profiles (checked: max abs difference 2.2e-16). An interaction contrast
+therefore passes through `rip.baseline_subtract`, `rip.window_test` and
+`rip.sliding_window_test` unchanged — same sign-flip null, same cluster
+correction, no second code path.
+
+### 1. The interaction exists in the right direction and does not survive
+
+0–0.5 s vs the same trial's baseline, session as the unit, min 15 events/cell:
+
+| contrast | n | Δ Hz | t | p_perm |
+|---|---|---|---|---|
+| correct − error, first uncovers | 61 | +0.0555 | +3.03 | **0.0031** |
+| correct − error, while learning | 33 | +0.0326 | +1.27 | 0.224 |
+| correct − error, once known | 42 | −0.0042 | −0.16 | 0.866 |
+| valence × stage, linear (first − once known) | 42 | +0.0503 | +1.41 | 0.161 |
+| valence × stage, quadratic | 27 | +0.0284 | +0.36 | 0.731 |
+| valence × stage, pooled (first − later) | 56 | +0.0486 | +1.83 | 0.073 |
+
+Omnibus 2 × 3 (linear + quadratic jointly, Hotelling T² with sign-flip null,
+sessions supplying all six cells): **F(2,25) = 0.08, p_perm = 0.924, n = 27**.
+
+Sliding cluster test, both widths: the simple effect at *first uncovers*
+survives (+0.25 to +0.75 s, p = 0.006 at 0.3 s; +0.15 to +0.75 s, p = 0.017 at
+0.5 s). **No interaction contrast produces any surviving cluster.**
+
+The pooled interaction reaches +0.0685 Hz, t = +2.34, p_perm = 0.021 in the
+0.5–1.0 s window, but that is one of three windows inspected (Holm-adjusted
+p = 0.063) and no cluster survives, so it is not a result.
+
+Why the interaction is so much weaker than the eye suggests: it is paired, and
+pairing costs sessions. `error, while learning` is estimable in 33 sessions and
+`error, once known` in 42, so the 2 × 3 crossing has n = 27. Pooling the two
+later stages at the EVENT level (before the min-events filter) recovers n = 56,
+and that is the best-powered version available.
+
+### 2. The interaction is a stillness artefact
+
+F1 says ripple rate rises with stillness. Stillness — time from an uncovering to
+the next key press of ANY kind, movement included, taken from the 25 ms button
+series via `swr_probes.press_times` — is wildly unbalanced across these cells:
+
+| cell | median time to next press |
+|---|---|
+| correct, first uncovers | **1.375 s** |
+| correct, while learning | 0.525 s |
+| correct, once known | 0.425 s |
+| error, first uncovers | 0.450 s |
+| error, while learning | 0.575 s |
+| error, once known | 0.625 s |
+
+The same interaction contrast on the BEHAVIOUR: **+1.310 s, t(60) = +11.34,
+p_perm < 1e-4** (2-stage) and +1.575 s, t = +8.11 (3-stage). The behavioural
+interaction is an order of magnitude more significant than the neural one and
+has the identical shape. After a correct uncovering on the first traversal the
+subject stops and looks; in every other cell they press on within half a second.
+
+Sweeping a common stillness criterion applied identically to all cells
+(0–0.5 s window, pooled 2-stage crossing):
+
+| min stillness | valence effect, first uncovers | interaction (first − later) |
+|---|---|---|
+| none | +0.0555 (n=61, p=0.003) | +0.0486 (n=56, p=0.073) |
+| ≥ 0.5 s | +0.0513 (n=59, p=0.006) | +0.0410 (n=47, p=0.170) |
+| ≥ 1.0 s | +0.0514 (n=39, p=0.079) | **−0.0066 (n=30, p=0.879)** |
+| ≥ 1.5 s | +0.0188 (n=16, p=0.634) | −0.0240 (n=12, p=0.564) |
+| ≥ 2.0 s | +0.0223 (n=6, p=0.778) | −0.0153 (n=5, p=0.935) |
+
+The dissociation matters. The **simple effect at first uncovers keeps its
+effect size** through ≥ 1.0 s (0.0555 → 0.0513 → 0.0514; only n and therefore p
+degrade), so it is not obviously stillness. The **interaction does not** — it
+falls to zero and changes sign while n is still 30. Reading the interaction as
+neural is not supported.
+
+Caveat on the sweep: thresholding changes cell composition as well as
+equalising stillness, and n falls steeply because only 11% of `error, first
+uncovers` events are followed by ≥ 1 s of stillness (vs 65% of `correct, first
+uncovers`). Distribution matching within session × stage would preserve more n
+and is the obvious next step if this is to be pushed further.
+
+### 3. Ripple rate does not predict later errors; stillness does
+
+Unit: the grid (1,381–1,429 grids, 61 sessions, median 24 grids/session).
+Spearman within session across grids → Fisher z → t across sessions; null =
+1,000 shuffles of the outcome across grids WITHIN session, run through the same
+`group_statistic`. Predictor = ripple rate 0–0.5 s minus the same trial's
+baseline, averaged over the correct uncoverings of that grid in that stage.
+
+Outcome `errors_total` (every wrong uncovering in the grid):
+
+| predictor | ripples ρ | p_perm | stillness ρ | p_perm |
+|---|---|---|---|---|
+| all correct uncoverings | +0.019 | 0.422 | **+0.245** | **0.001** |
+| first uncovers | −0.000 | 0.988 | **+0.126** | **0.001** |
+| while learning | +0.021 | 0.562 | **+0.350** | **0.001** |
+| once known | −0.001 | 0.946 | **+0.147** | **0.001** |
+
+Outcome `errors_after` (wrong uncoverings strictly after the last predictor
+event — the clean predictive version for `first uncovers`): ripples +0.016,
+p = 0.598. First traversal vs the mean of the two later stages: Δz = −0.010,
+t(60) = −0.25, p_perm = 0.806 (errors_total); Δz = −0.037, p_perm = 0.592
+(errors_after). Ripple rate with stillness partialled out within session:
+unchanged, all |ρ| ≤ 0.024.
+
+So the answer is no, and it is a well-powered no: 1,381 grids, and the same
+design detects a ρ of +0.13 to +0.35 for stillness at p = 0.001. The sign of
+the stillness effect is worth noting — **more pausing goes with MORE errors**,
+i.e. it indexes how hard the grid was, not how well it was learned.
+
+`errors_after` is near-degenerate for the `all` and `once known` predictors by
+construction (almost no errors follow a grid's last correct uncovering), which
+is why their n drops to 26 and 23 sessions; those two cells should be ignored.
+
+### Status
+
+Nothing here was predicted in advance; all of it is exploratory. What survives:
+the **simple** valence effect at the first traversal, which was already visible
+in `feedback_stage`. What does not: the valence × stage interaction, and any
+ripple–behaviour prediction.
+
+
 ## 2026-09-10 — RSA jobs were being killed on walltime; raised -T and made them resumable
 
 **Cause, confirmed from the job log:** `JOB 2348457 ... CANCELLED AT
@@ -4541,3 +5614,234 @@ session, per unit:
 The distribution is strongly right-skewed (mean ≈ 2× median, max 33 Hz), so
 median + IQR is the honest descriptor for the manuscript; quoting the mean
 alone overstates the typical unit.
+
+---
+
+## 2026-09-11 — left-hippocampus rewDSR instruction timecourse
+
+Inspected the completed `per_TR_svc_instr_test_full_allTR_2026-08-28` run and
+generated a LOSO k=50 plot for `rewDSR_instr` in its existing left Garvert MTL
+mask. The broad-mask SVC peak is TR5, MNI [-32, -2, -34], t(31)=8.30,
+p_FWE < .0001 (1326 voxels × 12 TRs). This coordinate is not hippocampus in
+the Harvard–Oxford 50% atlas, so it should be called left MTL/HC-EC rather than
+a hippocampal peak.
+
+The anatomical hypothesis was a representation in hippocampus; its timing was
+left open and is corrected across all 12 TRs. Repeated the same SVC and LOSO
+pipeline in the Harvard–Oxford max-probability 50% left hippocampus mask.
+Results are in
+`data/derivatives/group/per_TR_svc_rewDSR_instr_HO50_HC_L_2026-09-11/`, with
+the derived mask saved below its `masks/` directory and full parameters in
+`settings.json`.
+
+* n=32; 519 in-brain left-hippocampal voxels; 12 TRs; 10,000 sign flips.
+* SVC peak: TR4, MNI [-30, -22, -20], t(31)=7.873, p_FWE < .0001, corrected
+  jointly over hippocampal voxels × TRs.
+* LOSO k=50: peak t at TR4, t(31)=6.743, p_FWE < .0001 across 12 TRs; all 12
+  TRs significant. Held-out beta is already positive at TR0, reaches its raw
+  maximum at TR3, and then declines. This supports a sustained representation,
+  not a representation that first appears at D.
+  The raw means are 0.05467 ± 0.00863 SEM at TR3 and 0.05151 ± 0.00764 at TR4.
+  Their paired difference is not significant (TR4 - TR3 = -0.00316,
+  t(31)=-0.906, two-sided p=.372, 95% CI [-0.01028, 0.00396]). TR4 is the
+  inferential peak because its smaller between-subject variance gives the
+  largest mean/SEM ratio, not because it has the largest raw mean.
+* The original broad-mask results are bilateral (right MTL SVC t(31)=6.09,
+  TR2, p_FWE=.0009), so no left-lateralisation claim follows without a direct
+  hemisphere contrast.
+* The older mPFC result currently stored in `per_TR_mask_stats` is n=32
+  (therefore df=31, not 32): MNI [-6, 32, 18], TR4, t(31)=5.079,
+  p_FWE=.042 from 2,000 permutations over 4,181 voxels × 12 TRs. A manuscript
+  value of .041 does not match this saved JSON and should only be retained if
+  it comes from a documented later run.
+
+The plotting helper now supports aggregate models such as `rewDSR_instr` with
+a compact legend/title and ROI colour, while retaining the fixed A/B/C/D state
+colours for split reward-channel plots.
+
+Plotting convention corrected after review: a TR label is the start of a
+one-second interval (TR0 = 0--1 s), so numeric timecourse values are now placed
+at interval centres (0.5, 1.5, ... s). The reward schedule is drawn at its
+true boundaries: A/B/C/D for 1.5 s each on the first pass, then A/B/C for 1 s
+each and D for 1 s.
+
+Follow-up bilateral ROI comparison: repeated `rewDSR_instr` in the bilateral
+Harvard--Oxford max-probability 50% hippocampus mask (1,049 in-brain voxels).
+The bilateral hippocampal result remains significant, peaking at TR4, MNI
+[-30, -22, -20], t(31)=7.873, p_FWE < .0001 (10,000 sign flips; correction
+jointly over 1,049 voxels x 12 TRs). The existing bilateral Garvert MTL test is
+also significant and has the larger corrected peak: TR5, MNI [-32, -2, -34],
+t(31)=8.299, p_FWE < .0001 (2,678 voxels x 12 TRs). Per the pre-specified
+selection rule, the final memory timecourse therefore uses the bilateral-MTL
+search and correction family; the winning voxel is in the left MTL.
+
+Added `scripts/plot_instruction_main_effects_t.py`, which plots replaceable
+memory and plan group-t maps at their ROI peaks. It places conditions at their
+one-second interval centres, draws the actual reward presentation strip, and
+marks conditions significant in each supplied voxel-wise FWE map. It exports
+PDF/SVG/PNG plus the exact plotted values and provenance as CSV/JSON. With the
+current inputs, bilateral MTL conditions 1--9 are significant. The supplied
+execution-model `rewDSR_instr_t.nii.gz` has no significant mPFC condition
+(masked peak TR1, MNI [0, 48, 38], t(31)=3.632, p_FWE=.6243), so the orange
+trace correctly has no significance bar pending a replacement final map.
+
+### Correction after source-model audit
+
+The publication mPFC effect was initially paired with the wrong later
+execution-run map. Its correct source is the original
+`group_RSA_instruction_per_TR_glmbase_01-TR{tr}_cropped` series and the mPFC
+small-volume result in `per_TR_svc_instruction_rewDSR_allTR_2026-08-28`:
+`rewDSR` peaks at TR4, MNI [-6, 32, 18], t(31)=5.079, p_FWE=.0407, corrected
+jointly over 4,179 mPFC voxels x 12 TRs. Only TR4 is significant at the
+selected peak. The publication plot has been regenerated from these inputs.
+
+The previously selected bilateral-MTL `rewDSR_instr` result must not be
+reported. It came from the `full_no_diag` RSA without a block nuisance. In
+that design, instruction-model similarity is confounded with the systematic
+within- versus across-task-half similarity difference. This is visibly a
+whole-brain offset rather than a regional memory effect: at TR0 the mean
+whole-brain t is 2.547 and 97.1% of brain voxels have positive t, even though
+no reward location has yet been shown. Across TR0--TR11 the fraction positive
+remains 90.2--97.2%. The earlier bilateral hippocampus/MTL max-t results are
+therefore retained only as a record of a failed/confounded analysis.
+
+Ran a post-hoc cluster-mass sensitivity analysis on the corrected
+`within_only` model after subtracting each subject's whole-brain mean at each
+TR. The one-sided cluster-forming threshold was p_uncorrected < .001
+(t(31)>3.3749), using 26-voxel connectivity and 10,000 subject-wise sign
+flips; the maximum spatial cluster mass was taken across all 12 TRs within
+each bilateral ROI. No cluster survived:
+
+* bilateral Harvard--Oxford 50% hippocampus: largest cluster at TR4, 10
+  voxels, peak MNI [-34, -20, -18], peak t=3.806, cluster p_FWE=.186;
+* bilateral Garvert MTL: largest cluster at TR4, 11 voxels, peak MNI
+  [-34, -20, -18], peak t=3.806, cluster p_FWE=.373.
+
+This cluster test is explicitly a sensitivity analysis selected after looking
+at the voxelwise result; it does not provide evidence for a hippocampal memory
+effect. Added `scripts/per_TR_cluster_test.py` so the empirical and permuted
+cluster statistics use the identical function and the analysis can be rerun.
+
+### Exact-source hippocampus/MTL double-check
+
+Re-read all 12 requested
+`group_RSA_within_th_only_intr-vs-exe_glmbase_01-TR{0..11}_cropped/`
+`cropped_masked_smooth_fwhm5_rewDSR_instr_beta_std.nii.gz` files and reran
+10,000-sign-flip inference from scratch in bilateral Harvard--Oxford 50%
+hippocampus and bilateral Garvert MTL. Results reproduce the earlier
+within-only outputs exactly and rule out a source-file mismatch:
+
+* no demeaning: positive peak HC t(31)=2.264 at TR10, p_FWE=.8822; positive
+  peak MTL t(31)=2.440 at TR1, p_FWE=.9383;
+* subject/TR whole-brain demeaning: positive peak HC t(31)=3.806 at TR4,
+  MNI [-34, -20, -18], p_FWE=.2854; positive peak MTL t(31)=4.699 at TR5,
+  MNI [-28, -22, -32], p_FWE=.1110.
+
+All p values above are one-sided and corrected jointly over the ROI voxels and
+all 12 TRs. The demeaned maps therefore contain the visually plausible local
+TR4--5 pattern, but it is not FWE significant. The matching non-demeaned
+cluster-mass test has no positive voxels even crossing the p<.001
+cluster-forming threshold; the demeaned cluster results remain p_FWE=.186 in
+HC and .373 in MTL.
+
+Also added `scripts/per_TR_roi_mean_test.py` and tested the entire bilateral
+ROI mean, removing spatial selection before inference and correcting only
+over 12 TRs. No positive whole-ROI effect survives either preprocessing:
+without demeaning, HC peak t=-0.378 (p_FWE=.9260) and MTL peak t=-0.829
+(p_FWE=.9640); with demeaning, HC peak t=2.038 at TR10 (p_FWE=.1268) and MTL
+peak t=.550 at TR3 (p_FWE=.7103). Thus the apparent TR4--5 signal is local,
+not a distributed whole-hippocampus effect, and remains subthreshold under
+both peak-voxel and cluster-mass correction.
+
+Restricted the demeaned bilateral-HC cluster correction to the a-priori TR4/5
+window on request, while retaining the all-12-TR common brain mask for
+whole-brain demeaning so that only the temporal correction family changed.
+The TR4 cluster is still not significant: 10 voxels, mass=2.6245, peak
+t(31)=3.806 at MNI [-34, -20, -18], p_FWE=.0530 across bilateral-HC space x
+TR4/5 (10,000 sign flips; one-sided CFT p<.001, 26-connectivity). TR5 contains
+one suprathreshold voxel, p_FWE=.1760. A preliminary run that allowed the
+demeaning brain mask itself to change with the two-TR subset gave p=.0536;
+that value is not the controlled comparison and should not be reported.
+
+Rendered the requested combined group-t timecourse from the corrected inputs:
+the demeaned bilateral-HC peak in blue and the original instruction-per-TR
+mPFC plan peak in orange. The mPFC TR4 point carries the only p_FWE<.05 bar;
+the HC curve is shown descriptively with no significance bar.
+
+## 2026-09-13 — event-locked cumulative instruction overview
+
+Inventoried the new `group_RSA_instr_cumrew_glmbase_instr_*_cropped` outputs
+from `rsa_instruction_cumulative_rew.json`. There are 11 event definitions,
+33 subjects and 41 maps per condition (not 42): 21 single-model maps and 20
+coefficients from combo models. Added
+`scripts/plot_instruction_condition_overview.py` and generated 26 matched
+plan-memory comparisons in both raw and subject/condition whole-brain-demeaned
+versions (52 two-panel PNGs total). The panels show the eight individual
+reward presentations plus empty screen, and collapsed-first / collapsed-second
+/ empty-screen. Every trace is a descriptive, uncorrected group-t timecourse
+at one fixed ROI peak selected across the nine detailed conditions; it must not
+be used for inference.
+
+The 26 comparisons cover every stored map without summing across/within:
+14 single-model comparisons (seven reward models x within/across plan), four
+concurrent plan+instruction combo comparisons, and eight split-coefficient
+comparisons (four rewards x within/across plan). Instruction maps are reused as
+the within-only memory counterpart, as no across-half instruction map exists.
+The common input mask has 144,237 voxels; the intersected ROIs contain 4,165
+mPFC and 1,050 bilateral Harvard--Oxford 50% hippocampal voxels.
+
+Demeaning audit on all 451 map-condition combinations: within-plan whole-brain
+means never exceeded |t|=2 (0/121); across-plan did so in 6.6% (8/121), all
+positive; within-memory did so in 12.0% (25/209), predominantly negative
+(10.0% below -2, 1.9% above +2). These are occasional model/condition offsets,
+not the near-whole-brain full-RDM confound seen in the obsolete
+`full_no_diag` analysis. For this new `within_only` design, raw betas against
+zero should therefore remain the primary estimand; whole-brain demeaning is a
+regional-localisation sensitivity analysis, not an automatic requirement for
+every within-half map. If across and within estimates are later combined 1:1,
+combine/average the subject-level beta maps and recompute the group statistic;
+never add t-statistics or mix a raw component with a demeaned component.
+
+Descriptively, the raw single-model across-half ABCD plan effect reproduces the
+expected mPFC timing and coordinate: the selected mPFC curve peaks at
+`see-D-first`, t=4.880, MNI [-6, 32, 18]. The cumulative instruction-memory
+sequence is not clean in hippocampus in this uncorrected screen, so no
+inferential claim is made at this stage.
+
+### Correction: across-half panels are plan-only
+
+The initial overview incorrectly displayed each across-half plan contrast next
+to the corresponding within-half instruction/memory contrast. Those traces do
+not form a matched contrast: across-half estimates exist only for execution
+(plan), whereas instruction (memory) was estimated only within task halves.
+Updated `scripts/plot_instruction_condition_overview.py` so the 15 within-half
+panels retain four ROI-by-role traces (mPFC/hippocampus x plan/memory), while
+the 11 across-half panels contain only the two plan traces (mPFC and
+hippocampus). The corrected v3 output supersedes the v1/v2 figures; its index
+leaves `memory_model` empty for every across-half panel.
+
+## 2026-09-14 — event-locked instruction group-t NIfTI export
+
+Added `scripts/save_instruction_condition_tmaps.py` and exported uncorrected
+group one-sample-t maps for all 41 stored event-locked instruction RSA models.
+For both raw and subject/condition common-brain-demeaned beta maps, each model
+has a 9-volume resolved NIfTI (A--D first, A--D second, empty screen) and a
+3-volume collapsed NIfTI (collapsed first, collapsed second, empty screen).
+The fourth dimension is a named condition axis rather than seconds. Outputs
+use the 144,237-voxel mask shared by all 11 condition folders, contain 33
+subjects, and carry NIfTI t-test intent metadata with 32 degrees of freedom.
+
+Also exported 11 equally weighted within/across plan estimates under both
+preprocessing choices and both condition orderings. Each was computed as
+`0.5 * within beta + 0.5 * across beta` separately for every subject and voxel,
+followed by the group t-test; group t-statistics were never averaged. The full
+export contains 208 t-map NIfTIs and is indexed by `map_index.csv`, with exact
+settings and source mappings in `settings.json`.
+
+Corrected the automatic plan/memory classifier in the overview script. The
+four plan coefficients from concurrent `*_exe_vs_instr` models had previously
+been mislabeled as memory in the whole-brain-offset audit because the combo
+suffix contains `instr`; the plotted traces were explicitly assigned and were
+not affected. Correct counts and audit summaries are: across plan 121 maps
+(mean whole-brain t=-0.079; 6.6% |t|>2), within plan 165 (mean=0.221; 0.6%),
+and within memory 165 (mean=-0.884; 14.5%).

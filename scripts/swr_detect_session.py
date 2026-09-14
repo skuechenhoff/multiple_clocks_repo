@@ -50,9 +50,15 @@ print("ARGS:", sys.argv)
 ANALYSIS_NAME = "swr_v1"
 
 
-def _settings_dict(session, analysis_name):
+def _settings_dict(session, analysis_name, pad_s=None, clean_name=None):
+    pad_s = art.PAD_S if pad_s is None else float(pad_s)
     return {
         "analysis_name": analysis_name, "session": int(session),
+        # Which extraction this run READ. swr_bundle.export_bundle needs it to
+        # find pairs.csv for a variant run (a pad sweep reads swr_v1 and writes
+        # under its own name); without it the bundle's pairs table comes back
+        # empty and the session's behaviour is skipped with it.
+        "clean_name": clean_name or analysis_name,
         "ripple_band_hz": list(det.RIPPLE_BAND),
         "threshold_extent_sd": det.LO_SD,
         "threshold_peak_sd": det.PEAK_SD,
@@ -66,9 +72,21 @@ def _settings_dict(session, analysis_name):
         "merge_gap_ms": det.MERGE_GAP_MS,
         "rms_window_ms": det.RMS_WIN_MS,
         "artifact_iqr_k": art.IQR_K,
-        "artifact_pad_s": art.PAD_S,
+        "artifact_pad_s": pad_s,
+        "artifact_pad_s_default": art.PAD_S,
+        "exclusion_pad_s": art.EXCLUSION_PAD_S,
+        "pad_rationale": ("pad shrunk from 1.0 s to 0.25 s on 2026-09-13: the five "
+                          "criteria flag ~2.6% of samples and the +-1 s dilation was "
+                          "removing 43%. Contamination is still JUDGED at 1.0 s so the "
+                          "set of included derivations does not move with the pad."),
         "min_clean_s": art.MIN_CLEAN_S,
         "max_contaminated_frac": art.MAX_CONTAM_FRAC,
+        "near_artifact_s": art.NEAR_ARTIFACT_S,
+        "repad_note": ("artifact_intervals.csv holds the UNPADDED criterion "
+                       "crossings; art.clean_intervals_at_pad rebuilds the "
+                       "exposure denominator at any pad, and events carry "
+                       "dist_to_artifact_s. Both are needed -- filtering "
+                       "events without shrinking the denominator is wrong."),
         "ied_detector": "Janca et al. 2015 (log-normal envelope model)",
         "spectral_criteria": "Chen et al. 2025, 4 peak-based flags (bitmask)",
         "criterion2_scope_primary": "strict = Chen literal, 30-200 Hz outside band",
@@ -79,15 +97,27 @@ def _settings_dict(session, analysis_name):
 
 
 def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
-                   verbose=True):
+                   verbose=True, pad_s=None, clean_name=None):
+    """`pad_s` overrides art.PAD_S for this run -- the whole point of keeping
+    detection separate from extraction is that a pad sweep costs no raw I/O.
+    Always pair it with a distinct `--analysis_name`.
+
+    `clean_name` is which LFP-clean/ extraction to READ (default: the same as
+    `analysis_name`). Without it a sensitivity run could only read an extraction
+    of its own name, so every pad variant would need its own copy of
+    continuous.npy -- hours of I/O to change one dilation width.
+    """
     swr_io.start_log(os.path.join(swr_io.session_deriv_dir(int(session), swr_io.get_data_root()), "LFP-ripples", analysis_name), "swr_detect_session")
     session = int(session)
+    pad_s = art.PAD_S if pad_s is None else float(pad_s)
     data_root = swr_io.get_data_root()
+    clean_name = analysis_name if clean_name is None else str(clean_name)
     clean_dir = os.path.join(swr_io.session_deriv_dir(session, data_root),
-                             "LFP-clean", analysis_name)
+                             "LFP-clean", clean_name)
     sig_p = os.path.join(clean_dir, "continuous.npy")
     if not os.path.isfile(sig_p):
-        print(f"s{session:02d}: no continuous.npy -- run swr_extract_continuous first")
+        print(f"s{session:02d}: no continuous.npy under LFP-clean/{clean_name} "
+              f"-- run swr_extract_continuous first, or pass --clean_name")
         return None
 
     sig = np.load(sig_p, mmap_mode='r')
@@ -97,16 +127,45 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
     fs = float(meta["fs"])
     total_s = sig.shape[1] / fs
 
-    print(f"\ns{session:02d}: {sig.shape[0]} pairs, {total_s:.0f}s @ {fs:.0f}Hz")
+    # Ripple detection runs ONLY on the hippocampal derivations. The cortical
+    # rows share this file so that extraction reads every channel in one pass,
+    # but this detector's band, thresholds and duration gate are Chen's
+    # hippocampal ones. Running them on mPFC would emit a table that looks
+    # exactly like a ripple table and means nothing -- cortical ripples are a
+    # separate literature with separate parameters. The HFB stage is what reads
+    # the cortical rows.
+    n_all = sig.shape[0]
+    if "role" in pairs.columns:
+        keep_idx = [i for i, r in enumerate(pairs.role.astype(str)) if r == "ripple"]
+    else:
+        keep_idx = list(range(len(pairs)))          # pre-cortical pair table
+    n_skip = n_all - len(keep_idx)
 
-    all_ev, qc, diags, iv_rows = [], [], {}, []
-    for i, (_, p) in enumerate(pairs.iterrows()):
+    print(f"\ns{session:02d}: {n_all} derivations, {total_s:.0f}s @ {fs:.0f}Hz  "
+          f"[pad {pad_s:.2f}s, exclusion judged at {art.EXCLUSION_PAD_S:.2f}s]")
+    if n_skip:
+        print(f"  detecting on {len(keep_idx)} hippocampal derivation(s); "
+              f"{n_skip} cortical row(s) are for swr_extract_hfb.py, not this stage")
+    if not keep_idx:
+        print(f"  s{session:02d}: no hippocampal derivation in this montage, "
+              f"nothing to detect")
+        return None
+
+    all_ev, qc, diags, iv_rows, bad_rows = [], [], {}, [], []
+    for i in keep_idx:
+        p = pairs.iloc[i]
         x = np.asarray(sig[i], float)
 
-        bad, astats = art.artifact_mask(x, fs)
+        # Criteria once; combined twice. `pad_s` sets the analysis mask, but
+        # contamination is judged at the FIXED EXCLUSION_PAD_S so that changing
+        # the pad cannot silently change which derivations enter the sample --
+        # otherwise "more exposure" and "dirtier contacts added" are confounded.
+        bad, astats, per = art.artifact_mask(x, fs, pad_s=pad_s, return_per=True)
         clean = ~bad
         contam = float(bad.mean())
-        excluded = contam > art.MAX_CONTAM_FRAC
+        contam_excl = float(art.combine_criteria(
+            per, fs, pad_s=art.EXCLUSION_PAD_S).mean())
+        excluded = contam_excl > art.MAX_CONTAM_FRAC
 
         iv = art.clean_intervals(bad, fs)
         clean_s = float(np.diff(iv, axis=1).sum()) if len(iv) else 0.0
@@ -115,6 +174,8 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
                "pair_roi": p.get("pair_roi_atlas"),
                "hemisphere": p.get("hemisphere"),
                "contaminated_frac": round(contam, 4),
+               "contaminated_frac_at_exclusion_pad": round(contam_excl, 4),
+               "pad_s": pad_s,
                "clean_s": round(clean_s, 1),
                "excluded": excluded,
                **{f"frac_{k}": round(v, 4) for k, v in astats.items()}}
@@ -123,7 +184,8 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
             row.update({"n_events": 0, "rate_hz": np.nan})
             qc.append(row)
             if verbose:
-                print(f"  {p.pair_id:24s} EXCLUDED ({contam:.0%} contaminated)")
+                print(f"  {p.pair_id:24s} EXCLUDED ({contam_excl:.0%} "
+                      f"contaminated at the {art.EXCLUSION_PAD_S:.2f}s exclusion pad)")
             continue
 
         ev, diag = det.detect_channel(x, fs, clean)
@@ -131,7 +193,17 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
 
         n_pass = int(ev.passed.sum()) if len(ev) else 0
         rate = n_pass / clean_s if clean_s > 0 else np.nan
+        # The pad exists to keep IED ringing out of the accepted events, so a
+        # pad change is judged on THIS, not on the exposure it recovers.
+        # Stored per event (not just summarised) so any pad can be re-imposed
+        # downstream by filtering the column -- see art.artifact_distance.
+        if len(ev):
+            ev["dist_to_artifact_s"] = np.round(
+                art.artifact_distance(ev.t_peak_s.to_numpy(), per, fs), 4)
+        near = (float((ev.loc[ev.passed, "dist_to_artifact_s"]
+                       < art.NEAR_ARTIFACT_S).mean()) if n_pass else np.nan)
         row.update({"n_candidates": diag.get("n_candidates", 0),
+                    "frac_near_artifact": round(near, 4) if np.isfinite(near) else np.nan,
                     "n_events": n_pass,
                     "rate_hz": round(rate, 4) if np.isfinite(rate) else np.nan})
         qc.append(row)
@@ -145,6 +217,13 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
             all_ev.append(ev)
         for a, b in iv:
             iv_rows.append({"pair_id": p.pair_id, "start_s": a, "stop_s": b})
+        # UNPADDED criterion crossings. These are what let the pad be re-chosen
+        # on the laptop: art.clean_intervals_at_pad rebuilds the exposure
+        # denominator at any pad from them, exactly (verified bit-for-bit
+        # against the cluster-side mask at 0.1/0.25/0.5/1.0 s).
+        for a, b in art.bad_intervals(per, fs):
+            bad_rows.append({"pair_id": p.pair_id, "start_s": round(a, 4),
+                             "stop_s": round(b, 4)})
 
         if verbose:
             print(f"  {p.pair_id:24s} clean={clean_s:7.0f}s "
@@ -166,6 +245,12 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
             rr = 1 - events.spectral_passed_relaxed.mean()
             print(f"  spectral rejection: strict {rs:.1%} (PRIMARY) | "
                   f"relaxed {rr:.1%}   [Chen: 23.4% +- 9.9%]")
+            if "frac_near_artifact" in good and good.frac_near_artifact.notna().any():
+                print(f"  events within {art.NEAR_ARTIFACT_S:.2f}s of an unpadded "
+                      f"crossing: median {good.frac_near_artifact.median():.1%}  "
+                      f"<- what a pad change is judged on; these are the events "
+                      f"a 1s pad would have discarded")
+            print(f"  clean exposure: {good.clean_s.sum()/3600:.2f} h at pad {pad_s:.2f}s")
             n_s = int(events.passed_strict.sum()); n_r = int(events.passed_relaxed.sum())
             cs = float(qc_df.loc[~qc_df.excluded, "clean_s"].sum())
             if cs > 0:
@@ -195,9 +280,11 @@ def detect_session(session, analysis_name=ANALYSIS_NAME, save_all=True,
         qc_df.to_csv(os.path.join(out_dir, "channel_qc.csv"), index=False)
         pd.DataFrame(iv_rows).to_csv(
             os.path.join(out_dir, "clean_intervals.csv"), index=False)
+        pd.DataFrame(bad_rows).to_csv(
+            os.path.join(out_dir, "artifact_intervals.csv"), index=False)
         with open(os.path.join(out_dir, "detector_diag.json"), "w") as f:
             json.dump(diags, f, indent=2, default=str)
-        swr_io.write_settings(out_dir, _settings_dict(session, analysis_name))
+        swr_io.write_settings(out_dir, _settings_dict(session, analysis_name, pad_s, clean_name))
         print(f"  saved -> {out_dir}")
     return None
 

@@ -345,10 +345,20 @@ def numbers(group_dir=None, tests_dir=None, out_dir=None, data_root=None):
     return None
 
 
-def bundle(analysis_name="swr_v1", data_root=None, out_dir=None):
-    """Write the bundle: the few MB that replace the LFP on a laptop."""
+def bundle(analysis_name="swr_v1", data_root=None, out_dir=None,
+           with_hfb=True, hfb_arrays=None):
+    """Write the bundle: the MB that replace the LFP on a laptop.
+
+    `with_hfb` also copies the continuous 100 Hz HFB / band-envelope stores into
+    `bundle/hfb/`, one npz per session -- the cortical half, and the larger
+    half. Set `--with_hfb=False` for the original ripples-only bundle, or
+    narrow it with e.g. `--hfb_arrays="['hfb','ripple']"` if the transfer is
+    the constraint. Nothing is epoched either way.
+    """
     return swr_bundle.export_bundle(analysis_name=analysis_name,
-                                    data_root=data_root, out_dir=out_dir) and None
+                                    data_root=data_root, out_dir=out_dir,
+                                    with_hfb=with_hfb,
+                                    hfb_arrays=hfb_arrays) and None
 
 
 if __name__ == "__main__":

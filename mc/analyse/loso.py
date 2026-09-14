@@ -624,9 +624,16 @@ LEGACY_CHANNEL_ALIASES = {"curr_rew": "a_rew", "next_rew": "b_rew",
 REWARD_SCHEDULE = [(0.0, 1.5, "A", "#F15A29"), (1.5, 3.0, "B", "#F7931E"),
                    (3.0, 4.5, "C", "#C7C6E2"), (4.5, 6.0, "D", "#6B60AA"),
                    (6.0, 7.0, "A", "#F15A29"), (7.0, 8.0, "B", "#F7931E"),
-                   (8.0, 9.0, "C", "#C7C6E2"), (9.0, 12.0, "D", "#6B60AA")]
+                   (8.0, 9.0, "C", "#C7C6E2"), (9.0, 10.0, "D", "#6B60AA")]
 ROI_DISPLAY_NAMES = {"mPFC": "mPFC", "MTL": "HC / EC", "MTL_L": "HC / EC left",
-                     "MTL_R": "HC / EC right", "visual": "occipital"}
+                     "MTL_R": "HC / EC right", "HC_L": "left hippocampus",
+                     "HC_R": "right hippocampus", "visual": "occipital"}
+# Project-wide ROI colours. These are used when the plotted quantity is an
+# aggregate model (for example rewDSR) rather than one of the four A/B/C/D
+# reward channels, for which the state colours above remain the right mapping.
+ROI_COLOURS = {"mPFC": "#448363", "MTL": "#23677E", "MTL_L": "#23677E",
+               "MTL_R": "#23677E", "HC_L": "#23677E", "HC_R": "#23677E",
+               "visual": "#7BB594"}
 OBSERVED_MARKER_COLOUR = "#0e3d3a"
 
 
@@ -655,17 +662,32 @@ def base_channel(model):
     return LEGACY_CHANNEL_ALIASES.get(stem, stem)
 
 
-def _draw_schedule(ax, x_max=12):
+def model_display_label(model):
+    """Compact legend label for models that are not individual channels."""
+    if model == "rewDSR_instr":
+        return "rewDSR (instruction)"
+    return model.replace("_", " ")
+
+
+def _draw_schedule(ax, x_min=0, x_max=12):
+    """Draw reward visibility at its true time boundaries.
+
+    Numeric TR labels denote one-second intervals: TR0 is 0--1 s, TR1 is
+    1--2 s, and so on. The timecourse samples are therefore plotted at interval
+    centres (0.5, 1.5, ...), while these rectangles retain the exact 1.5-s
+    first-pass and 1-s repeat boundaries.
+    """
     from matplotlib import pyplot as plt
     y0, y1 = ax.get_ylim()
     h = (y1 - y0) * 0.07
     for t0, t1, label, col in REWARD_SCHEDULE:
-        if t0 >= x_max:
+        if t0 >= x_max or t1 <= x_min:
             continue
-        t1 = min(t1, x_max)
-        ax.add_patch(plt.Rectangle((t0 - 0.5, y1), t1 - t0, h, facecolor=col,
+        draw_t0, draw_t1 = max(t0, x_min), min(t1, x_max)
+        ax.add_patch(plt.Rectangle((draw_t0, y1), draw_t1 - draw_t0, h, facecolor=col,
                                    edgecolor="white", lw=0.5, clip_on=False))
-        ax.text((t0 + t1) / 2 - 0.5, y1 + h / 2, label, ha="center", va="center",
+        ax.text((draw_t0 + draw_t1) / 2, y1 + h / 2, label,
+                ha="center", va="center",
                 fontsize=7, color="#333333", clip_on=False)
     ax.set_ylim(y0, y1)
 
@@ -710,7 +732,8 @@ def plot_per_TR_timecourses(out_dir, models, masks=None, k="100",
             mean = np.asarray(rec["mean"]); sem = np.asarray(rec["sem"])
             p = np.asarray(rec["p_FWE"])
             levels = list(rec.get("trs") or range(len(mean)))
-            col = CHANNEL_COLOURS.get(base_channel(model), "#666666")
+            channel = base_channel(model)
+            col = CHANNEL_COLOURS.get(channel, ROI_COLOURS.get(mask, "#666666"))
             if categorical:
                 # Position along the axis; the labels go on the ticks. Models
                 # are nudged apart horizontally so overlapping points stay
@@ -721,7 +744,10 @@ def plot_per_TR_timecourses(out_dir, models, masks=None, k="100",
                 ax.errorbar(x, mean, yerr=sem, fmt="o", color=col, ms=3.5,
                             lw=0, elinewidth=1.1, capsize=2)
             else:
-                x = np.asarray(levels)
+                # A numeric level names the START of its one-second interval:
+                # TR0 = 0--1 s. Plot the estimate at the interval centre.
+                interval_starts = np.asarray(levels, dtype=float)
+                x = interval_starts + 0.5
                 ax.plot(x, mean, "-o", color=col, ms=3, lw=1.4)
                 ax.fill_between(x, mean - sem, mean + sem, color=col,
                                 alpha=0.18, lw=0)
@@ -745,19 +771,43 @@ def plot_per_TR_timecourses(out_dir, models, masks=None, k="100",
             ax.set_xlim(-0.5, len(levels) - 0.5)
         else:
             ax.set_xlabel("instruction period (s)")
-            ax.set_xticks([v for v in x if v % 2 == 0])
-            _draw_schedule(ax, x_max=int(x.max()) + 1)
+            x_min = float(interval_starts.min())
+            x_max = float(interval_starts.max()) + 1.0
+            ax.set_xlim(x_min, x_max)
+            ax.set_xticks(np.arange(np.ceil(x_min / 2) * 2, x_max + 0.01, 2))
+            _draw_schedule(ax, x_min=x_min, x_max=x_max)
     axes[0].set_ylabel("held-out beta\n(LOSO cross-validated)")
-    handles = [Line2D([], [], color=c, marker="o", ms=3, lw=1.4,
-                      label=CHANNEL_LABELS[n]) for n, c in CHANNEL_COLOURS.items()]
+    handles = []
+    seen = set()
+    for model in models:
+        channel = base_channel(model)
+        label = (CHANNEL_LABELS[channel] if channel in CHANNEL_LABELS
+                 else model_display_label(model))
+        if label in seen:
+            continue
+        seen.add(label)
+        colour = CHANNEL_COLOURS.get(
+            channel, ROI_COLOURS.get(masks[0], "#666666") if len(masks) == 1
+            else "#666666")
+        handles.append(Line2D([], [], color=colour, marker="o", ms=3, lw=1.4,
+                              label=label))
     handles.append(Line2D([], [], color="none", marker="o", ms=6.5,
                           mec=OBSERVED_MARKER_COLOUR, mew=1.0, label="p$_{FWE}$ < .05"))
-    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False,
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
                bbox_to_anchor=(0.5, -0.10))
-    fig.suptitle("Reward-channel representation "
+    channels_only = all(base_channel(model) in CHANNEL_COLOURS for model in models)
+    if channels_only:
+        title = ("Reward-channel representation per instruction epoch" if categorical
+                 else "Reward-channel representation across the instruction period")
+    elif len(models) == 1:
+        title = (f"{model_display_label(models[0])} representation\n"
                  + ("per instruction epoch" if categorical
-                    else "across the instruction period"),
-                 y=1.13, fontsize=11)
+                    else "across the instruction period"))
+    else:
+        title = ("LOSO cross-validated representation per instruction epoch"
+                 if categorical else
+                 "LOSO cross-validated representation across the instruction period")
+    fig.suptitle(title, y=1.13, fontsize=11)
     fig.tight_layout()
     for ext in ("pdf", "jpeg"):
         fig.savefig(os.path.join(out_dir, f"{out_name}.{ext}"), dpi=300,

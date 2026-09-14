@@ -53,12 +53,15 @@ ANALYSIS_NAME = "swr_contacts"
 V2026_DIRNAME = "ABCD_pts_elecFilesForSvenja_v2026"
 
 
-def _settings_dict(sessions, v2026_folder):
+def _settings_dict(sessions, v2026_folder, cortical_rois=()):
     return {
         "analysis_name": ANALYSIS_NAME,
         "sessions": list(sessions),
         "v2026_folder": v2026_folder,
         "hpc_rois": list(ca.HPC_ROIS),
+        "cortical_rois": list(cortical_rois or []),
+        "cortical_scheme": ("non-overlapping adjacent pairs anchored on each "
+                            "in-ROI contact; one contact is never reused"),
         "bipolar_scheme": "neighbour (Chen: most medial HC contact + immediate neighbour, ONE pair per probe)",
         "utah_coords": "ElecXYZMNIRaw (direct row index, NOT via channel no.)",
         "atlas_rules": "mc.analyse.anatomy_atlas.assign_atlas_roi (shared with cells)",
@@ -68,7 +71,11 @@ def _settings_dict(sessions, v2026_folder):
 
 
 def build_contacts(sessions=None, save_all=True, verbose=False,
-                   use_atlas=True):
+                   use_atlas=True, cortical_rois=ca.CORTICAL_ROIS):
+    """`cortical_rois` adds high-frequency-broadband derivations to the SAME
+    bipolar_pairs table as the hippocampal ones, so stage 2 reads them in one
+    raw-file pass. Pass `--cortical_rois="[]"` for the hippocampus-only table.
+    Hippocampal rows are unaffected either way -- cortical rows are appended."""
     swr_io.start_log(os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()), "group", "swr"), "swr_build_contacts")
     data_root = swr_io.get_data_root()
     v2026 = os.path.join(data_root, V2026_DIRNAME)
@@ -110,7 +117,7 @@ def build_contacts(sessions=None, save_all=True, verbose=False,
     # patient), not by coord-matching cells against every folder -- see
     # ca.resolve_utah_mat for why that was unsafe here.
 
-    all_rows, qc_rows = [], []
+    all_rows, qc_rows, all_pairs = [], [], []
     for _, m in manifest.iterrows():
         session = int(m.session)
         site = str(m.recording_site).lower()
@@ -141,7 +148,7 @@ def build_contacts(sessions=None, save_all=True, verbose=False,
             ucla_macros=ucla_macros, ucla_montage=ucla_montage)
         contacts = ca.label_contacts_with_atlas(contacts, atlases=atlases)
 
-        pairs = ca.build_bipolar_pairs(contacts)
+        pairs = ca.build_bipolar_pairs(contacts, cortical_rois=cortical_rois)
         if len(pairs):
             pairs = ca.label_contacts_with_atlas(pairs, atlases=atlases)
             pairs = pairs.rename(columns={"atlas_roi": "pair_roi"})
@@ -151,20 +158,27 @@ def build_contacts(sessions=None, save_all=True, verbose=False,
         n_res = int(contacts["resolved"].sum())
         n_hpc = int(contacts["is_hpc"].sum())
         n_hpc_pairs = int(pairs["pair_roi_atlas"].isin(ca.HPC_ROIS).sum()) if len(pairs) else 0
+        n_cx_pairs = int((pairs["role"] == "hfb").sum()) if len(pairs) else 0
+        n_mpfc_pairs = (int(pairs["pair_roi_atlas"].isin(["mPFC", "mOFC"]).sum())
+                        if len(pairs) else 0)
         qc_rows.append({
             "session": session, "recording_site": site, "subject_label": label,
             "channel_source": chan_src, "n_channels": len(contacts),
             "n_resolved": n_res,
             "frac_resolved": round(n_res / max(len(contacts), 1), 3),
             "n_hpc": n_hpc, "n_pairs": len(pairs), "n_hpc_pairs": n_hpc_pairs,
+            "n_cortical_pairs": n_cx_pairs, "n_mpfc_pairs": n_mpfc_pairs,
             "note": "",
         })
         if verbose:
             print(f"  s{session:02d} {site:7s} ch={len(contacts):4d} "
                   f"resolved={n_res:4d} hpc={n_hpc:3d} pairs={len(pairs):3d} "
-                  f"hpc_pairs={n_hpc_pairs:3d}")
+                  f"hpc_pairs={n_hpc_pairs:3d} cortical={n_cx_pairs:3d} "
+                  f"(mPFC/mOFC {n_mpfc_pairs:3d})")
 
         all_rows.append(contacts)
+        if len(pairs):
+            all_pairs.append(pairs)
         if save_all:
             out_dir = os.path.join(swr_io.session_deriv_dir(session, data_root), "LFP")
             os.makedirs(out_dir, exist_ok=True)
@@ -220,7 +234,8 @@ def build_contacts(sessions=None, save_all=True, verbose=False,
     print(" CONTACT ANATOMY SUMMARY")
     print("=" * 74)
     print(qc.groupby("recording_site")[
-        ["n_channels", "n_resolved", "n_hpc", "n_pairs", "n_hpc_pairs"]
+        ["n_channels", "n_resolved", "n_hpc", "n_pairs", "n_hpc_pairs",
+         "n_cortical_pairs", "n_mpfc_pairs"]
     ].sum().to_string())
     print(f"\nsessions with >=1 hippocampal bipolar pair: "
           f"{int((qc.n_hpc_pairs > 0).sum())}/{len(qc)}")
@@ -259,7 +274,16 @@ def build_contacts(sessions=None, save_all=True, verbose=False,
             qc.to_csv(os.path.join(gdir, "contact_qc.csv"), index=False)
             rep.write(gdir)
             swr_io.write_settings(gdir, _settings_dict(
-                list(manifest.session.astype(int)), v2026))
+                list(manifest.session.astype(int)), v2026, cortical_rois))
+            # The cross-regional sample, which is what decides whether any
+            # HC->mPFC analysis is possible at all. Printed here rather than
+            # discovered three stages later.
+            both = qc[(qc.n_hpc_pairs > 0) & (qc.n_mpfc_pairs > 0)]
+            print(f"\nsessions with BOTH a hippocampal and an mPFC/mOFC "
+                  f"derivation: {len(both)}  "
+                  f"(subjects: {both.subject_label.nunique()})")
+            print(f"  mPFC/mOFC derivations in those sessions: "
+                  f"{int(both.n_mpfc_pairs.sum())}")
             print(f"\nSaved -> {gdir}")
 
             # Publication coverage figure. Optional: it needs nilearn plotting
@@ -275,6 +299,17 @@ def build_contacts(sessions=None, save_all=True, verbose=False,
                 import mc.plotting.ripple_figures as rfig
                 rfig.contact_coverage_figure(allc, out_stem=stem)
                 print(f"Coverage figure -> {stem}.pdf / .jpg")
+                # Where every DERIVATION sits, coloured by ROI, with the
+                # same-shaft controls ringed. This is the figure to look at
+                # before spending an extraction: it shows at a glance whether
+                # the cortical coverage supports the question being asked.
+                if all_pairs:
+                    ap = pd.concat(all_pairs, ignore_index=True)
+                    mstem = os.path.join(fdir, "montage_coverage")
+                    rfig.montage_figure(
+                        ap, out_stem=mstem, height_cm=5.0,
+                        title="SWR montage: hippocampus, mPFC/mOFC, controls")
+                    print(f"Montage figure  -> {mstem}.pdf / .jpg")
             except Exception as e:
                 print(f"  [coverage figure skipped: {type(e).__name__}: {e}]")
     return None

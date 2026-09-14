@@ -221,8 +221,83 @@ def collect_figure_data(sessions, analysis_name=ANALYSIS_NAME):
     return arrays, pd.DataFrame(index), pd.DataFrame(index_art)
 
 
+def collect_hfb(analysis_name, data_root, out_dir, arrays=None):
+    """Copy each session's continuous HFB store into the bundle.
+
+    Kept as one .npz PER SESSION next to the pickle rather than inside it. The
+    HFB is orders of magnitude larger than everything else in the bundle, and
+    folding it into the pickle would mean the ripple tables -- which are a few
+    MB and are what most analyses need -- could no longer be loaded without it.
+    This way `swr_bundle.pkl` stays laptop-sized and `bundle/hfb/` is an
+    optional second download.
+
+    `arrays` selects which of hfb/ripple/theta/beta/theta_phase to carry. None
+    means all of them: the point of this stage is that the windows and the
+    bands are still open questions when the data reaches the laptop, so the
+    default does not decide either.
+    """
+    hfb_dir = os.path.join(out_dir, "hfb")
+    os.makedirs(hfb_dir, exist_ok=True)
+    paths = sorted(glob.glob(os.path.join(
+        swr_io.derivatives_dir(data_root), "s*", "LFP-hfb", analysis_name,
+        "hfb.npz")))
+    idx, qc_rows, iv_rows, total = [], [], [], 0
+    for p in paths:
+        sess = int(p.split(os.sep)[-4][1:])
+        src = os.path.dirname(p)
+        z = np.load(p, allow_pickle=True)
+        keep = {k: z[k] for k in z.files
+                if arrays is None or k in tuple(arrays)
+                or k in ("pair_ids", "out_fs")}
+        dst = os.path.join(hfb_dir, f"s{sess:02d}_hfb.npz")
+        np.savez_compressed(dst, **keep)
+        total += os.path.getsize(dst)
+        for name, sink in (("hfb_pairs.csv", qc_rows),
+                           ("hfb_intervals.csv", iv_rows)):
+            f = os.path.join(src, name)
+            if os.path.isfile(f):
+                t = pd.read_csv(f)
+                t["session"] = sess
+                sink.append(t)
+        n_pairs = len(np.atleast_1d(z["pair_ids"]))
+        idx.append({"session": sess, "file": f"hfb/s{sess:02d}_hfb.npz",
+                    "n_derivations": n_pairs,
+                    "out_fs": float(np.atleast_1d(z["out_fs"])[0]),
+                    "arrays": ",".join(k for k in keep
+                                       if k not in ("pair_ids", "out_fs"))})
+    return (pd.DataFrame(idx),
+            pd.concat(qc_rows, ignore_index=True) if qc_rows else pd.DataFrame(),
+            pd.concat(iv_rows, ignore_index=True) if iv_rows else pd.DataFrame(),
+            total)
+
+
+def load_hfb(bundle_dir, session, arrays=None, as_float32=True):
+    """One session's HFB store, as {array_name: (n_derivations, n_samples)}.
+
+    Cast to float32 by default: the store is float16 to survive the copy home,
+    and float16 accumulates visible error over long sums -- which is exactly
+    what averaging a few thousand peri-ripple epochs is.
+
+    `pair_ids` gives the row order, matching `hfb_pairs` for that session.
+    """
+    p = os.path.join(bundle_dir, "hfb", f"s{int(session):02d}_hfb.npz")
+    if not os.path.isfile(p):
+        raise FileNotFoundError(f"{p} -- was the bundle exported with_hfb=True?")
+    z = np.load(p, allow_pickle=True)
+    out = {"pair_ids": [str(v) for v in np.atleast_1d(z["pair_ids"])],
+           "out_fs": float(np.atleast_1d(z["out_fs"])[0])}
+    for k in z.files:
+        if k in ("pair_ids", "out_fs"):
+            continue
+        if arrays is not None and k not in tuple(arrays):
+            continue
+        out[k] = np.asarray(z[k], np.float32) if as_float32 else z[k]
+    return out
+
+
 def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
-                  out_name="swr_bundle", out_dir=None):
+                  out_name="swr_bundle", out_dir=None, with_hfb=True,
+                  hfb_arrays=None):
     """Everything needed to redo any of these statistics WITHOUT the LFP.
 
     The cluster holds the raw recordings; the analysis of what the ripples mean
@@ -238,6 +313,16 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
         behaviour  all_trial_times per session, with phase labels
         uncover    every uncovering attempt with its outcome, in session seconds
         channel_qc per-derivation counts, clean time and exclusion flags
+        hfb_pairs  every derivation with an HFB time course, hippocampal and
+                   cortical, with its ROI, coordinate and sub-band count
+        hfb_intervals  artifact-free intervals for those derivations. The
+                   cortical mask is INDEPENDENT of the hippocampal one, and a
+                   peri-ripple window needs both clean -- so this is required,
+                   not decorative
+
+    With `with_hfb`, the continuous 100 Hz power time courses are written to
+    `bundle/hfb/s{NN}_hfb.npz`, one file per session, and read back with
+    `load_hfb`. Nothing is epoched: every window choice stays open.
 
     A few MB, against tens of GB of LFP. This is the file to bring home.
 
@@ -267,17 +352,34 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
     sessions = [(int(p.split(os.sep)[-4][1:]), os.path.dirname(p)) for p in paths]
 
     rip, iv, pr, beh_all, unc_all, qc_all = [], [], [], [], [], []
+    bad_iv = []
     for sess, rip_dir in sessions:
         meta = subj.get(sess, {})
+        # Detection may have READ a differently-named extraction (--clean_name,
+        # used by every pad variant so a sweep costs no raw I/O). Without this
+        # the pairs table silently comes back empty for such a run -- and the
+        # FileNotFoundError below then skips the session's behaviour too.
+        clean_name = analysis_name
+        set_p = os.path.join(rip_dir, "settings.json")
+        if os.path.isfile(set_p):
+            try:
+                with open(set_p) as _f:
+                    clean_name = json.load(_f).get("clean_name") or analysis_name
+            except Exception:
+                pass
         clean_dir = os.path.join(swr_io.session_deriv_dir(sess, R), "LFP-clean",
-                                 analysis_name)
+                                 clean_name)
         try:
             e = pd.read_csv(os.path.join(rip_dir, "ripple_events.csv"))
             e = e[e.passed.fillna(False)]
+            # dist_to_artifact_s is NOT optional here: without it the pad
+            # cannot be revisited on the laptop, which is the whole point of
+            # storing it per event.
             keep = [c for c in ("pair_id", "t_peak_s", "duration_s",
                                 "peak_freq_hz", "amp_peak_uv", "rms_peak_z",
                                 "spectral_passed_strict",
-                                "spectral_passed_relaxed")
+                                "spectral_passed_relaxed",
+                                "dist_to_artifact_s")
                     if c in e.columns]
             e = e[keep].copy()
             e["session"] = sess
@@ -288,6 +390,13 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
             i = pd.read_csv(os.path.join(rip_dir, "clean_intervals.csv"))
             i["session"] = sess
             iv.append(i)
+
+            # The unpadded crossings, so a stricter pad can be imposed at home.
+            bp = os.path.join(rip_dir, "artifact_intervals.csv")
+            if os.path.isfile(bp):
+                bi = pd.read_csv(bp)
+                bi["session"] = sess
+                bad_iv.append(bi)
 
             q = pd.read_csv(os.path.join(rip_dir, "channel_qc.csv"))
             q["session"] = sess
@@ -317,18 +426,32 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
     fig_arrays, fig_index, fig_index_art = collect_figure_data(
         sessions, analysis_name)
 
+    hfb_index, hfb_pairs, hfb_iv, hfb_bytes = (
+        collect_hfb(analysis_name, R, out_dir, hfb_arrays) if with_hfb
+        else (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), 0))
+
     bundle = {"ripples": cat(rip), "intervals": cat(iv), "pairs": cat(pr),
               "figure_index": fig_index,
               "figure_index_artifact": fig_index_art,
               "behaviour": cat(beh_all), "uncover": cat(unc_all),
               "channel_qc": cat(qc_all),
+              "artifact_intervals": cat(bad_iv),
+              "hfb_index": hfb_index, "hfb_pairs": hfb_pairs,
+              "hfb_intervals": hfb_iv,
               "meta": {"analysis_name": analysis_name,
                        "created": datetime.now().isoformat(timespec="seconds"),
                        "data_root": R,
                        "n_sessions": len(sessions),
                        "figure_data": f"{out_name}_figures.npz",
+                       "hfb_dir": "hfb/ (one npz per session, load_hfb)",
+                       "hfb_mb": round(hfb_bytes / 1e6, 1),
                        "note": "rates must use intervals for exposure; a ripple "
-                               "rate is events per ARTIFACT-FREE second"}}
+                               "rate is events per ARTIFACT-FREE second",
+                       "repad": ("to impose a larger pad at home: filter events on "
+                                 "dist_to_artifact_s >= pad, AND rebuild exposure "
+                                 "with swr_artifact.clean_intervals_at_pad on "
+                                 "`artifact_intervals`. Doing only the first "
+                                 "inflates the rate.")}}
 
     fig_path = os.path.join(out_dir, f"{out_name}_figures.npz")
     np.savez_compressed(fig_path, **fig_arrays)
@@ -352,6 +475,13 @@ def export_bundle(analysis_name=ANALYSIS_NAME, data_root=None,
     print(f"  {'figure_data':12s} {len(fig_arrays):7d} arrays  ({mb:.1f} MB, "
           f"{n_sw} sharp-wave candidates, "
           f"{len(fig_index_art)} artifact excerpts)")
+    if with_hfb and len(hfb_index):
+        n_mpfc = int(hfb_pairs.roi_family.isin(["mPFC", "mOFC"]).sum()) \
+            if "roi_family" in hfb_pairs else 0
+        print(f"  {'hfb':12s} {len(hfb_index):7d} sessions "
+              f"({hfb_bytes/1e6:.0f} MB in hfb/, "
+              f"{len(hfb_pairs)} derivations, {n_mpfc} mPFC/mOFC)")
     print(f"\nSaved -> {out_dir}")
-    print(f"  bring home: {out_name}.pkl + {out_name}_figures.npz")
+    print(f"  bring home: {out_name}.pkl + {out_name}_figures.npz"
+          + (f" + hfb/  ({hfb_bytes/1e6:.0f} MB)" if with_hfb and hfb_bytes else ""))
     return bundle

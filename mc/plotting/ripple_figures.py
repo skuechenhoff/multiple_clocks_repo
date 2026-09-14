@@ -1902,6 +1902,117 @@ def contact_coverage_figure(contacts, out_stem=None, height_cm=3.5,
         return fig
 
 
+# ROI colours for the SWR montage figure. mPFC/mOFC/HC follow the project-wide
+# convention in CLAUDE.md (Showgirl2 indices 1 and 4, HC teal). The control
+# regions are deliberately GREY: they are there to be unremarkable, and a
+# reader should be able to tell target from control without reading the key.
+MONTAGE_C = {
+    "HC_anterior": "#23677E", "HC_mid": PAL[2], "HC": PAL[2], "EC": PAL[0],
+    "mPFC": PAL[1], "mOFC": PAL[4],
+    "TemporalLateral": "#8C8C8C", "Auditory": "#4F4F4F", "Visual": "#B0A8C0",
+    "Insula": "#D8C9A3", "PCC": PAL[3],
+}
+MONTAGE_ORDER = ["HC_anterior", "HC_mid", "mPFC", "mOFC",
+                 "TemporalLateral", "Auditory", "Visual", "Insula", "PCC"]
+
+
+def montage_figure(pairs, out_stem=None, height_cm=5.0, title=None,
+                   show_unselected=None):
+    """Where every derivation sits: hippocampus, mPFC/mOFC, and the controls.
+
+    `pairs` is the pooled bipolar-pair table with `mni_x/y/z`, `pair_roi_atlas`
+    and `role`. Markers are at the pair MIDPOINT, which is where a bipolar
+    derivation is actually sensitive -- not at either contact.
+
+    Derivations on the SAME SHAFT as the hippocampal contact are ringed in
+    black. That subset is the tightest control this dataset offers: same
+    electrode, same amplifier, same reference chain, same noise environment, so
+    a difference against it cannot be a recording-quality difference. It is
+    worth being able to see how much of the temporal control has that property
+    (measured: 158 of 353 derivations).
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.lines import Line2D
+    from nilearn import plotting as nlplot
+
+    xyz = ["mni_x", "mni_y", "mni_z"]
+    df = pairs.copy()
+    df = df[df[xyz].notna().all(axis=1)]
+    roi = df["pair_roi_atlas"].astype(str)
+    present = [r for r in MONTAGE_ORDER if (roi == r).any()]
+
+    h_in = height_cm * CM
+    brain_frac = 0.70
+    w_in = h_in * 3.05 / brain_frac
+
+    rc = dict(_rc()); rc["savefig.bbox"] = None
+    with plt.rc_context(rc):
+        fig = plt.figure(figsize=(w_in, h_in))
+        cmap = LinearSegmentedColormap.from_list("hc_shade", HC_SHADE)
+        # savefig.bbox is None here (the panel size has to be exact), so a
+        # suptitle above y=1 is simply cut off. Give it room inside the figure
+        # instead of letting it hang over the edge.
+        top = 0.88 if title else 0.94
+        disp = nlplot.plot_glass_brain(
+            _hippocampus_prob_img(), display_mode="ortho",
+            figure=fig, axes=(0.0, 0.02, brain_frac, top),
+            cmap=cmap, vmin=0, vmax=100, threshold=HPC_PROB_SHOW,
+            plot_abs=False, colorbar=False, black_bg=False, alpha=0.45,
+            annotate=False)
+        disp.annotate(size=FS_TICK)
+
+        same = df.get("same_probe_as_hpc")
+        for r in present:
+            g = df[roi == r]
+            on_shaft = (g["same_probe_as_hpc"].fillna(False).astype(bool)
+                        if same is not None else None)
+            # Hippocampal rows are always on "their own" shaft; ringing them
+            # would say nothing, so only cortical rows get the ring.
+            if on_shaft is not None and r not in ("HC_anterior", "HC_mid", "HC"):
+                plain, ringed = g[~on_shaft], g[on_shaft]
+            else:
+                plain, ringed = g, g.iloc[0:0]
+            if len(plain):
+                disp.add_markers(plain[xyz].to_numpy(float),
+                                 marker_color=MONTAGE_C.get(r, "#888888"),
+                                 marker_size=11, alpha=0.9, edgecolors="none")
+            if len(ringed):
+                disp.add_markers(ringed[xyz].to_numpy(float),
+                                 marker_color=MONTAGE_C.get(r, "#888888"),
+                                 marker_size=13, alpha=0.95,
+                                 edgecolors="#111111", linewidths=0.45)
+
+        handles = []
+        for r in present:
+            n = int((roi == r).sum())
+            ns = int(df.loc[roi == r, "same_probe_as_hpc"].fillna(False).sum()) \
+                if same is not None else 0
+            lab = f"{r} ({n})"
+            if ns and r not in ("HC_anterior", "HC_mid", "HC"):
+                lab += f", {ns} on HC shaft"
+            handles.append(Line2D([], [], marker="o", linestyle="none",
+                                  markersize=3.4, markeredgewidth=0,
+                                  color=MONTAGE_C.get(r, "#888888"), label=lab))
+        handles.append(Line2D([], [], marker="o", linestyle="none",
+                              markersize=3.4, markerfacecolor="none",
+                              markeredgecolor="#111111", markeredgewidth=0.6,
+                              color="none", label="on the hippocampal shaft"))
+
+        leg_ax = fig.add_axes([brain_frac + 0.005, 0.0,
+                               1.0 - brain_frac - 0.005, 1.0])
+        leg_ax.axis("off")
+        leg_ax.legend(handles=handles, loc="center left", frameon=False,
+                      fontsize=FS_TICK, handletextpad=0.4,
+                      labelspacing=0.42, borderpad=0.0, borderaxespad=0.0)
+        if title:
+            fig.suptitle(title, fontsize=FS_TITLE, y=0.985)
+        if out_stem:
+            fig.savefig(out_stem + ".pdf")
+            fig.savefig(out_stem + ".jpg", dpi=300)
+        return fig
+
+
 # ============================================================ 3-D coverage ==
 # A surface rendering, rather than the glass-brain projection above. The
 # projection is honest about every contact but flattens the hippocampus into a

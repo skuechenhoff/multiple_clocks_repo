@@ -556,6 +556,23 @@ def select_hpc_contacts(df, prob_min=HPC_PROB_MIN):
     xyz = df[["mni_x", "mni_y", "mni_z"]].to_numpy(float)
     df["hpc_prob"] = anat_atlas.hippocampal_probability(xyz)
 
+    # Juelich subfield probabilities: P(cornu ammonis), P(dentate gyrus),
+    # P(subiculum). Carried for EVERY contact, as probabilities rather than a
+    # label -- see anatomy_atlas.hippocampal_subfield_probability for why a
+    # max-prob CA/DG call would be mostly a volume artefact. `ca_dg_index` is
+    # the continuous moderator to use: +1 = purely CA, -1 = purely DG.
+    try:
+        sub = anat_atlas.hippocampal_subfield_probability(xyz)
+        for k, v in sub.items():
+            df[f"p_{k}"] = v
+        ca, dg = df.get("p_CA"), df.get("p_DG")
+        if ca is not None and dg is not None:
+            tot = ca + dg
+            df["ca_dg_index"] = np.where(tot > 0, (ca - dg) / np.maximum(tot, 1e-9),
+                                         np.nan)
+    except Exception as e:
+        print(f"  [subfield probabilities unavailable: {type(e).__name__}: {e}]")
+
     df["is_hpc"] = False
     df["hpc_rank_in_probe"] = np.nan
     if "probe" not in df.columns:
@@ -648,6 +665,7 @@ def label_contacts_with_atlas(df, atlases=None):
     df = df.drop(columns=["MNI_x_final", "MNI_y_final", "MNI_z_final"])
 
     df["atlas_available"] = True
+    df = add_swr_roi(df)
     df = select_hpc_contacts(df)
     return df
 
@@ -707,8 +725,147 @@ def _pick_reference(probe_rows, anchor, scheme, max_gap_mm):
     raise ValueError(f"unknown scheme '{scheme}'")
 
 
+# The control region the hippocampal electrode passes THROUGH on its way in.
+# A temporal depth electrode is inserted laterally, so its outer contacts sit in
+# lateral temporal cortex -- on the SAME shaft, the same amplifier, the same
+# reference chain and the same noise environment as the hippocampal contact.
+# Measured here: 779 such contacts over 31 sessions, and 311 of them (40%) are
+# on a probe that also carries the selected hippocampal contact. That makes it a
+# far better matched control than a distant occipital contact, which differs in
+# every one of those respects at once.
+#
+# These labels come from the Harvard-Oxford CORTICAL atlas directly rather than
+# from `anatomy_atlas.assign_atlas_roi`. That ladder is shared byte-for-byte
+# with the cell pipeline and must not move; this only fills in contacts it had
+# already given up on as 'leftover'.
+TEMPORAL_CTRL_LABELS = {
+    "Auditory": ("heschl", "planum temporale", "planum polare"),
+    "TemporalLateral": ("superior temporal gyrus", "middle temporal gyrus",
+                        "inferior temporal gyrus", "temporal pole"),
+}
+
+# ROIs that get a cortical (high-frequency-broadband) derivation rather than a
+# ripple one.
+#   PRIMARY  mPFC  -- the anterior-cingulate-based definition (y >= 10), which
+#                     is He et al.'s dmPFC
+#            mOFC  -- their vmPFC
+#   CONTROL  TemporalLateral / Auditory -- same shaft as the hippocampus
+#            Visual -- He's own control, kept for comparability with them
+# Insula (172 derivations) and PCC (27) are deliberately NOT in the default.
+# They are neither the target nor a matched control, and every extra derivation
+# is extra channels on the one I/O-bound stage. Add them back explicitly --
+# `--cortical_rois="['mPFC','mOFC','TemporalLateral','Auditory','Visual','Insula','PCC']"`
+# -- if a question turns up that needs them; that costs a re-extraction, which
+# is the trade being made knowingly.
+CORTICAL_ROIS = ("mPFC", "mOFC", "TemporalLateral", "Auditory", "Visual")
+CORTICAL_ROIS_PRIMARY = ("mPFC", "mOFC")
+CORTICAL_ROIS_CONTROL = ("TemporalLateral", "Auditory", "Visual")
+
+
+def add_swr_roi(df):
+    """`roi_swr` = `atlas_roi`, with the temporal control labels filled in.
+
+    Only contacts the shared ROI ladder returned 'leftover' for can be
+    relabelled, so no contact ever changes the region the cell pipeline would
+    give it. Everything downstream in the SWR branch selects on `roi_swr`;
+    `atlas_roi` is left exactly as it was.
+    """
+    df = df.copy()
+    df["roi_swr"] = df.get("atlas_roi")
+    if "_ho_cort" not in df.columns:
+        return df
+    lab = df["_ho_cort"].fillna("").astype(str).str.lower()
+    spare = df["roi_swr"].isna() | (df["roi_swr"].astype(str) == "leftover")
+    for name, tokens in TEMPORAL_CTRL_LABELS.items():
+        hit = spare & lab.str.contains("|".join(tokens), regex=True)
+        df.loc[hit, "roi_swr"] = name
+        spare &= ~hit
+    return df
+
+
+def build_cortical_pairs(contacts, rois=CORTICAL_ROIS, max_gap_mm=12.0):
+    """NON-OVERLAPPING adjacent bipolar pairs anchored on cortical contacts.
+
+    Deliberately different from the hippocampal rule above, in one way only.
+    Hippocampus gets ONE derivation per probe because the structure is small
+    and Chen's montage says so. Cortex must not: mPFC coverage is several
+    contacts along a probe sampling genuinely different tissue, and He et al.
+    ran their analyses on 47 dmPFC contacts, which one-per-probe cannot reach.
+
+    What is kept from the hippocampal rule is the reason behind it -- **no
+    contact appears in two derivations**. Every adjacent pair (2-3 and 3-4)
+    would share contact 3 and the pairs would not be independent, which the LME
+    pooling across contacts cannot account for. So pairs are taken greedily
+    along the probe in contact order and both contacts are then consumed.
+
+    The anchor is the in-ROI contact and the reference is its immediate
+    neighbour, exactly as for hippocampus; the pair inherits the anchor's ROI.
+    A white-matter neighbour is a good reference here rather than a problem --
+    it is relatively silent in the broadband range, so it subtracts cleanly.
+    """
+    rois = tuple(rois)
+    rows, skipped = [], []
+    for probe, grp in contacts.groupby("probe", dropna=True):
+        grp = grp[grp["resolved"]].dropna(subset=["contact_no"])
+        if grp.empty:
+            continue
+        grp = grp.sort_values("contact_no")
+        # Never reuse a contact that the hippocampal montage already spent.
+        used = set(grp.loc[grp["is_hpc"].fillna(False), "anat_label"])
+        # `roi_swr`, not `atlas_roi`: the temporal control labels live there.
+        has_hpc_here = bool(grp["is_hpc"].fillna(False).any())
+        for _, a in grp.iterrows():
+            if str(a.get("roi_swr", a.get("atlas_roi"))) not in rois:
+                continue
+            if a["anat_label"] in used:
+                continue
+            cand = grp[~grp["anat_label"].isin(used | {a["anat_label"]})]
+            ref, why = _pick_reference(cand, a, "neighbour", max_gap_mm)
+            if ref is None:
+                skipped.append({"probe": probe, "anchor": a["anat_label"],
+                                "reason": why})
+                continue
+            used |= {a["anat_label"], ref["anat_label"]}
+            d = float(np.linalg.norm(
+                np.array([a["mni_x"], a["mni_y"], a["mni_z"]], float)
+                - np.array([ref["mni_x"], ref["mni_y"], ref["mni_z"]], float)))
+            rows.append({
+                "pair_id": f"{a['anat_label']}-{ref['anat_label']}",
+                "probe": probe,
+                "roi_swr": a.get("roi_swr", a.get("atlas_roi")),
+                "anat_label_a": a["anat_label"], "anat_label_b": ref["anat_label"],
+                "ns_pos_a": a.get("ns_pos"), "ns_pos_b": ref.get("ns_pos"),
+                "ns_label_a": a.get("ns_label"), "ns_label_b": ref.get("ns_label"),
+                "contact_no_a": a.get("contact_no"),
+                "contact_no_b": ref.get("contact_no"),
+                "hemisphere": a.get("hemisphere"),
+                "matter_a": a.get("matter"), "matter_b": ref.get("matter"),
+                "hpc_prob_a": a.get("hpc_prob"), "hpc_prob_b": ref.get("hpc_prob"),
+                "atlas_roi_a": a.get("atlas_roi"), "atlas_roi_b": ref.get("atlas_roi"),
+                "native_region_a": a.get("native_region"),
+                "native_region_b": ref.get("native_region"),
+                "pair_roi_atlas": a.get("roi_swr", a.get("atlas_roi")),
+                "atlas_roi_ladder": a.get("atlas_roi"),
+                # THE tightest control: this derivation is on the same shaft as
+                # the hippocampal one, so amplifier, reference chain and noise
+                # environment are shared rather than merely comparable.
+                "same_probe_as_hpc": has_hpc_here,
+                "n_hpc_on_probe": 0,
+                "mni_x": (a["mni_x"] + ref["mni_x"]) / 2.0,
+                "mni_y": (a["mni_y"] + ref["mni_y"]) / 2.0,
+                "mni_z": (a["mni_z"] + ref["mni_z"]) / 2.0,
+                "inter_contact_mm": d,
+                "ref_rule": "neighbour",
+                "ref_reason": why,
+            })
+    out = pd.DataFrame(rows)
+    out.attrs["skipped"] = skipped
+    return out
+
+
 def build_bipolar_pairs(contacts, target_rois=HPC_ROIS,
-                        scheme="neighbour", max_gap_mm=12.0):
+                        scheme="neighbour", max_gap_mm=12.0,
+                        cortical_rois=None):
     """**One** bipolar derivation per probe -- not every adjacent pair.
 
     Follows Chen et al.: "bipolar referencing was performed using the most
@@ -754,6 +911,7 @@ def build_bipolar_pairs(contacts, target_rois=HPC_ROIS,
         rows.append({
             "pair_id": f"{anchor['anat_label']}-{ref['anat_label']}",
             "probe": probe,
+            "roi_swr": anchor.get("roi_swr", anchor.get("atlas_roi")),
             "anat_label_a": anchor["anat_label"], "anat_label_b": ref["anat_label"],
             "ns_pos_a": anchor.get("ns_pos"), "ns_pos_b": ref.get("ns_pos"),
             "ns_label_a": anchor.get("ns_label"), "ns_label_b": ref.get("ns_label"),
@@ -763,6 +921,13 @@ def build_bipolar_pairs(contacts, target_rois=HPC_ROIS,
             "matter_a": anchor.get("matter"), "matter_b": ref.get("matter"),
             "hpc_prob_a": anchor.get("hpc_prob"),
             "hpc_prob_b": ref.get("hpc_prob"),
+            # Subfield of the ANCHOR -- the contact the derivation is built on.
+            # Probabilities, not a class: use ca_dg_index as a moderator.
+            "p_CA": anchor.get("p_CA"), "p_DG": anchor.get("p_DG"),
+            "p_SUB": anchor.get("p_SUB"),
+            "ca_dg_index": anchor.get("ca_dg_index"),
+            "subfield_note": "Juelich prob-2mm; CA = all cornu ammonis fields, "
+                             "NOT CA1 vs CA3 (no atlas here resolves that)",
             "atlas_roi_a": anchor.get("atlas_roi"), "atlas_roi_b": ref.get("atlas_roi"),
             "native_region_a": anchor.get("native_region"),
             "native_region_b": ref.get("native_region"),
@@ -776,6 +941,23 @@ def build_bipolar_pairs(contacts, target_rois=HPC_ROIS,
             "ref_reason": why,
         })
     out = pd.DataFrame(rows)
+    if len(out):
+        out["roi_family"] = "HPC"
+        out["role"] = "ripple"
+
+    # Cortical derivations ride in the SAME table, so stage 2 picks them up in
+    # the same raw-file pass. Extraction is the only I/O-bound stage in this
+    # pipeline; running it twice to add cortex would cost hours for nothing.
+    # `role` is what downstream stages key on: ripple detection reads
+    # role == 'ripple', the HFB stage reads all of them.
+    if cortical_rois:
+        cx = build_cortical_pairs(contacts, rois=cortical_rois,
+                                  max_gap_mm=max_gap_mm)
+        if len(cx):
+            cx["roi_family"] = cx["pair_roi_atlas"]
+            cx["role"] = "hfb"
+            skipped = skipped + list(cx.attrs.get("skipped", []))
+            out = pd.concat([out, cx], ignore_index=True)
     out.attrs["skipped"] = skipped
     return out
 

@@ -451,6 +451,66 @@ def sliding_window_test(profiles_by_condition, centres, width_s=0.3,
     return out
 
 
+def contrast_profiles(raw_by_condition, weights):
+    """Weighted combination of per-unit rate profiles -> one contrast profile.
+
+    `weights` is {condition label: weight}; a valence x stage interaction is
+    {correct-first: +1, error-first: -1, correct-known: -1, error-known: +1}.
+    Only units present in EVERY named condition contribute, which is what makes
+    the contrast paired -- a session missing one cell cannot supply a
+    difference of differences.
+
+    Built from RAW profiles on purpose. Baseline subtraction is linear, so
+    contrasting raw profiles and then subtracting the contrast's own baseline
+    gives the same numbers as contrasting already-baselined profiles. Doing it
+    this way lets the contrast go through `baseline_subtract`, `window_test`
+    and `sliding_window_test` unchanged: it is tested by the same functions,
+    against the same sign-flip null, as any ordinary condition.
+    """
+    labels = list(weights)
+    missing = [l for l in labels if l not in raw_by_condition]
+    if missing:
+        raise KeyError(f"no profiles for {missing}")
+    units = sorted(set.intersection(*[set(raw_by_condition[l]) for l in labels]))
+    return {u: sum(w * raw_by_condition[l][u] for l, w in weights.items())
+            for u in units}
+
+
+def hotelling_signflip(M, n_perm=N_SIGN_FLIPS, seed=42):
+    """Omnibus test that several within-unit contrasts are JOINTLY zero.
+
+    `M` is (n_units, n_contrasts): one row per unit, one column per contrast
+    spanning the effect. A 2 x 3 interaction has 2 df, so it is two contrasts
+    (linear and quadratic over stage) -- testing them together is the omnibus
+    interaction, testing either alone is a directed 1-df test.
+
+    Hotelling's T^2 is the statistic; its null comes from flipping the sign of
+    each unit's WHOLE row, the same sign-flip used everywhere else in this
+    module, which is exact for a within-unit contrast under symmetry. Flipping
+    the row rather than its entries keeps the contrasts' covariance intact.
+    """
+    M = np.asarray(M, float)
+    M = M[np.isfinite(M).all(axis=1)]
+    n, k = M.shape
+    if n < k + 2:
+        return None
+
+    def t2(A):
+        m = A.mean(axis=0)
+        S = np.cov(A, rowvar=False).reshape(k, k)
+        return float(A.shape[0] * m @ np.linalg.pinv(S) @ m)
+
+    obs = t2(M)
+    rng = np.random.default_rng(seed)
+    null = np.array([t2(M * rng.choice([-1.0, 1.0], size=(n, 1)))
+                     for _ in range(n_perm)])
+    f = obs * (n - k) / (k * (n - 1))
+    return {'n_units': int(n), 'n_contrasts': int(k), 'T2': obs,
+            'F': float(f), 'df1': int(k), 'df2': int(n - k),
+            'p_param': float(stats.f.sf(f, k, n - k)),
+            'p_perm': float((1 + np.sum(null >= obs)) / (1 + n_perm))}
+
+
 def window_test(profiles, centres, window, baseline=BASELINE_WIN,
                 n_perm=10000, seed=42):
     """One named window against the trial's own baseline, per subject.
@@ -535,6 +595,22 @@ def _row_axes(n_rows, extra_cm=0.0):
     return fig, axes
 
 
+def triangle_smooth(x, n_bins=5):
+    """Sakon & Kahana's 5-bin triangle smooth -- FOR VISUALISATION ONLY.
+
+    Their PVTHs are smoothed this way before plotting and the statistics are
+    run on the unsmoothed bins; this exists so our traces can be displayed on
+    the same footing as theirs without any test ever seeing a smoothed value.
+    """
+    if not n_bins or n_bins < 2:
+        return x
+    half = n_bins // 2
+    k = np.r_[np.arange(1, half + 2), np.arange(half, 0, -1)].astype(float)
+    k /= k.sum()
+    pad = np.r_[np.repeat(x[:1], half), x, np.repeat(x[-1:], half)]
+    return np.convolve(pad, k, mode='valid')
+
+
 def _mean_sem(profiles):
     X = np.vstack([profiles[s] for s in sorted(profiles)])
     return (np.nanmean(X, axis=0),
@@ -583,7 +659,8 @@ def _win_mean(profiles, centres, win):
 
 
 def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
-              suptitle=None, scheme=None, counts=None, share_y=False):
+              suptitle=None, scheme=None, counts=None, share_y=False,
+              smooth_bins=0, colours=None, legend_cm=None):
     """Stacked rows of (title, profiles, sliding), 16 cm wide, 4 cm per row.
 
     Per row, three panels:
@@ -599,7 +676,13 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
     right   t at every window position with the surviving clusters shaded, and
             the sliding width stated on the panel.
     """
-    extra = LEGEND_CM + (TITLE_CM if suptitle else 0.0)
+    # `colours` overrides `condition_colour` for labels it names -- needed when
+    # a row holds a condition the project's valence/stage naming cannot colour
+    # (a control press is neither), which would otherwise fall through to a
+    # tab10 hue and collide with a reserved one.
+    colours = colours or {}
+    legend_cm = LEGEND_CM if legend_cm is None else legend_cm
+    extra = legend_cm + (TITLE_CM if suptitle else 0.0)
     fig, axes = _row_axes(len(rows), extra_cm=extra)
     legend_labels = {}
     for r, (row_title, profiles_by_condition, sliding_by_condition) in enumerate(rows):
@@ -608,7 +691,12 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
         ax.axvspan(*baseline, color='0.88', lw=0, zorder=0)
         for i, (label, profiles) in enumerate(profiles_by_condition.items()):
             mean, sem, n = _mean_sem(profiles)
-            c = condition_colour(label, i, scheme)
+            if smooth_bins:
+                # display only: the middle and right panels below still read
+                # the unsmoothed `profiles`, so no test sees this
+                mean, sem = (triangle_smooth(mean, smooth_bins),
+                             triangle_smooth(sem, smooth_bins))
+            c = colours.get(label) or condition_colour(label, i, scheme)
             ax.plot(centres_of(sliding_by_condition, profiles), mean, color=c,
                     lw=LW_RATE, label=_n_label(label, n, counts),
                     solid_capstyle='round', zorder=3)
@@ -637,7 +725,7 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
                          next(iter(profiles_by_condition.values())))
         win = _test_window(sliding_by_condition, width_s)
         for i, (label, profiles) in enumerate(profiles_by_condition.items()):
-            c = condition_colour(label, i, scheme)
+            c = colours.get(label) or condition_colour(label, i, scheme)
             bm, bs, _ = _win_mean(profiles, cen, baseline)
             wm, ws, _ = _win_mean(profiles, cen, win)
             x = np.array([0, 1]) + (i - (len(profiles_by_condition) - 1) / 2) * 0.13
@@ -671,7 +759,7 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
         for i, (label, sliding) in enumerate(sliding_by_condition.items()):
             if sliding is None:
                 continue
-            c = condition_colour(label, i, scheme)
+            c = colours.get(label) or condition_colour(label, i, scheme)
             ax.plot(sliding['times'], sliding['t'], color=c, lw=1.6)
             for cl in sliding['clusters']:
                 if cl['p'] < 0.05:
@@ -726,7 +814,7 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
 
     total_cm = ROW_H_CM * len(rows) + extra
     fig.tight_layout(pad=0.4, h_pad=1.4, w_pad=1.3,
-                     rect=[0, LEGEND_CM / total_cm,
+                     rect=[0, legend_cm / total_cm,
                            1, 1 - (TITLE_CM / total_cm if suptitle else 0)])
     if legend_labels:
         ncol = min(len(legend_labels), 3 if len(legend_labels) > 4 else 4)

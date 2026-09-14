@@ -405,6 +405,83 @@ def _load_hc_prob():
     return _hc_prob_img, _hc_prob_idx
 
 
+_jl_prob_img = None
+_jl_prob_idx = None
+
+# Juelich's hippocampal subregions. It separates the cornu ammonis from the
+# dentate gyrus and the subiculum, but does NOT separate CA1 from CA2/CA3 --
+# "cornu ammonis" is one volume covering all fields. No atlas in this project's
+# stack resolves CA1 from CA3, and at 2 mm macro contacts with a lead field of
+# several mm it is doubtful that any would. Treat the output as CA / DG / SUB,
+# and say so rather than calling the CA volume "CA1".
+HC_SUBFIELDS = {
+    "CA": "cornu ammonis",
+    "DG": "dentate gyrus",
+    "SUB": "subiculum",
+    "HATA": "hippocampal-amygdaloid transition area",
+    "EC_jl": "entorhinal cortex",
+}
+
+
+def _load_hc_subfield_prob():
+    """Juelich histological probability maps, hippocampal subregions only."""
+    global _jl_prob_img, _jl_prob_idx
+    if _jl_prob_img is not None:
+        return _jl_prob_img, _jl_prob_idx
+    from nilearn import datasets as nldatasets
+    import nibabel as nib
+    atlas = nldatasets.fetch_atlas_juelich("prob-2mm")
+    names = [str(n) for n in atlas.labels]
+    img = atlas.maps if hasattr(atlas.maps, "get_fdata") else nib.load(atlas.maps)
+    n_vol = img.shape[3] if img.ndim == 4 else 1
+    # Same background-offset trap as the Harvard-Oxford loader above: a leading
+    # 'Background' entry with no volume makes the 4-D index label_index - 1.
+    off = 1 if len(names) == n_vol + 1 else 0
+    idx = {}
+    for short, token in HC_SUBFIELDS.items():
+        hits = [i - off for i, n in enumerate(names)
+                if "hippocampus" in n.lower() and token in n.lower()]
+        hits = [i for i in hits if 0 <= i < n_vol]
+        if hits:
+            idx[short] = hits
+    if not idx:
+        raise RuntimeError("No hippocampal subregion volumes in the Juelich "
+                           f"probability atlas; labels were {names[:10]}")
+    _jl_prob_img, _jl_prob_idx = img, idx
+    return _jl_prob_img, _jl_prob_idx
+
+
+def hippocampal_subfield_probability(coords):
+    """P(subregion) in per cent at each MNI152 coordinate, per Juelich.
+
+    Returns a dict {short_name: (N,) array}. Left and right volumes are
+    combined with `max`, as in `hippocampal_probability`: a contact is in one
+    hemisphere or the other, never both.
+
+    These are PROBABILITIES, not a classification, and that is deliberate. The
+    cornu ammonis volume dominates the hippocampus by size, so a max-prob label
+    calls almost every contact "CA" and a hard CA-vs-DG split would be mostly an
+    artefact of volume. Carry P(CA) and P(DG) as continuous moderators instead.
+    """
+    import nibabel as nib
+    img, idx = _load_hc_subfield_prob()
+    data = img.get_fdata()
+    inv = np.linalg.inv(img.affine)
+    coords = np.atleast_2d(np.asarray(coords, dtype=float))
+    out = {k: np.zeros(len(coords)) for k in idx}
+    for i, mni in enumerate(coords):
+        if np.any(np.isnan(mni)):
+            for k in out:
+                out[k][i] = np.nan
+            continue
+        v = np.round(nib.affines.apply_affine(inv, mni)).astype(int)
+        if np.any(v < 0) or np.any(v >= np.array(data.shape[:3])):
+            continue
+        for k, vols in idx.items():
+            out[k][i] = float(max(data[v[0], v[1], v[2], j] for j in vols))
+    return out
+
+
 def hippocampal_probability(coords):
     """P(hippocampus) in per cent at each MNI152 coordinate.
 
