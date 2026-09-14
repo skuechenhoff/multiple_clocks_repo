@@ -585,11 +585,51 @@ def _load_ncs_channels(files, stems_wanted, duration_s, verbose=False):
             f"  Rebuild the session's contacts so the channel list comes from "
             f"the block that carries the behaviour.")
 
-    rows = []
-    for path in paths:
+    rows, empty, short = [], [], []
+    for stem, path in zip(stems_wanted, paths):
         sig, fs, _ = read_ncs(path)
+        if sig.size == 0 or not np.isfinite(fs):
+            # A header-only .ncs stub: the file exists and the channel resolves,
+            # but it holds no samples. read_ncs returns an empty array for it.
+            empty.append((stem, os.path.basename(path)))
+            rows.append(np.zeros(0, np.float32))
+            continue
         rows.append(resample_to(sig, fs, TARGET_FS))
-    n = min(len(r) for r in rows)
+
+    # Without this the empty row makes `min(len(r))` zero and the WHOLE session
+    # silently becomes an (n_channels, 0) array -- no error, no ripples, and a
+    # QC report that looks like a clean recording. Same failure the
+    # missing-channel check above exists to prevent, one step later.
+    #
+    # This got sharper when cortical derivations joined the montage: a UCLA
+    # session used to request ~6 channels and now requests ~30, and the audit
+    # reports 52-54% of .ncs files are stubs on s03, s40, s56 and s60. The
+    # chance of drawing at least one went from small to near certain.
+    if empty:
+        raise RuntimeError(
+            f"{len(empty)} requested channel(s) are header-only stubs with no "
+            f"samples: {[e[0] for e in empty][:8]}"
+            f"{' ...' if len(empty) > 8 else ''}\n"
+            f"  files: {[e[1] for e in empty][:4]}\n"
+            f"  These resolve to a real file, so the missing-channel check "
+            f"above does not catch them.\n"
+            f"  Left alone they would truncate the whole session to zero "
+            f"samples, silently.\n"
+            f"  -> drop these contacts from the session's bipolar_pairs "
+            f"table and re-run.")
+
+    lens = np.array([len(r) for r in rows])
+    n = int(lens.min())
+    # A channel far shorter than its peers is the same failure in degraded
+    # form: it truncates every other channel down to its own length.
+    if n < 0.5 * float(np.median(lens)):
+        i = int(np.argmin(lens))
+        short.append(stems_wanted[i])
+        raise RuntimeError(
+            f"channel {stems_wanted[i]!r} is {n} samples against a median of "
+            f"{int(np.median(lens))} across the {len(rows)} requested "
+            f"channels.\n  Keeping it would truncate every other channel to "
+            f"its length. Drop it from bipolar_pairs and re-run.")
     return np.stack([r[:n] for r in rows], axis=0)
 
 
