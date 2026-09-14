@@ -117,14 +117,18 @@ COMPARED_KEYS = ['EV_string', 'regression_version', 'TR', 'regression_version_fu
 # short form, the summary always stores the canonical one.
 SCOPE_ALIASES = {'across_only': 'across_only', 'across': 'across_only',
                  'within_only': 'within_only', 'within': 'within_only',
-                 'full_no_diag': 'full_no_diag', 'full': 'full_no_diag'}
+                 'full_no_diag': 'full_no_diag', 'full': 'full_no_diag',
+                 'within_same_direction': 'within_same_direction',
+                 'within_samedir': 'within_same_direction',
+                 'same_direction': 'within_same_direction'}
 
 
 # Suffix the RSA appends to a map name when a model is fitted in more than one
 # scope, and the marker of an instruction-similarity model. Both mirror
 # fMRI_run_RSA_instruction.py.
 SCOPE_TAGS = {'across_only': 'across', 'within_only': 'within',
-              'full_no_diag': 'full'}
+              'full_no_diag': 'full',
+              'within_same_direction': 'within-samedir'}
 INSTR_SUFFIX = '_instr'
 
 # The three per-subject stages, in pipeline order. Each is a directory under
@@ -654,8 +658,14 @@ def main():
         with open(f"{config_dir}/{cfg_name}", 'w') as f:
             json.dump(cfg, f, indent=2)
 
-    # One smoothing config per epoch, so a per-(subject, epoch) smoothing job
-    # cannot have its regression_version rewritten by a sibling job.
+    # One smoothing config per (RSA, epoch). Keyed on name_of_RSA as well as
+    # the epoch: two RSA configs over the same epochs (e.g. the cumulative-rew
+    # and the same-direction instruction configs) would otherwise write the
+    # same filename and silently overwrite each other's name_of_RSA, sending
+    # the smoothing job at the wrong results folder. The RSA config snapshots
+    # above are already keyed on the base config name; this makes the smoothing
+    # snapshots match. Only this script builds and consumes these names (they
+    # travel to the smoothing job via todo_smooth.txt), so the rename is safe.
     smooth_configs = {}
     smooth_base_path = f"{config_dir}/{args.smooth_config}"
     if os.path.exists(smooth_base_path):
@@ -668,7 +678,7 @@ def main():
         c['name_of_RSA'] = name_RSA
         c['regression_version'] = glm
         c['fwhm'] = fwhm
-        name = f"{os.path.splitext(args.smooth_config)[0]}_{glm}.json"
+        name = f"{os.path.splitext(args.smooth_config)[0]}_{name_RSA}_{glm}.json"
         json.dump(c, open(f"{config_dir}/{name}", 'w'), indent=2)
         smooth_configs[glm] = name
 

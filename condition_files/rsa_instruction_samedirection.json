@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Instruction/memory models fitted ONLY on same-direction RDM cells.",
+    "",
+    "Why: every *_rew_instr model relabels a backward condition with its",
+    "forward vector, so it forces dissimilarity 0 on exactly the same-task",
+    "forward/backward pairs. But the instruction screen is not identical for",
+    "the two directions -- it carries a 'please backwards' text, or nothing,",
+    "implying forwards. Those forced-zero cells are the only 0 level in the",
+    "model, they carry the whole low-end leverage, and they are precisely",
+    "where the stimulus differs. No nuisance regressor can absorb them:",
+    "anything correlated enough with the instruction model to move its",
+    "coefficient IS the model's own main contrast. Scope",
+    "'within_same_direction' removes the confound by design instead.",
+    "",
+    "Cost: the d = 0 level disappears, 40 of 90 within-half cells remain, and",
+    "those 40 are 20 task-pair comparisons each measured twice (once F-F,",
+    "once B-B) with an identical model value -- so 20 independent predictions",
+    "per subject, and a free split-half reliability check.",
+    "",
+    "No execution/planning models here: they are unaffected by the direction",
+    "cue and are already fitted by rsa_instruction_cumulative_rew.json.",
+    "The searchlight data-RDM cache is keyed on regression_version + TR +",
+    "searchlight_mask, NOT on name_of_RSA, so this run reuses the existing",
+    "data_RDMs_glmbase_01-TR4_grey_matter cache and recomputes no searchlights.",
+    "Results land in RSA_instr_cumrew_samedir_glmbase_01-TR4/ and every map",
+    "carries a _within-samedir suffix, so nothing collides with earlier runs."
+  ],
+
+  "name_of_RSA": "instr_cumrew_samedir",
+  "load_EVs_from": "DSR_loc-fut-rews-state-dur-type",
+  "regression_version": "01",
+  "TR": 4,
+  "smoothing": false,
+  "fwhm": 5,
+  "searchlight_mask": "grey_matter",
+
+  "data_rdm_scope": "within_same_direction",
+  "run_single_models": true,
+  "single_model_scopes": {
+    "instruction": ["within_same_direction"]
+  },
+  "run_combo_models": false,
+  "plot_example_data_RDM": true,
+
+  "selected_models": [
+    "ABCD_rew_instr",
+    "ABC_rew_instr",
+    "AB_rew_instr",
+    "A_rew_instr",
+    "B_rew_instr",
+    "C_rew_instr",
+    "D_rew_instr"
+  ],
+  "combo_models": []
+}

@@ -1,5 +1,363 @@
 # CHANGELOG
 
+## 2026-09-14 (e) — Cluster runner + audit adjusted for the same-direction config
+
+**`mc/fmri_analysis/submit_RSA_instruction_epochs.sh`**
+- base config is now `${RSA_CONFIG:-rsa_instruction_samedirection.json}`, so the
+  same runner drives either instruction config.
+- audit dir is `rsa_audit_${configTag}_<date>`, so the two configs do not share
+  a todo list.
+- default wall time 240 -> 120 min. 240 was sized for 28 models (21 single + 7
+  combo) on 90 cells; the same-direction config fits 7 single models on 40
+  cells and reuses the searchlight cache. Under-requesting is cheap because the
+  RSA resumes. `FSLSUB_T=240` for the cumulative-rew config.
+
+**`mc/fmri_analysis/check_RSA_ran.py`**
+- `SCOPE_ALIASES` / `SCOPE_TAGS` gained `within_same_direction` ->
+  `within-samedir`, mirroring the runner. Without this the audit KeyErrors on
+  the new config.
+- **Bug found and fixed while adjusting**: the per-epoch *smoothing* config
+  snapshots were named `{smooth_config}_{glm}.json`, with no reference to
+  `name_of_RSA` — unlike the RSA snapshots, which are keyed on the base config
+  name. Auditing two RSA configs over the same epochs therefore overwrote each
+  other's smoothing snapshots, and the surviving one carries a single
+  `name_of_RSA`, so the smoothing jobs of one config would have been pointed at
+  the other config's results folder. Now keyed on `name_of_RSA` too. Safe
+  rename: only this script builds these names and they reach the smoothing job
+  via `todo_smooth.txt`.
+
+**Verified locally against the real sub-02 run:**
+- `expected_map_names` gives the 7 `*_within-samedir` names, matching the files
+  the RSA actually wrote; the cumulative-rew config still resolves to its 41.
+- `settings_differences` vs the written `sub-02_settings_summary.json` is empty
+  and no expected beta map is missing — the run is correctly marked DONE, so
+  there is no permanent RERUN_CHANGED loop.
+
+## 2026-09-14 (d) — New RSA scope `within_same_direction` + masked instruction config
+
+Implements the conclusion of (c). Two changes, no new pipeline script.
+
+**1. `scripts/fMRI_run_RSA_instruction.py`** gains a fourth scope,
+`within_same_direction` (aliases `within_samedir`, `same_direction`): the
+within-half cells that do NOT cross the forward/backward cue. Added
+`same_direction_mask` / `same_direction_mask_2d` next to `within_half_mask`,
+registered in `SCOPE_ALIASES` / `SCOPE_TAGS` / `SCOPE_CAPTION`, and wired into
+`_scope_cells`, `_mask_2d_for_scope` and `all_scopes_used` so the model
+regressor, the cached data RDM and the plotted RDM are all subset identically.
+
+Verified on the real sub-02 condition ordering: 190 -> 90 within-half -> 40
+same-direction cells, composition 20 F-F + 20 B-B, zero same-task pairs, zero
+cross-half pairs, 2-D display mask agrees with the flat mask.
+
+**2. `condition_files/rsa_instruction_samedirection.json`** — new config,
+`name_of_RSA = instr_cumrew_samedir`. The 7 `*_rew_instr` single models only;
+`run_combo_models: false`; no execution/planning models, which are unaffected
+by the direction cue and stay with `rsa_instruction_cumulative_rew.json`.
+
+Because the searchlight cache is keyed on `regression_version + TR +
+searchlight_mask` and NOT on `name_of_RSA`, this reuses
+`data_RDMs_glmbase_01-TR4_grey_matter` and recomputes **no searchlights**
+(cache mtime confirmed unchanged after the run). Results go to
+`RSA_instr_cumrew_samedir_glmbase_01-TR4/`, every map suffixed
+`_within-samedir`, so nothing collides with earlier runs.
+
+Run: `python scripts/fMRI_run_RSA_instruction.py <subj_no> rsa_instruction_samedirection.json`
+
+**Validation.** Test run on sub-02 exited 0 with `n_cells_per_searchlight: 40`
+and wrote beta/t/p for all 7 models. The pipeline's
+`ABCD_rew_instr_within-samedir_beta` reproduces the independent audit
+implementation bit-for-bit: mean +0.006784 vs +0.006784, r = 1.00000000,
+max |diff| = 5.6e-16.
+
+Still to check when this is run on the group: the F-F vs B-B split-half
+reliability per subject (section 10) — in sub-02 it was ~0, and if that holds
+across subjects the mask is clean but the data are thin.
+
+## 2026-09-14 (c) — Why `ABCD_rew_instr` is negative: NOT time
+
+Follow-up to the event-locked instruction RSA audit, which found a consistent
+negative whole-brain shift for the instruction/memory model across subjects.
+Hypothesis tested: the negative reflects **temporal** structure — the two
+directions of a task being acquired far apart, so drift makes them look
+dissimilar where the instruction model forces them identical.
+
+Audit script has since been deleted (one-off diagnostic, not part of the
+pipeline). Its outputs are kept at
+`data/derivatives/group/instruction_instr_negative_time_audit_2026-09-14/`.
+The conclusion is implemented as the `within_same_direction` RSA scope.
+
+**Scope caveat.** The only locally cached full neural RDM is the older
+`glmbase_01-TR4` instruction GLM, sub-02 only — not the 2026-09 event-locked
+GLMs. The model side is identical to the event-locked pipeline
+(`corr(ABCD_rew_instr, ABCD_rew) = 0.2311` reproduces the stored design audit
+exactly), so only the neural side is a proxy. Needs rerunning where the
+event-locked caches live.
+
+### Reconstruction is exact
+
+Recomputed sub-02 betas vs the saved `ABCD_rew_instr_within_beta.nii.gz`:
+r = 1.0000000, max |diff| = 3.9e-16 over 126,321 searchlights. The cell-level
+attribution below is therefore the pipeline's own beta, not an approximation.
+
+### 1. The data DO have a strong time structure
+
+Instruction onsets taken from the `ev_*_instruction_onset.txt` files the
+first-level GLM actually used (one block per task, 5 contiguous repeats).
+Mean beta over searchlights for a pure time RDM:
+
+| time RDM | mean beta |
+|---|---:|
+| log lag between onsets | **+0.1439** |
+| linear lag | +0.1401 |
+| block order gap | +0.1381 |
+
+That is ~3x larger than any reward model effect here. Temporally distant
+blocks are reliably more dissimilar. So the confound is real and large.
+
+### 2. But it does NOT explain the negative — it is the wrong sign
+
+The instruction model is *positively*, weakly correlated with lag
+(r = 0.048 log / 0.090 linear), so partialling time out makes the negative
+**slightly worse**, never better:
+
+| fit | ABCD_rew_instr beta |
+|---|---:|
+| alone | -0.0498 |
+| + log lag | -0.0568 |
+| + linear lag | -0.0629 |
+| + block order gap | -0.0616 |
+| + ABCD_rew + log lag | -0.0568 |
+
+Same for the execution model (-0.0071 → -0.0131). **Time hypothesis rejected.**
+Mean lag at the 10 model-forced-identical cells (533 s) is indistinguishable
+from all other cells (547 s), and within those 10 cells the contribution is
+unrelated to lag (the two longest-lag pairs contribute ~0/positive; the
+shortest-lag pair E1 contributes strongly negative).
+
+### 3. The actual mechanism: leverage on the low-dissimilarity cells
+
+The beta is additive, `beta = sum_c z(model_c) * z(data_c) / 90`. Attribution
+by model level:
+
+| model dissimilarity | n cells | mean z(neural) | contribution to beta |
+|---:|---:|---:|---:|
+| 0.00 (same task, forced identical) | 10 | **+0.130** | **-0.0316** |
+| 0.25 | 8 | **+0.178** | **-0.0224** |
+| 0.75 | 40 | -0.091 | -0.0048 |
+| 1.00 | 32 | +0.029 | +0.0091 |
+
+64% of the negative comes from the 10 forced-zero cells and a further 45% from
+the 8 cells at 0.25 — i.e. **the cells the model calls most similar are the
+cells the data call most dissimilar**. Because the model is skewed (18 of 90
+cells at the low end), z(model) there is -2.19, so those few cells carry
+enormous leverage.
+
+The same inversion holds for the execution model (its 4 cells at d=0.25 have
+mean z(neural) = +0.132, contributing -0.0220) — it just has 4 such cells
+instead of 18, so its total stays near zero. **This predicts the across-subject
+negative shift scales with how many low-dissimilarity cells a model has**,
+which is consistent with the audit: memory-within (many) is the most negative
+model, plan-within (few) is near zero.
+
+### 4. It IS the forward/backward comparisons — confirmed structurally
+
+The 10 model-forced-identical cells are **exactly** the 10 same-task
+forward/backward pairs (verified as an identical set, not merely overlapping).
+No two different tasks share an instructed reward sequence, so dissimilarity =
+0 is enforced *only* on direction-crossing comparisons. All the model's
+low-end leverage therefore sits on the forward/backward contrast.
+
+Premise check (SK): A1_forw and A1_backw really are instructed with the same
+reward sequence — but the screen additionally shows a "please backwards" text,
+or nothing, implying forwards. So the instruction screens are **not** identical
+across directions, and `ABCD_rew_instr` is mis-specified exactly where it has
+the most leverage.
+
+### 5. A forward/backward co-regressor does NOT fix it
+
+| fit | ABCD_rew_instr beta |
+|---|---:|
+| alone | -0.0498 |
+| + direction_diff (binary F/B crossing) | **-0.0578** |
+| + direction_diff + log lag | -0.0624 |
+| + different_task (binary) | -0.0356 |
+
+`direction_diff` is itself negative alone (-0.0188) and correlates -0.245 with
+the instruction model, so partialling it out pushes the instruction beta
+*further* negative. A single additive direction term cannot work, because the
+direction effect is not additive — it reverses sign with task identity:
+
+| cells | n | mean z(neural) |
+|---|---:|---:|
+| B-F, same task (the forced-zero cells) | 10 | **+0.130** |
+| B-F, cross task | 40 | -0.054 |
+| F-F, cross task | 20 | +0.120 |
+| B-B, cross task | 20 | -0.078 |
+
+### 6. Where the negative actually lives — model-matched subset refits
+
+Refitting the instruction model on cell subsets (all 126,321 searchlights):
+
+| subset | n cells | mean beta |
+|---|---:|---:|
+| all cells | 90 | -0.0498 |
+| drop the 10 forced-identical cells | 80 | -0.0237 |
+| **cross-task, same-direction** | 40 | **+0.0068** |
+| **cross-task, different-direction** | 40 | **-0.0554** |
+| different-direction only (B-F) | 50 | -0.0893 |
+
+The last two rows are the clean test: identical model-value distributions, no
+forced-zero cells in either, differing *only* in whether the pair crosses the
+forward/backward boundary. **The negative is entirely on the crossing side;
+within same-direction cells the model is flat (~0), not negative.**
+
+So the answer is: not time, and not a removable additive direction confound —
+the reward-sequence model simply fails to predict neural similarity whenever a
+pair crosses the forward/backward boundary, and the instruction model is built
+so that its most influential cells are all such crossings.
+
+### 7. No control regressor can soak up the negative — and here is why
+
+Tested ladder (sub-02, 126,321 searchlights), all as `instr + control`:
+
+| control | cols | mean instr beta |
+|---|---:|---:|
+| none | 0 | -0.0498 |
+| n_backward (0/1/2) | 1 | **-0.0498 (exactly unchanged)** |
+| direction_diff (binary crossing) | 1 | -0.0578 |
+| direction levels (F-F / B-F / B-B) | 2 | -0.0578 |
+| different_task | 1 | -0.0356 |
+| condition identity (20 per-condition dummies) | 20 | -0.0704 |
+| condition identity + different_task | 21 | -0.1076 |
+| condition identity + different_task + log lag | 22 | -0.1213 |
+
+**Every control leaves it unchanged or makes it worse.** The structural reason
+is a dilemma, visible in the design correlations:
+
+- `corr(instr, n_backward) = +0.000000` — exactly orthogonal by design (the
+  same-task cells sit exactly at the mean of n_backward, and among cross-task
+  cells direction is independent of reward overlap). A regressor orthogonal to
+  the model cannot move its coefficient at all, and this one moves it by
+  literally zero.
+- `corr(instr, direction_diff) = -0.245`, and direction_diff is itself negative
+  (-0.0188 alone), so partialling it out pushes instr *further* negative.
+- `corr(instr, different_task) = +0.774` — this is the only control that
+  shrinks the negative, and it does so precisely because it **is** the
+  instruction model's own main contrast (same task vs not). Absorbing it
+  deletes the hypothesis rather than controlling a confound.
+
+So: anything correlated enough with the instruction model to move its beta *is*
+the hypothesis; anything that is a genuine nuisance is uncorrelated and does
+nothing. Controls that remove the positively-contributing cells (the d = 1.00
+level, +0.0091) make the negative worse, which is exactly what the
+condition-identity rows show.
+
+### 8. Respecifying the model to match the screen also does not rescue it
+
+Since the instruction screen carries a direction cue, the instructed stimulus
+is 4 reward locations *plus* that cue:
+`d = (1-alpha) * reward_hamming + alpha * direction_mismatch`.
+
+| alpha (direction cue weight) | d for same-task F/B | mean beta |
+|---:|---:|---:|
+| 0.00 (current model) | 0.00 | -0.0498 |
+| 0.20 (one of five screen features) | 0.20 | -0.0582 |
+| 0.50 | 0.50 | -0.0488 |
+| 1.00 (pure direction model) | 1.00 | -0.0188 |
+
+Negative at every weight, including a pure direction model. The reward-sequence
+content never earns a positive coefficient in these data.
+
+### 9. Conclusion: this is a cell-selection question, not a regressor question
+
+The only unconfounded test of "do overlapping instructed reward sequences
+produce similar instruction-period patterns" is the **cross-task,
+same-direction** cells (40 cells, no forced-zero cells, no direction crossing):
+**beta = +0.0068**, i.e. null, but not dragged negative.
+
+Restricting the fitted cells is implementable in the existing framework (the
+RSA runner already selects cell subsets via `data_rdm_scope`). It is legitimate
+here *because the direction cue is a known stimulus property, established from
+the screen content independently of any fit* — not because it improves the
+number. Choosing among the controls above by which one flips the sign would be
+post-hoc and is explicitly rejected.
+
+### 10. What the same-direction mask actually leaves (sub-02)
+
+Figure: `sub-02_same_direction_mask.png` in the output dir.
+
+The mask keeps 40 of 90 cells (20 F-F + 20 B-B), all cross-task. But:
+
+- **The 40 cells are only 20 unique comparisons.** Within a half each task has
+  exactly one forward and one backward condition, and the instruction model
+  gives the backward condition the forward vector, so
+  `d(X_F, Y_F) == d(X_B, Y_B)` identically. Each task pair is therefore
+  measured twice with the *same* model value. The model has 20 independent
+  predictions, not 40. This is structural and holds for every subject.
+- **The d = 0 level disappears entirely** (all 10 zero cells were B-F). Model
+  levels retained: 0.25 / 0.75 / 1.00; model sd falls from 0.325 to 0.218 (67%).
+- **The "similar" end rests on 2 task pairs** — C1-E1 and C2-E2, the only
+  comparisons at d = 0.25 (4 cells). This part is subject-specific: it depends
+  on the particular reward sequences.
+
+**The duplication is a free split-half reliability check, and in this subject
+it fails:**
+
+| comparison | r |
+|---|---:|
+| task-pair level, F-F estimate vs B-B estimate (20 pairs) | **+0.020** |
+| searchlight beta maps, F-F-only vs B-B-only fit | **-0.080** |
+
+with beta = +0.0130 (F-F only) and +0.0011 (B-B only). So under the mask there
+is little reliable neural structure for the model to explain in sub-02 — the
+two measurements of the same prediction do not agree.
+
+Caveat in the other direction: single-subject whole-brain RSA reliability is
+routinely near zero and effects normally emerge only at group level, so this is
+a warning rather than proof the mask is useless. It does mean the mask is not
+rescuing anything here, and that this reliability check should be run per
+subject on the event-locked caches before the mask is adopted.
+
+### 11. Searchlight NIfTIs exported
+
+`.../instruction_instr_negative_time_audit_2026-09-14/sub-02_searchlight_maps/`
+
+| map | cells | mean beta |
+|---|---:|---:|
+| `ABCD_rew_instr_all90` | 90 | -0.0498 |
+| `ABCD_rew_instr_same-direction` | 40 | +0.0068 |
+| `ABCD_rew_instr_forward-only` | 20 | +0.0130 |
+| `ABCD_rew_instr_backward-only` | 20 | +0.0011 |
+| `ABCD_rew_instr_direction-crossing` | 50 | -0.0893 |
+
+Each as `_beta` and `_t_val`, written on the subject's functional grid using the
+pipeline's own saved map as geometry reference (shape 108x108x64, affine
+verified identical), naming per `mc.analyse.handle_MRI_files`.
+
+Two caveats attached to these files:
+
+- **Subject functional space, not MNI.** They are not comparable to the group
+  maps without applying the subject's registration.
+- **The `_t_val` maps are first-level parametric t and must not be used for
+  inference.** RDM cells are not independent observations, and under the
+  same-direction mask they are doubly non-independent because each task pair
+  appears twice (F-F and B-B) with an identical model value, so the nominal
+  df = 38 is roughly double the truth. They are included for thresholding and
+  visual inspection only; group inference stays a random-effects test over
+  subject beta maps.
+
+### What this does not yet settle
+
+- Single subject, proxy GLM (see scope caveat). Must be rerun on the
+  event-locked caches before any of this is asserted for the group.
+- The F-F (+0.120) vs B-B (-0.078) asymmetry among cross-task cells is
+  unexplained and may just be noise at n=20 cells in one subject.
+- Whether an *interaction*-style regressor (direction crossing x same task),
+  or simply excluding the direction-crossing cells, gives a defensible
+  instruction model — not yet tested. Excluding them is a scope change to the
+  hypothesis (it removes the only cells where instruction and execution models
+  diverge), so this needs a decision rather than a fit.
+
 ## 2026-09-14 (b) — Pad to 100 ms; subfield moderator; He et al. methods obtained
 
 ### 1. `PAD_S` 0.25 → 0.1 s
@@ -5845,3 +6203,176 @@ suffix contains `instr`; the plotted traces were explicitly assigned and were
 not affected. Correct counts and audit summaries are: across plan 121 maps
 (mean whole-brain t=-0.079; 6.6% |t|>2), within plan 165 (mean=0.221; 0.6%),
 and within memory 165 (mean=-0.884; 14.5%).
+
+## 2026-09-14 — ABCD reward RSA methods and implementation audit
+
+Wrote a supervisor-facing intermediate methods report at
+`data/derivatives/group/instruction_cumulative_eventlocked_methods_audit_2026-09-14/ABCD_reward_RSA_methods_and_implementation_audit.md`.
+It documents the event-locked GLMs, neural and model RDM construction,
+`ABCD_rew` and `ABCD_rew_instr`, single versus concurrent fits, the exact
+within/across cell sets, second-level beta-map tests, sign-flip SVC/LOSO,
+whole-brain demeaning, and the subject-level 1:1 within/across plan average.
+
+Focused diagnostics over the nine resolved conditions showed median raw to
+demeaned group-t shifts of -0.805 to 0.014 for the single instruction-memory
+map and -0.902 to 0.008 for its combo partial coefficient. The single
+across-half plan map changed from -0.034 to 0.005. Raw/demeaned t-map
+correlations were 0.953, 0.937 and 0.974, respectively. These are descriptive
+pooled voxel-condition audits, not inferential tests; the report contains the
+condition-wise brain-mean statistics and explicit caveats.
+
+Added one shared 20-condition axis key for the subject-02 ABCD model-RDM
+figures, listing each task-half label and its executed versus instructed
+A--B--C--D grid locations. This was read from the existing pairing metadata
+and `rewDSR` model vectors; no RSA maps or statistics were regenerated.
+
+## 2026-09-14 — subject contribution and task-order audit of the instruction shift
+
+Added `scripts/diagnose_instruction_subject_order.py`. The lightweight audit
+uses the already merged raw 4-D maps and the actual behavioural task order for
+all 33 subjects. It records each subject's spatial mean beta across the nine
+resolved conditions and the exact change in the mean voxelwise group-t shift
+when that subject is omitted. It also correlates the instruction-model
+dissimilarity with temporal proximity (`exp(-lag/tau)`) for condition pairs;
+cross-acquisition-part pairs have zero proximity. Positive values of that
+order metric are the direction expected to bias an RSA coefficient negative
+if temporally nearby patterns are spuriously similar.
+
+For single-model `ABCD_rew_instr_within`, 20/33 subject means were negative.
+The mean voxelwise group-t statistic across the nine conditions was -0.833;
+it remained negative in every leave-one-subject-out sample (range -1.024 to
+-0.704). Largest negative contributors were sub-27, sub-33, sub-02 and
+sub-23, so no single subject generated the shift. The same subjects strongly
+tracked the concurrent-model instruction coefficient (subject-mean Pearson
+r=0.970).
+
+There was no evidence that actual task order explained the subject shift. The
+primary instruction-dissimilarity/temporal-proximity proxy correlated
+Spearman rho=0.114 with the raw subject mean (two-sided permutation p=.516)
+and rho=-0.086 with exact LOO negative-t contribution (p=.628). Initial
+forward/backward direction (p=.784) and initial task set (p=.987) were also
+unrelated. Sub-01 was the only subject whose matched task sets were mixed
+between acquisition parts; its mean beta was positive and therefore attenuated
+rather than caused the negative shift.
+
+Successive instruction epochs were separated by 164.7 s on average, and
+matched forward/backward task instructions by 614.5 s on average among the 32
+subjects with within-part matched pairs. Thus this audit addresses order and
+slow temporal structure, not short-lag HRF overlap. It cannot test whether
+participants differ in residual autocorrelation strength because the current
+event-locked FEAT design matrices and residuals are not present locally. The
+merged NIfTIs also lack a subject-ID manifest, so their fourth-dimension order
+is explicitly recorded as the standard 33-subject merge-order assumption.
+Outputs and settings are in
+`data/derivatives/group/instruction_memory_subject_order_audit_2026-09-14/`.
+
+## 2026-09-14 — sEEG behaviour: all attempts + task stages
+
+`scripts/behaviour_summary.py` extended on the cell-data (sEEG) side; fMRI
+side unchanged. New helper `scripts/extract_uncovers_ephys.py` pulls
+per-attempt uncover counts out of `abcd_data_08-Sep-2025.mat`
+(`pressed_to_uncover == 1 & correct_uncover == 0`) into
+`ephys_humans/derivatives/group/ephys_uncovers_per_attempt.csv`.
+
+**Two levels.** Every cell measure now exists for all attempts
+(`rep_overall` axis) and for error-free repeats only (`rep_correct` axis,
+the subset the ABCD-code analyses use). n = 63 sessions, 18228 attempts,
+1489 grids.
+- all attempts: A→D 6.51 ± 2.76 s, whole attempt 9.15 ± 3.98 s,
+  90.8 ± 3.6 % shortest walks, slope −0.59 s/attempt (t(62) = −14.4,
+  p = 5.4e-20)
+- correct only: A→D 4.43 ± 1.74 s, 97.4 ± 2.2 % shortest walks,
+  slope −0.006 s/repeat (t(62) = −0.65, p = 0.52) — i.e. essentially all
+  the speed-up happens before the first error-free loop.
+
+**Stages**, defined by available information, not by performance:
+explore = first attempt of a grid; learn = further attempts up to and
+including the first error-free loop; execute = attempts after it.
+7/1489 grids never reached an error-free loop.
+
+| measure | explore | learn | execute | RM-ANOVA | learn−execute |
+|---|---|---|---|---|---|
+| attempt time [s] | 27.8 | 12.2 | 6.6 | F(2,124)=209, p=1.7e-40, ηp²=.77 | t(62)=9.1, p_holm=4.5e-13, dz=1.15 |
+| A→D time [s] | 20.6 | 7.9 | 4.7 | F=270, p=7.0e-46, ηp²=.81 | t=6.9, p_holm=3.6e-09, dz=0.87 |
+| time to A [s] | 7.2 | 4.3 | 1.9 | F=48, p=3.7e-16, ηp²=.44 | t=12.1, p_holm=1.5e-17, dz=1.53 |
+| error fraction | 1.00 | 0.29 | 0.07 | F=1259, p=4.3e-83, ηp²=.95 | t=9.9, p_holm=2.1e-14, dz=1.25 |
+| wrong uncovers/attempt | 13.7 | 1.84 | 0.17 | F=1249, p=7.0e-83, ηp²=.95 | t=7.1, p_holm=1.2e-09, dz=0.90 |
+| % shortest walks | 31.1 | 86.8 | 96.3 | F=1151, p=8.6e-81, ηp²=.95 | t=−7.3, p_holm=6.0e-10, dz=−0.92 |
+| extra steps/walk | 3.44 | 0.66 | 0.11 | F=485, p=2.3e-59, ηp²=.89 | t=7.3, p_holm=7.4e-10, dz=0.92 |
+
+CAVEATS, logged so they are not over-claimed: `error_fraction` is ~1 in
+explore by construction (the first attempt on a covered grid cannot be
+error-free), and explore-stage uncovers are search, not memory failures.
+The clean contrast is learn vs. execute — both stages where all four
+rewards have already been seen — and it is significant for every measure.
+
+**Learning speed** (per session, mean ± sd): explore duration
+27.8 ± 12.8 s; 2.55 ± 0.58 attempts and 48.8 ± 27.5 s to the first
+error-free loop; 17.5 ± 6.9 wrong uncovers before it. Across the ten
+correct repeats loop time falls only 4.65 → 4.38 s (4.4 ± 9.3 %,
+t(62) = 3.77, p = 3.7e-4).
+
+**Data-quality finding.** 12 of 18228 attempts are flagged
+`trial_correct = 1` although the move record contains an incorrect uncover.
+Those 12 also incremented the correct-repeat counter, which fully explains
+the previously unexplained `rep_correct == 10` overflow (same 9 sessions,
+same 12 trials). The flag is left untouched; the discrepant attempts are
+listed in `derivatives/group/ephys_uncover_flag_discrepancies.csv`.
+
+New 2.5 × 2.5 cm panels (pdf + png) under `plots/`: `ephys_stage_*`
+(6 measures + colour legend, phase ramp pastel-pink → bordeaux),
+`ephys_loop_time_by_attempt_all`, `ephys_incorrect_uncovers_by_attempt`,
+`ephys_attempts_to_criterion`, `ephys_speedup_percent`,
+`ephys_explore_duration`. New tables: `ephys_per_stage.csv`,
+`ephys_learning.csv`; `ephys_attempts.csv` gains stage / run_index /
+uncover columns; `ephys_shortest_paths.csv` now covers all attempts.
+
+### Addendum — time spent per stage
+
+Added the missing "how much time does each stage take" read-out. Per-grid
+stage durations partition the time on task (attempt starts are contiguous),
+so shares sum to 100 %.
+
+| | explore | learn | execute | RM-ANOVA | learn−execute |
+|---|---|---|---|---|---|
+| time per grid [s] | 27.8 | 21.1 | 64.7 | F(2,124)=171, p=2.0e-36, ηp²=.73 | t(62)=−15.4, p_holm=2.5e-22, dz=−1.93 |
+| % of time on task | 25.3 | 16.7 | 58.0 | F(2,124)=408, p=2.8e-55, ηp²=.87 | t(62)=−22.4, p_holm=4.2e-31, dz=−2.82 |
+
+Note the reversal against the per-attempt measures: execute is by far the
+fastest stage per attempt (6.6 s vs 27.8 s) yet consumes most of the time on
+task, because it contains ~9 of ~12 attempts per grid. Explore is a single
+attempt and still takes a quarter of the time on task.
+
+New panels: `ephys_stage_time_spent`, `ephys_stage_time_share`,
+`ephys_stage_time_stacked` (single stacked bar, 25/17/58 %). `duration_per_grid`,
+`total_duration` and `duration_percent` added to `ephys_per_stage.csv` and to
+the stage tests.
+
+### Bugfix — NaN loop times poisoned the sEEG learning slopes
+
+Ten attempts across the dataset have no `t_D` (recording stopped
+mid-attempt). Passing them to `scipy.stats.linregress` returned NaN for the
+whole session, so two sessions (s02, s28 — which have 184 and 247 correct
+trials each) were silently dropped from the correct-repeat slope, and eight
+more from the all-attempt slope. New helper `_loop_time_slope` drops
+non-finite pairs first. All 63 sessions now contribute.
+
+- correct-repeat slope: was −0.006 s/repeat, t(60) = −0.65, p = 0.52 (n = 61)
+  → now −0.008 s/repeat, t(62) = −0.97, p = 0.34 (n = 63). Still null.
+- all-attempt slope: now −0.629 s/attempt, t(62) = −15.9, p = 1.4e-23 (n = 63)
+
+This also corrects a methods claim: the two sessions missing from the slope
+analysis were NOT sessions with "fewer than two correct trials".
+
+Other facts checked against the draft methods while reviewing it:
+- fMRI: 33 subjects (35 scanned, sub-21/sub-29 excluded), 10 layouts, 5
+  repeats each, mean 2.599 steps per subpath — all as written.
+- The fMRI gamma jitter (`3x3_fMRI_part1.py: jitter()`) draws the *subpath*
+  duration (truncated 3–12 s, shape 5.75), then divides it across the steps
+  of that subpath plus the reward wait. It is not a per-step draw.
+- Runs per reward-layout within a session range 1–5, not 1–4
+  (85/258/225/52/1 layouts at 1/2/3/4/5 runs).
+- `fixed_grids` is set in 28 of 63 sessions, not 26.
+- The single excluded s23 attempt is a hand-identified 314.6 s interruption,
+  not a 3-SD rule: 357 attempts (82 correct ones) exceed mean + 3 SD and are
+  retained.

@@ -54,6 +54,35 @@ EPHYS_BEH_COLS  = ['rep_correct', 't_A', 't_B', 't_C', 't_D',
 EPHYS_EXCLUDE_ATTEMPTS = [
     {'subject': 's23', 'session_no': 1, 'grid_no': 3, 'rep_correct': 7},
 ]
+# Per-attempt uncover counts, written by scripts/extract_uncovers_ephys.py
+# out of the raw session struct.  ``all_trial_times_*.csv`` only carries the
+# binary trial_correct flag; this table adds how many wrong fields were
+# uncovered, which is the direct read-out of "did they remember the sequence".
+EPHYS_UNCOVERS_CSV = os.path.join(
+    EPHYS_DERIV, 'group', 'ephys_uncovers_per_attempt.csv')
+
+# ── Task stages ──────────────────────────────────────────────────────
+# The three stages are defined by the information available to the subject,
+# never by how well they did, so that stage-wise error and speed measures are
+# not circular with the stage definition itself:
+#   explore : the first attempt on a grid.  All nine fields start covered, so
+#             this is the only attempt during which reward locations are
+#             genuinely unknown.  It ends when the fourth reward (D) is
+#             uncovered for the first time.
+#   learn   : every further attempt up to and including the first error-free
+#             loop.  All four rewards have been seen, but the subject has not
+#             yet shown that the sequence is retrievable.
+#   execute : every attempt after the first error-free loop.  Whether these
+#             are in fact near-errorless is then an empirical result rather
+#             than part of the definition.
+STAGE_ORDER = ('explore', 'learn', 'execute')
+# Project-wide phase ramp (pastel pink -> bordeaux), light = early.
+STAGE_COLORS = {
+    'explore': '#FCDDE3',
+    'learn':   '#D7657F',
+    'execute': '#5C1027',
+}
+STAGE_LABELS = {'explore': 'expl', 'learn': 'learn', 'execute': 'exec'}
 
 # Sample-trajectory figures.  The task layouts below are the two layouts
 # requested for the first-draft figure.  The acquisition differs between the
@@ -145,6 +174,7 @@ def _route_metrics(route):
     n_steps = len(route) - 1
     min_steps = _grid_distance(route[0], route[-1])
     return {'n_steps': int(n_steps), 'min_steps': int(min_steps),
+            'extra_steps': int(n_steps - min_steps),
             'is_shortest': bool(n_steps == min_steps)}
 
 
@@ -388,6 +418,99 @@ def ephys_loop_table(df, sub):
     return df
 
 
+def add_stage_labels(attempts):
+    """Label every attempt with the task stage it belongs to.
+
+    See the STAGE_ORDER comment above for the definition.  The boundary
+    between ``learn`` and ``execute`` is the first error-free loop of that
+    grid, which is a milestone in what the subject has demonstrated, not a
+    threshold placed on the measures we later compare between stages.
+
+    Grids without any error-free loop (7 of 1489) simply have no ``execute``
+    stage; they are flagged so they can be reported.
+    """
+    attempts = attempts.sort_values(
+        ['subject', 'session_no', 'grid_no', 'rep_overall']).copy()
+    stage = np.full(len(attempts), 'learn', dtype=object)
+    solved = np.zeros(len(attempts), dtype=bool)
+    position = 0
+    for _, grid in attempts.groupby(['subject', 'session_no', 'grid_no'],
+                                    sort=False):
+        n = len(grid)
+        block = slice(position, position + n)
+        correct = grid['correct'].to_numpy()
+        first_correct = np.flatnonzero(correct == 1)
+        labels = np.full(n, 'learn', dtype=object)
+        labels[grid['rep_overall'].to_numpy() == 1] = 'explore'
+        if first_correct.size:
+            labels[first_correct[0] + 1:] = 'execute'
+            solved[block] = True
+        stage[block] = labels
+        position += n
+    attempts['stage'] = stage
+    attempts['grid_solved'] = solved
+    return attempts
+
+
+def add_attempt_timing(attempts):
+    """Add the per-attempt durations used by the stage descriptives.
+
+    ``new_grid_onset`` is the start of the attempt: for the first attempt of
+    a grid it is when the covered grid appeared, and for every later attempt
+    it equals the previous attempt's ``t_D``.  Hence
+        attempt_duration = t_D - new_grid_onset   (whole attempt)
+        loop_time        = t_D - t_A              (A->D, as used elsewhere)
+        time_to_A        = t_A - new_grid_onset   (getting to / finding A)
+    """
+    attempts = attempts.copy()
+    attempts['attempt_duration'] = attempts['t_D'] - attempts['new_grid_onset']
+    attempts['time_to_A'] = attempts['t_A'] - attempts['new_grid_onset']
+    return attempts
+
+
+def add_run_index(attempts):
+    """Count how often this subject has already seen this reward layout.
+
+    Layouts are repeated within a session (between 1 and 4 runs each), so the
+    first attempt of a *repeated* layout is not a first exposure.  Run 1 is
+    the only genuinely novel exploration.
+    """
+    attempts = attempts.copy()
+    grids = (attempts.groupby(['subject', 'session_no', 'grid_no'],
+                              sort=False)['loc_tuple'].first()
+             .reset_index())
+    grids['run_index'] = (
+        grids.sort_values(['subject', 'session_no', 'grid_no'])
+             .groupby(['subject', 'session_no', 'loc_tuple']).cumcount() + 1)
+    return attempts.merge(
+        grids[['subject', 'session_no', 'grid_no', 'run_index']],
+        on=['subject', 'session_no', 'grid_no'], how='left')
+
+
+def attach_uncovers(attempts):
+    """Merge in per-attempt uncover counts, if they have been extracted.
+
+    Returns the table unchanged (with NaN count columns) when the derivative
+    is missing, so the rest of the summary still runs.
+    """
+    count_columns = ['n_uncovers', 'n_correct_uncovers',
+                     'n_incorrect_uncovers', 'n_steps_total', 'grid_id']
+    if not os.path.isfile(EPHYS_UNCOVERS_CSV):
+        print(f"  no uncover table at {EPHYS_UNCOVERS_CSV} — run "
+              f"scripts/extract_uncovers_ephys.py for mistake counts.")
+        for column in count_columns:
+            attempts[column] = np.nan
+        return attempts
+    uncovers = pd.read_csv(EPHYS_UNCOVERS_CSV, dtype={'subject': str})
+    keys = ['subject', 'session_no', 'grid_no', 'rep_overall']
+    merged = attempts.merge(uncovers[keys + count_columns], on=keys,
+                            how='left')
+    n_missing = int(merged['n_uncovers'].isna().sum())
+    if n_missing:
+        print(f"  {n_missing} attempts without uncover counts.")
+    return merged
+
+
 def exclude_ephys_attempts(tbl):
     """Drop only explicitly registered interrupted ephys attempts."""
     keep = np.ones(len(tbl), dtype=bool)
@@ -408,12 +531,19 @@ def exclude_ephys_attempts(tbl):
 
 
 def ephys_shortest_path_table(raw_attempts, kept_index, folder, sub_number):
-    """One row per walk between two consecutive rewards, correct repeats only.
+    """One row per walk between two consecutive rewards, for every attempt.
 
     Routes come from the 25-ms location traces.  ``timings_rewards`` holds,
     per attempt and in the original unfiltered attempt order, the trace
     sample at which the attempt started (the preceding D) and at which A, B,
     C and D were reached.
+
+    Incorrect attempts are included here, with ``correct`` and
+    ``prev_correct`` kept per row so the correct-repeat-only subset used for
+    the ABCD analyses can be selected afterwards with
+    ``correct_walk_mask``.  Walking to a wrong field and back shows up as
+    extra steps, so these rows are what makes path efficiency comparable
+    across the three task stages.
     """
     rows = []
     for grid_value, raw_grid in raw_attempts.groupby('grid_no', sort=False):
@@ -432,25 +562,24 @@ def ephys_shortest_path_table(raw_attempts, kept_index, folder, sub_number):
             continue
         for position, (source_index, attempt) in enumerate(
                 raw_grid.iterrows()):
-            if source_index not in kept_index or attempt['correct'] != 1:
-                continue
-            if not 0 <= attempt['rep_correct'] <= 9:
+            if source_index not in kept_index:
                 continue
             endpoints = timings[position]
             if not np.all(np.isfinite(endpoints)):
                 continue
+            # Whether the preceding attempt was a retained, completed repeat
+            # that this attempt continues from without a gap.  Only then is
+            # the walk into A a genuine D->A walk.
+            previous_index = raw_grid.index[position - 1] if position else None
+            prev_correct = bool(
+                position > 0
+                and previous_index in kept_index
+                and raw_grid.iloc[position - 1]['correct'] == 1
+                and timings[position - 1][-1] == endpoints[0])
             for column, (start_state, stop_state) in enumerate(
                     zip('DABC', 'ABCD')):
-                # The walk into A starts at the previous D, so it only counts
-                # when the preceding attempt was itself a retained, completed
-                # repeat that this attempt continues from.
-                if start_state == 'D':
-                    previous_index = raw_grid.index[position - 1]
-                    if (position == 0
-                            or previous_index not in kept_index
-                            or raw_grid.iloc[position - 1]['correct'] != 1
-                            or timings[position - 1][-1] != endpoints[0]):
-                        continue
+                if start_state == 'D' and not prev_correct:
+                    continue
                 start = int(endpoints[column])
                 stop = int(endpoints[column + 1])
                 if start < 0 or stop < start or stop >= len(locations):
@@ -459,13 +588,276 @@ def ephys_shortest_path_table(raw_attempts, kept_index, folder, sub_number):
                 if len(route) < 2:
                     continue
                 rows.append({
-                    'subject':     attempt['subject'],
-                    'session_no':  int(attempt['session_no']),
-                    'grid_no':     grid_no,
-                    'rep_correct': int(attempt['rep_correct']),
-                    'segment':     f'{start_state}-{stop_state}',
+                    'subject':      attempt['subject'],
+                    'session_no':   int(attempt['session_no']),
+                    'grid_no':      grid_no,
+                    'rep_overall':  int(attempt['rep_overall']),
+                    'rep_correct':  int(attempt['rep_correct']),
+                    'correct':      int(attempt['correct']),
+                    'prev_correct': prev_correct,
+                    'segment':      f'{start_state}-{stop_state}',
                     **_route_metrics(route),
                 })
+    return pd.DataFrame(rows)
+
+
+def correct_walk_mask(paths):
+    """The correct-repeat-only subset of the reward-to-reward walks.
+
+    This is the set used for the ABCD-code analyses: walks inside an
+    error-free loop, within the ten design-defined repeats.  D->A walks are
+    already restricted to those following a completed repeat when the table
+    is built, so no extra condition is needed for them here.
+    """
+    return (paths['correct'].eq(1)
+            & paths['rep_correct'].between(0, 9)).to_numpy()
+
+
+def _loop_time_slope(attempts, repeat_column):
+    """Slope of loop time on a repeat index, in seconds per repeat.
+
+    Ten attempts across the dataset have no ``t_D`` because the recording
+    stopped mid-attempt, and hence no loop time.  They are dropped here:
+    passing them to ``linregress`` returns NaN for the whole session, which
+    silently cost two sessions their correct-repeat slope.
+    """
+    x = attempts[repeat_column].to_numpy(dtype=float)
+    y = attempts['loop_time'].to_numpy(dtype=float)
+    usable = np.isfinite(x) & np.isfinite(y)
+    if usable.sum() < 2 or np.unique(x[usable]).size < 2:
+        return np.nan, np.nan
+    result = stats.linregress(x[usable], y[usable])
+    return float(result.slope), float(result.pvalue)
+
+
+def repeated_measures_anova(values):
+    """One-way repeated-measures ANOVA over the columns of ``values``.
+
+    Rows are sessions, columns are conditions (here: the three stages).  Only
+    sessions contributing every condition enter, which is what makes the test
+    repeated-measures rather than between-groups.
+    """
+    values = np.asarray(values, dtype=float)
+    values = values[np.all(np.isfinite(values), axis=1)]
+    n, k = values.shape
+    if n < 2 or k < 2:
+        return None
+    grand = values.mean()
+    ss_condition = n * np.sum((values.mean(axis=0) - grand) ** 2)
+    ss_subject = k * np.sum((values.mean(axis=1) - grand) ** 2)
+    ss_error = np.sum((values - grand) ** 2) - ss_condition - ss_subject
+    df_condition, df_error = k - 1, (k - 1) * (n - 1)
+    f = (ss_condition / df_condition) / (ss_error / df_error)
+    return {
+        'F': float(f),
+        'df1': int(df_condition),
+        'df2': int(df_error),
+        'p': float(stats.f.sf(f, df_condition, df_error)),
+        'partial_eta_sq': float(ss_condition / (ss_condition + ss_error)),
+        'n_sessions': int(n),
+    }
+
+
+def _holm(p_values):
+    """Holm-Bonferroni adjusted p-values, in the input order."""
+    p_values = np.asarray(p_values, dtype=float)
+    order = np.argsort(p_values)
+    m = p_values.size
+    adjusted = np.empty(m, dtype=float)
+    running = 0.0
+    for rank, index in enumerate(order):
+        running = max(running, (m - rank) * p_values[index])
+        adjusted[index] = min(1.0, running)
+    return adjusted
+
+
+def paired_contrasts(table, pairs):
+    """Paired t-tests between stage columns, Holm-corrected across ``pairs``.
+
+    Reports Cohen's dz (the paired effect size) alongside t and p, on the
+    sessions that contribute both stages of a given pair.
+    """
+    results, raw_p = [], []
+    for first, second in pairs:
+        both = table[[first, second]].dropna()
+        if len(both) < 2:
+            continue
+        difference = (both[first] - both[second]).to_numpy(dtype=float)
+        t, p = stats.ttest_rel(both[first], both[second])
+        results.append({
+            'contrast': f'{first} - {second}',
+            'n_sessions': int(len(both)),
+            'mean_difference': float(difference.mean()),
+            'cohens_dz': float(difference.mean() / difference.std(ddof=1))
+                         if difference.std(ddof=1) > 0 else None,
+            't': float(t),
+            'p': float(p),
+        })
+        raw_p.append(p)
+    for result, adjusted in zip(results, _holm(raw_p)):
+        result['p_holm'] = float(adjusted)
+    return results
+
+
+def ephys_stage_table(attempts, paths):
+    """One row per (session, stage) with the stage's behavioural profile."""
+    rows = []
+    walks = paths.copy()
+    for (subject, stage), block in attempts.groupby(['subject', 'stage'],
+                                                    sort=False):
+        stage_walks = walks[walks['subject'].eq(subject)
+                            & walks['stage'].eq(stage)]
+        n_attempts = int(len(block))
+        rows.append({
+            'subject': subject,
+            'stage': stage,
+            'n_grids': int(block.groupby(['session_no', 'grid_no']).ngroups),
+            'n_attempts': n_attempts,
+            # Time the stage occupies.  Per-grid durations sum to the whole
+            # grid (attempt starts are contiguous: each attempt begins where
+            # the previous one ended), so the three stages partition the time
+            # on task and ``total_duration`` adds up to it across stages.
+            'duration_per_grid': float(
+                block.groupby(['session_no', 'grid_no'])['attempt_duration']
+                     .sum().mean()),
+            'total_duration': float(block['attempt_duration'].sum()),
+            'attempts_per_grid': float(
+                block.groupby(['session_no', 'grid_no']).size().mean()),
+            'attempt_duration_mean': float(block['attempt_duration'].mean()),
+            'loop_time_mean': float(block['loop_time'].mean()),
+            'time_to_A_mean': float(block['time_to_A'].mean()),
+            'error_fraction': float((block['correct'] == 0).mean()),
+            'incorrect_uncovers_per_attempt': float(
+                block['n_incorrect_uncovers'].mean()),
+            'uncovers_per_attempt': float(block['n_uncovers'].mean()),
+            'shortest_path_percent': float(
+                100.0 * stage_walks['is_shortest'].mean())
+                if len(stage_walks) else np.nan,
+            'extra_steps_per_walk': float(stage_walks['extra_steps'].mean())
+                if len(stage_walks) else np.nan,
+            'n_walks': int(len(stage_walks)),
+        })
+    table = pd.DataFrame(rows)
+    # Share of the session's total time on task that this stage takes up.
+    table['duration_percent'] = (
+        100.0 * table['total_duration']
+        / table.groupby('subject')['total_duration'].transform('sum'))
+    table['stage'] = pd.Categorical(table['stage'], STAGE_ORDER, ordered=True)
+    return table.sort_values(['subject', 'stage']).reset_index(drop=True)
+
+
+# Measures on which the three stages are compared.  Each is a different kind
+# of evidence that the stages are distinct: how long they take, how wrong the
+# subject is, and how directed the movement is.
+#
+# Two of them carry a caveat for the explore stage, and it matters for how
+# they can be written up.  A subject cannot complete an error-free loop on
+# their first visit to a fully covered grid, so ``error_fraction`` is ~1 in
+# explore by construction; and an uncover of a not-yet-known field is
+# information-gathering rather than a memory failure, so the explore stage's
+# uncover count measures search, not mistakes.  The stage contrast that is
+# free of both problems is learn vs. execute: in both, all four rewards have
+# already been seen, so a wrong uncover there really is a memory failure.
+STAGE_TEST_MEASURES = {
+    'duration_per_grid': {
+        'label': 'time spent in stage, per grid [s]'},
+    'duration_percent': {
+        'label': '% of time on task spent in stage'},
+    'attempt_duration_mean': {
+        'label': 'attempt duration [s]'},
+    'loop_time_mean': {
+        'label': 'A->D loop time [s]'},
+    'time_to_A_mean': {
+        'label': 'time to reach A [s]'},
+    'error_fraction': {
+        'label': 'fraction of attempts with an error',
+        'caveat': "~1 in explore by construction: the first attempt on a "
+                  "covered grid cannot be error-free. Only the learn vs. "
+                  "execute contrast is informative."},
+    'incorrect_uncovers_per_attempt': {
+        'label': '# incorrect uncovers per attempt',
+        'caveat': "In explore these are search uncovers of fields whose "
+                  "content is not yet known, not memory failures. They are "
+                  "memory failures in learn and execute, where all four "
+                  "rewards have already been seen."},
+    'shortest_path_percent': {
+        'label': '% shortest reward-to-reward walks'},
+    'extra_steps_per_walk': {
+        'label': 'extra steps per walk'},
+}
+
+
+def ephys_stage_statistics(stage_table):
+    """Test whether the three stages differ, measure by measure.
+
+    A one-way repeated-measures ANOVA over sessions asks whether the stages
+    differ at all; the two adjacent contrasts (explore vs. learn, learn vs.
+    execute) then localise where.  Holm correction is applied across the two
+    contrasts of each measure.
+    """
+    results = {}
+    for measure, spec in STAGE_TEST_MEASURES.items():
+        wide = (stage_table.pivot(index='subject', columns='stage',
+                                  values=measure)
+                .reindex(columns=list(STAGE_ORDER)))
+        results[measure] = {
+            **spec,
+            'stage_means': {
+                stage: _describe(wide[stage].to_numpy(dtype=float))
+                for stage in STAGE_ORDER
+            },
+            'rm_anova': repeated_measures_anova(wide.to_numpy(dtype=float)),
+            'contrasts': paired_contrasts(
+                wide, [('explore', 'learn'), ('learn', 'execute'),
+                       ('explore', 'execute')]),
+        }
+    return results
+
+
+def ephys_learning_table(attempts):
+    """Per-session learning speed and speed-up, one row per session.
+
+    ``attempts_to_criterion`` is how many attempts a grid needed before its
+    first error-free loop, and ``time_to_criterion`` how long that took from
+    grid onset.  The speed-up compares the first and the last of the ten
+    design-defined correct repeats.
+    """
+    rows = []
+    for subject, block in attempts.groupby('subject', sort=False):
+        per_grid = []
+        for _, grid in block.groupby(['session_no', 'grid_no'], sort=False):
+            grid = grid.sort_values('rep_overall')
+            correct = np.flatnonzero(grid['correct'].to_numpy() == 1)
+            if not correct.size:
+                continue
+            first = grid.iloc[correct[0]]
+            per_grid.append({
+                'attempts_to_criterion': float(first['rep_overall']),
+                'time_to_criterion': float(
+                    first['t_D'] - grid.iloc[0]['new_grid_onset']),
+                'explore_duration': float(grid.iloc[0]['attempt_duration']),
+                'incorrect_uncovers_to_criterion': float(
+                    grid.iloc[:correct[0] + 1]['n_incorrect_uncovers'].sum()),
+            })
+        if not per_grid:
+            continue
+        per_grid = pd.DataFrame(per_grid)
+        correct_block = block[block['correct'].eq(1)
+                              & block['rep_correct'].between(0, 9)]
+        by_repeat = correct_block.groupby('rep_correct')['loop_time'].mean()
+        first_loop = by_repeat.get(0, np.nan)
+        last_loop = by_repeat.get(9, np.nan)
+        rows.append({
+            'subject': subject,
+            'n_grids_solved': int(len(per_grid)),
+            **{column: float(per_grid[column].mean())
+               for column in per_grid.columns},
+            'loop_time_first_repeat': float(first_loop),
+            'loop_time_last_repeat': float(last_loop),
+            'speedup_seconds': float(first_loop - last_loop),
+            'speedup_percent': float(
+                100.0 * (1.0 - last_loop / first_loop)),
+        })
     return pd.DataFrame(rows)
 
 
@@ -523,10 +915,15 @@ def ephys_summarise():
             print(f"  s{sub}: no correct trials — skipped.")
             continue
 
-        # Learning slope on rep_correct (0-9).
-        slope, intercept, r, p, se = stats.linregress(
-            correct['rep_correct'].to_numpy(dtype=float),
-            correct['loop_time'].to_numpy(dtype=float))
+        # Level 1 — every attempt, on the rep_overall axis.  Level 2 — only
+        # error-free repeats, on the rep_correct axis; that is the subset the
+        # ABCD-code analyses use.  Both slopes describe the same sessions, so
+        # they are computed with the same call on different rows.
+        slope_all, p_all = _loop_time_slope(tbl, 'rep_overall')
+        slope, p = _loop_time_slope(correct, 'rep_correct')
+
+        correct_walks = path_df[correct_walk_mask(path_df)] \
+            if len(path_df) else path_df
 
         n_attempts = int(len(tbl))
         n_correct  = int(len(correct))
@@ -537,9 +934,22 @@ def ephys_summarise():
         per_session.append({
             'subject':                  sub,
             'n_attempts':               n_attempts,
-            'n_reward_to_reward_paths': int(len(path_df)),
+            'n_reward_to_reward_paths': int(len(correct_walks)),
+            'n_reward_to_reward_paths_all': int(len(path_df)),
             'shortest_path_percent':    float(
+                100.0 * correct_walks['is_shortest'].mean())
+                if len(correct_walks) else None,
+            'shortest_path_percent_all': float(
                 100.0 * path_df['is_shortest'].mean()) if len(path_df) else None,
+            'extra_steps_per_walk_all': float(path_df['extra_steps'].mean())
+                if len(path_df) else None,
+            'loop_time_mean_all':       float(tbl['loop_time'].mean()),
+            'loop_time_sd_all':         float(tbl['loop_time'].std(ddof=1))
+                                        if len(tbl) > 1 else None,
+            'attempt_duration_mean_all': float(
+                (tbl['t_D'] - tbl['new_grid_onset']).mean()),
+            'learning_slope_all':       float(slope_all),
+            'learning_slope_all_p':     float(p_all),
             'n_correct':                n_correct,
             'completion_rate':          float(n_correct / n_attempts),
             'n_incorrect_attempts':     n_incorr,
@@ -563,19 +973,45 @@ def ephys_summarise():
 
     if not per_session:
         print("No ephys sessions parsed.")
-        return None, None, None
+        return None, None, None, None, None, None
 
+    # Enrich the attempt table: stage, layout-run index, and the per-attempt
+    # uncover counts.  Everything below can then work off this one table.
     all_df = pd.concat(all_attempts, ignore_index=True)
+    all_df = add_stage_labels(add_attempt_timing(all_df))
+    all_df = attach_uncovers(add_run_index(all_df))
     sess_df = pd.DataFrame(per_session)
+
+    all_path_df = pd.concat(all_paths, ignore_index=True)
+    # Carry the stage onto the walks, so path efficiency can be compared
+    # between stages exactly as the attempt-level measures are.
+    all_path_df = all_path_df.merge(
+        all_df[['subject', 'session_no', 'grid_no', 'rep_overall', 'stage',
+                'run_index']],
+        on=['subject', 'session_no', 'grid_no', 'rep_overall'], how='left')
+    correct_path_df = all_path_df[correct_walk_mask(all_path_df)]
+
     sess_df.to_csv(os.path.join(OUT_DIR, 'ephys_per_session.csv'), index=False)
     all_df.to_csv(os.path.join(OUT_DIR, 'ephys_attempts.csv'), index=False)
-    all_path_df = pd.concat(all_paths, ignore_index=True)
     all_path_df.to_csv(os.path.join(OUT_DIR, 'ephys_shortest_paths.csv'),
                        index=False)
+
+    # Stage-wise profile and the tests that the stages differ at all.
+    stage_df = ephys_stage_table(all_df, all_path_df)
+    stage_df.to_csv(os.path.join(OUT_DIR, 'ephys_per_stage.csv'), index=False)
+    stage_stats = ephys_stage_statistics(stage_df)
+    learning_df = ephys_learning_table(all_df)
+    learning_df.to_csv(os.path.join(OUT_DIR, 'ephys_learning.csv'),
+                       index=False)
+
     # Equal weight per session, as everywhere else in this script.
     shortest_by_repeat = (
-        all_path_df.groupby(['subject', 'rep_correct'])['is_shortest'].mean()
-                   .unstack('rep_correct'))
+        correct_path_df.groupby(['subject', 'rep_correct'])['is_shortest']
+                       .mean().unstack('rep_correct'))
+    shortest_by_attempt = (
+        all_path_df[all_path_df['rep_overall'].between(1, 12)]
+        .groupby(['subject', 'rep_overall'])['is_shortest'].mean()
+        .unstack('rep_overall'))
 
     # Group summary.  Drop any NaN slopes (sessions with <2 correct reps).
     slopes = sess_df['learning_slope'].to_numpy(dtype=float)
@@ -594,11 +1030,89 @@ def ephys_summarise():
     }
     error_by_repeat = ephys_error_fraction_by_repeat(all_df)
 
+    # Level 1 — all attempts on the rep_overall axis.  Attempts 1-12 cover
+    # the design (10 correct repeats plus the usual couple of errors); later
+    # attempts exist but only in the minority of grids that needed them.
+    all_by_attempt = all_df[all_df['rep_overall'].between(1, 12)]
+    by_attempt_session_mean = (
+        all_by_attempt.groupby(['subject', 'rep_overall'])['loop_time'].mean()
+                      .unstack('rep_overall'))
+    uncovers_by_attempt_session_mean = (
+        all_by_attempt.groupby(['subject',
+                                'rep_overall'])['n_incorrect_uncovers'].mean()
+                      .unstack('rep_overall'))
+
     group = {
         'n_sessions':           int(len(sess_df)),
         'excluded_attempts':    EPHYS_EXCLUDE_ATTEMPTS,
+        'n_attempts_total':     int(len(all_df)),
+        'n_grids_total':        int(all_df.groupby(
+            ['subject', 'session_no', 'grid_no']).ngroups),
         'loop_time_across_subj': _describe(
             sess_df['loop_time_mean'].to_numpy()),
+        'all_attempts': {
+            'loop_time_across_subj': _describe(
+                sess_df['loop_time_mean_all'].to_numpy()),
+            'attempt_duration_across_subj': _describe(
+                sess_df['attempt_duration_mean_all'].to_numpy()),
+            'loop_time_by_rep_overall': {
+                int(r_): _describe(by_attempt_session_mean[r_].to_numpy())
+                for r_ in sorted(by_attempt_session_mean.columns)
+            },
+            'incorrect_uncovers_by_rep_overall': {
+                int(r_): _describe(
+                    uncovers_by_attempt_session_mean[r_].to_numpy())
+                for r_ in sorted(uncovers_by_attempt_session_mean.columns)
+            },
+            'learning_slope_group': {
+                **_describe(sess_df['learning_slope_all'].to_numpy()),
+                **dict(zip(('t', 'p'), (float(v) for v in stats.ttest_1samp(
+                    sess_df['learning_slope_all'].dropna().to_numpy(), 0.0)))),
+            },
+            'shortest_path_percent': _describe(
+                sess_df['shortest_path_percent_all'].to_numpy(dtype=float)),
+            'shortest_path_percent_pooled': float(
+                100.0 * all_path_df['is_shortest'].mean()),
+            'shortest_path_percent_by_rep_overall': {
+                int(r_): _describe(100.0 * shortest_by_attempt[r_].to_numpy())
+                for r_ in sorted(shortest_by_attempt.columns)
+            },
+            'extra_steps_per_walk': _describe(
+                sess_df['extra_steps_per_walk_all'].to_numpy(dtype=float)),
+        },
+        'stages': {
+            'definition': (
+                "explore = first attempt of a grid (all fields covered, "
+                "reward locations unknown); learn = further attempts up to "
+                "and including the first error-free loop; execute = attempts "
+                "after the first error-free loop.  Defined by the information "
+                "the subject has, not by performance."),
+            'per_stage': {
+                stage: {
+                    measure: _describe(
+                        stage_df.loc[stage_df['stage'].eq(stage),
+                                     measure].to_numpy(dtype=float))
+                    for measure in STAGE_TEST_MEASURES
+                }
+                for stage in STAGE_ORDER
+            },
+            'n_sessions_per_stage': {
+                stage: int(stage_df['stage'].eq(stage).sum())
+                for stage in STAGE_ORDER
+            },
+            'tests': stage_stats,
+            'n_grids_without_error_free_loop': int(
+                (~all_df.groupby(['subject', 'session_no',
+                                  'grid_no'])['grid_solved'].first()).sum()),
+        },
+        'learning': {
+            measure: _describe(learning_df[measure].to_numpy(dtype=float))
+            for measure in ('attempts_to_criterion', 'time_to_criterion',
+                            'explore_duration',
+                            'incorrect_uncovers_to_criterion',
+                            'loop_time_first_repeat', 'loop_time_last_repeat',
+                            'speedup_seconds', 'speedup_percent')
+        },
         'loop_time_by_rep_correct': by_rep,
         'pooled_error_fraction_by_rep_correct': {
             int(row.rep_correct): {
@@ -629,10 +1143,27 @@ def ephys_summarise():
         'shortest_path_percent': _describe(
             sess_df['shortest_path_percent'].to_numpy(dtype=float)),
         'shortest_path_percent_pooled': float(
-            100.0 * all_path_df['is_shortest'].mean()),
+            100.0 * correct_path_df['is_shortest'].mean()),
         'shortest_path_percent_by_rep_correct': {
             int(r_): _describe(100.0 * shortest_by_repeat[r_].to_numpy())
             for r_ in sorted(shortest_by_repeat.columns)
+        },
+        'uncover_counts': {
+            'available': bool(all_df['n_uncovers'].notna().any()),
+            'incorrect_uncovers_per_attempt_across_subj': _describe(
+                all_df.groupby('subject')['n_incorrect_uncovers']
+                      .mean().to_numpy()),
+            'total_incorrect_uncovers': (
+                None if all_df['n_incorrect_uncovers'].isna().all()
+                else int(all_df['n_incorrect_uncovers'].sum())),
+            'note': (
+                "From scripts/extract_uncovers_ephys.py.  12 of 18228 "
+                "attempts are flagged trial_correct=1 by the task although "
+                "the move record contains an incorrect uncover; those 12 "
+                "also incremented the correct-repeat counter, which is what "
+                "produces the rep_correct==10 overflow below.  The flag is "
+                "left untouched here — the discrepant attempts are listed in "
+                "derivatives/group/ephys_uncover_flag_discrepancies.csv."),
         },
         'rep_correct_overflow_note': (
             "rep_correct nominally runs 0-9 (10 correct repeats/grid). "
@@ -640,7 +1171,13 @@ def ephys_summarise():
             "(s05, s07, s11, s13, s18, s20, s24, s26, s27). "
             "Capped at 9 in all summary tables."),
     }
-    return sess_df, all_df, group
+    speedup = learning_df['speedup_percent'].dropna().to_numpy()
+    if speedup.size >= 2:
+        t_speed, p_speed = stats.ttest_1samp(speedup, 0.0)
+        group['learning']['speedup_percent_vs_0'] = {
+            't': float(t_speed), 'p': float(p_speed),
+            'n_sessions': int(speedup.size)}
+    return sess_df, all_df, group, stage_df, learning_df, all_path_df
 
 
 # ── Sample trajectory figures ────────────────────────────────────────
@@ -1239,6 +1776,215 @@ def _plot_compact_ephys_time_with_errors(actual_values, x_values,
     plt.close(fig)
 
 
+# ── Square stage panels (2.5 x 2.5 cm) ───────────────────────────────
+# These are the new stage figures.  At 2.5 cm a panel holds three bars or one
+# short curve and nothing else, so every one of them carries a single claim.
+# Fonts stay at the project minimum of Arial 9 pt.
+SQUARE_CM = 2.5
+FONT_SQUARE = 9
+
+
+def _new_square_axes(left=0.46, bottom=0.34):
+    """A 2.5 x 2.5 cm panel.
+
+    The default margins are what a two-line rotated y-label plus tick labels
+    need at Arial 9 pt; at this size they take a large share of the panel,
+    which is the price of keeping the font at the project minimum.
+    """
+    fig, ax = plt.subplots(figsize=(SQUARE_CM / 2.54, SQUARE_CM / 2.54))
+    fig.subplots_adjust(left=left, right=0.97, bottom=bottom, top=0.95)
+    return fig, ax
+
+
+def _finish_square_axes(ax, xlabel, ylabel):
+    if xlabel:
+        ax.set_xlabel(xlabel, fontname='Arial', fontsize=FONT_SQUARE,
+                      labelpad=1)
+    ax.set_ylabel(ylabel, fontname='Arial', fontsize=FONT_SQUARE, labelpad=1)
+    ax.tick_params(axis='both', labelsize=FONT_SQUARE, length=2, pad=1)
+    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+        label.set_fontname('Arial')
+    ax.spines[['top', 'right']].set_visible(False)
+    ax.spines[['left', 'bottom']].set_linewidth(0.5)
+
+
+def _save_square(fig, save_stem):
+    for extension in ('.pdf', '.png'):
+        fig.savefig(f'{save_stem}{extension}', dpi=300)
+    plt.close(fig)
+
+
+def _plot_square_stage_bars(stage_table, measure, ylabel, save_stem,
+                            left=0.46):
+    """One bar per stage, mean +- SEM over sessions, with session dots.
+
+    Plots exactly the per-session values in ``stage_table`` — the same
+    numbers that enter the repeated-measures tests.  ``left`` needs raising
+    when the y tick labels run to three digits, which at this panel size
+    costs as much width as the axis label itself.
+    """
+    fig, ax = _new_square_axes(left=left)
+    rng = np.random.default_rng(TRAJECTORY_RANDOM_SEED)
+    for position, stage in enumerate(STAGE_ORDER):
+        values = stage_table.loc[stage_table['stage'].eq(stage),
+                                 measure].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            continue
+        mean = values.mean()
+        sem = values.std(ddof=1) / np.sqrt(values.size) if values.size > 1 \
+            else 0.0
+        ax.bar(position, mean, width=0.72, color=STAGE_COLORS[stage],
+               edgecolor='black', linewidth=0.4, zorder=1)
+        # Individual sessions, so the reader sees the spread behind the bar.
+        ax.scatter(position + rng.uniform(-0.16, 0.16, values.size), values,
+                   s=0.9, color='0.35', alpha=0.55, linewidths=0, zorder=2)
+        ax.errorbar(position, mean, yerr=sem, color='black', lw=0.7,
+                    capsize=1.4, capthick=0.7, zorder=3)
+    ax.set_xticks(range(len(STAGE_ORDER)))
+    ax.set_xticklabels([STAGE_LABELS[stage] for stage in STAGE_ORDER],
+                       fontname='Arial', fontsize=FONT_SQUARE, rotation=45,
+                       ha='right', rotation_mode='anchor')
+    ax.set_xlim(-0.65, len(STAGE_ORDER) - 0.35)
+    _finish_square_axes(ax, None, ylabel)
+    _save_square(fig, save_stem)
+
+
+def _plot_square_stage_stack(stage_table, save_stem):
+    """One stacked bar: how the time on task divides between the stages.
+
+    Segments are the mean over sessions of each stage's share, so the bar
+    reaches 100 % by construction and shows the composition at a glance.
+    """
+    fig, ax = _new_square_axes(left=0.52, bottom=0.12)
+    bottom = 0.0
+    for stage in STAGE_ORDER:
+        share = float(stage_table.loc[stage_table['stage'].eq(stage),
+                                      'duration_percent'].mean())
+        ax.bar(0, share, bottom=bottom, width=0.85,
+               color=STAGE_COLORS[stage], edgecolor='black', linewidth=0.4)
+        # Label inside the segment, in whichever ink stays readable on it.
+        if share >= 12:
+            ax.text(0, bottom + share / 2, f'{share:.0f}%', ha='center',
+                    va='center', fontname='Arial', fontsize=FONT_SQUARE,
+                    color='white' if stage == 'execute' else 'black')
+        bottom += share
+    ax.set_xticks([])
+    ax.set_xlim(-0.6, 0.6)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([0, 50, 100])
+    ax.spines['bottom'].set_visible(False)
+    _finish_square_axes(ax, None, '% of time\non task')
+    _save_square(fig, save_stem)
+
+
+def _plot_square_by_attempt(by_attempt, ylabel, save_stem, colour='black'):
+    """Mean +- SEM across sessions at each attempt index within a grid.
+
+    ``by_attempt`` is sessions x attempts, already averaged within session,
+    so every session carries the same weight.
+    """
+    values = np.asarray(by_attempt, dtype=float)
+    x = np.arange(1, values.shape[1] + 1)
+    mean, sem = _mean_and_sem(values)
+    fig, ax = _new_square_axes(bottom=0.36)
+    ax.fill_between(x, mean - sem, mean + sem, color=colour, alpha=0.25,
+                    linewidth=0)
+    ax.plot(x, mean, color=colour, lw=1.3, marker='o', ms=1.4)
+    ax.set_xticks([1, 4, 8, 12])
+    ax.set_xticklabels(['1', '4', '8', '12'], fontname='Arial',
+                       fontsize=FONT_SQUARE)
+    _finish_square_axes(ax, 'attempt', ylabel)
+    _save_square(fig, save_stem)
+
+
+def _plot_square_hist(values, xlabel, save_stem, bins=None, colour='0.20'):
+    """Session-level histogram in the same 2.5 cm format."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return
+    # Two-line x-labels need the extra bottom margin.
+    fig, ax = _new_square_axes(left=0.38, bottom=0.46)
+    ax.hist(values, bins=12 if bins is None else bins, color=colour,
+            edgecolor='white', linewidth=0.3)
+    _finish_square_axes(ax, xlabel, '# sessions')
+    _save_square(fig, save_stem)
+
+
+def _plot_square_stage_legend(save_stem):
+    """Stand-alone key for the stage colours, to sit next to the panels."""
+    fig, ax = plt.subplots(figsize=(SQUARE_CM / 2.54, SQUARE_CM / 2.54))
+    ax.axis('off')
+    handles = [Rectangle((0, 0), 1, 1, facecolor=STAGE_COLORS[stage],
+                         edgecolor='black', linewidth=0.4)
+               for stage in STAGE_ORDER]
+    ax.legend(handles, list(STAGE_ORDER), frameon=False, loc='center',
+              fontsize=FONT_SQUARE, handlelength=1.0, handleheight=1.0,
+              labelspacing=0.5, borderpad=0.0,
+              prop={'family': 'Arial', 'size': FONT_SQUARE})
+    _save_square(fig, save_stem)
+
+
+def plot_ephys_stage_panels(stage_df, learning_df, attempts):
+    """All 2.5 x 2.5 cm stage panels for the cell dataset."""
+    panels = [
+        ('duration_per_grid', 'time per\ngrid [s]',
+         'ephys_stage_time_spent', 0.54),
+        ('duration_percent', '% of time\non task',
+         'ephys_stage_time_share', 0.46),
+        ('attempt_duration_mean', 'attempt\ntime [s]',
+         'ephys_stage_attempt_duration', 0.46),
+        ('loop_time_mean', 'A\u2192D [s]',
+         'ephys_stage_loop_time', 0.46),
+        ('incorrect_uncovers_per_attempt', 'wrong\nuncovers',
+         'ephys_stage_incorrect_uncovers', 0.46),
+        ('error_fraction', 'error\nfraction',
+         'ephys_stage_error_fraction', 0.46),
+        ('shortest_path_percent', 'shortest\nwalks [%]',
+         'ephys_stage_shortest_path', 0.50),
+        ('extra_steps_per_walk', 'extra\nsteps',
+         'ephys_stage_extra_steps', 0.46),
+    ]
+    for measure, ylabel, stem, left in panels:
+        _plot_square_stage_bars(
+            stage_df, measure, ylabel, os.path.join(PLOT_DIR, stem),
+            left=left)
+    _plot_square_stage_stack(
+        stage_df, os.path.join(PLOT_DIR, 'ephys_stage_time_stacked'))
+    _plot_square_stage_legend(os.path.join(PLOT_DIR, 'ephys_stage_legend'))
+
+    # Level 1 — every attempt, on the within-grid attempt axis.
+    within_grid = attempts[attempts['rep_overall'].between(1, 12)]
+    _plot_square_by_attempt(
+        _repeat_subject_means(within_grid, 'rep_overall', 'loop_time',
+                              list(range(1, 13))),
+        'A\u2192D [s]',
+        os.path.join(PLOT_DIR, 'ephys_loop_time_by_attempt_all'))
+    if within_grid['n_incorrect_uncovers'].notna().any():
+        _plot_square_by_attempt(
+            _repeat_subject_means(within_grid, 'rep_overall',
+                                  'n_incorrect_uncovers',
+                                  list(range(1, 13))),
+            'wrong\nuncovers',
+            os.path.join(PLOT_DIR, 'ephys_incorrect_uncovers_by_attempt'),
+            colour=STAGE_COLORS['execute'])
+
+    _plot_square_hist(
+        learning_df['attempts_to_criterion'].to_numpy(dtype=float),
+        'attempts to\n1st correct',
+        os.path.join(PLOT_DIR, 'ephys_attempts_to_criterion'))
+    _plot_square_hist(
+        learning_df['speedup_percent'].to_numpy(dtype=float),
+        'speed-up [%]',
+        os.path.join(PLOT_DIR, 'ephys_speedup_percent'))
+    _plot_square_hist(
+        learning_df['explore_duration'].to_numpy(dtype=float),
+        'explore\ntime [s]',
+        os.path.join(PLOT_DIR, 'ephys_explore_duration'),
+        colour=STAGE_COLORS['learn'])
+
+
 def _plot_loop_by_repeat(by_rep, title, save_path,
                           rep_label='repeat',
                           floor_mean=None, floor_sd=None):
@@ -1316,11 +2062,58 @@ def _plot_hist(values, title, xlabel, save_path, floor_values=None):
     plt.close(fig)
 
 
+def print_stage_report(group):
+    """Print the stage comparison in the form the methods section needs."""
+    stages = group['stages']
+    print("\n--- Task stages (cells, n = "
+          f"{group['n_sessions']} sessions, {group['n_grids_total']} grids) ---")
+    print(stages['definition'])
+    print(f"grids without any error-free loop: "
+          f"{stages['n_grids_without_error_free_loop']}")
+    for measure, result in stages['tests'].items():
+        anova = result['rm_anova']
+        means = ', '.join(
+            f"{stage} {result['stage_means'][stage]['mean']:.2f}"
+            for stage in STAGE_ORDER
+            if result['stage_means'][stage]['mean'] is not None)
+        print(f"\n{result['label']}: {means}")
+        if 'caveat' in result:
+            print(f"  CAVEAT: {result['caveat']}")
+        if anova is not None:
+            print(f"  RM-ANOVA F({anova['df1']},{anova['df2']}) = "
+                  f"{anova['F']:.2f}, p = {anova['p']:.3g}, "
+                  f"partial eta^2 = {anova['partial_eta_sq']:.2f} "
+                  f"(n = {anova['n_sessions']})")
+        for contrast in result['contrasts']:
+            dz = contrast['cohens_dz']
+            print(f"  {contrast['contrast']}: "
+                  f"diff = {contrast['mean_difference']:.2f}, "
+                  f"t({contrast['n_sessions'] - 1}) = {contrast['t']:.2f}, "
+                  f"p_holm = {contrast['p_holm']:.3g}"
+                  + (f", dz = {dz:.2f}" if dz is not None else ""))
+    learning = group['learning']
+    print("\n--- Learning (cells) ---")
+    for measure in ('explore_duration', 'attempts_to_criterion',
+                    'time_to_criterion', 'incorrect_uncovers_to_criterion',
+                    'loop_time_first_repeat', 'loop_time_last_repeat',
+                    'speedup_seconds', 'speedup_percent'):
+        values = learning[measure]
+        sd = values['sd']
+        print(f"  {measure}: {values['mean']:.2f}"
+              + (f" ± {sd:.2f}" if sd is not None else "")
+              + f" (median {values['median']:.2f}, n = {values['n']})")
+    if 'speedup_percent_vs_0' in learning:
+        test = learning['speedup_percent_vs_0']
+        print(f"  speed-up vs. 0: t({test['n_sessions'] - 1}) = "
+              f"{test['t']:.2f}, p = {test['p']:.3g}")
+
+
 # ── Run ───────────────────────────────────────────────────────────────
 print("\n=== fMRI ===")
 fmri_subj, fmri_loops, fmri_group = fmri_summarise()
 print("\n=== Ephys ===")
-eph_sess, eph_attempts, eph_group = ephys_summarise()
+(eph_sess, eph_attempts, eph_group,
+ eph_stages, eph_learning, eph_paths) = ephys_summarise()
 
 # Compact loop-time panels.  These are the matched cell/fMRI figures intended
 # for a DIN A4 layout: each modality gets an individual-trajectory version and
@@ -1456,6 +2249,11 @@ if eph_group is not None:
         '# configurations solved (≥1 correct trial)',
         os.path.join(PLOT_DIR, 'ephys_configs_solved_hist.png'))
 
+    # Level 1 (all attempts) and the stage comparison.  These are the new
+    # 2.5 x 2.5 cm panels.
+    plot_ephys_stage_panels(eph_stages, eph_learning, eph_attempts)
+    print_stage_report(eph_group)
+
 
 if PLOT_SAMPLE_TRAJECTORIES:
     print("\n=== Sample trajectories ===")
@@ -1492,6 +2290,28 @@ combined = {
             'fmri_exclude': sorted(FMRI_EXCLUDE),
             'ephys_scope':  "All sessions with cells_and_beh/all_trial_times_*.csv (n=63).",
             'ephys_loop_time_repeat_axis': "rep_correct (0-9), correct trials only.",
+            'ephys_two_levels': (
+                "Every cell-data measure is reported at two levels. Level 1 "
+                "('all_attempts' / rep_overall axis) uses every attempt, "
+                "including those containing an incorrect uncover; it is what "
+                "describes the behaviour. Level 2 (the top-level entries / "
+                "rep_correct axis) keeps only error-free repeats, which is "
+                "the subset the ABCD-code analyses run on."),
+            'ephys_stages': (
+                "explore = first attempt of a grid; learn = further attempts "
+                "up to and including the first error-free loop; execute = "
+                "attempts after it. Defined by the information available to "
+                "the subject, so stage-wise error and timing measures are "
+                "not circular with the definition. Compared with a one-way "
+                "repeated-measures ANOVA over sessions plus Holm-corrected "
+                "paired contrasts."),
+            'attempt_duration': (
+                "t_D - new_grid_onset. new_grid_onset is the start of the "
+                "attempt: grid onset for the first attempt of a grid, and "
+                "the previous attempt's t_D thereafter."),
+            'incorrect_uncovers': (
+                "Moves with pressed_to_uncover == 1 and correct_uncover == 0, "
+                "from scripts/extract_uncovers_ephys.py."),
             'sample_trajectory_figures': {
                 'enabled': PLOT_SAMPLE_TRAJECTORIES,
                 'preferred_layouts_A_to_D': [

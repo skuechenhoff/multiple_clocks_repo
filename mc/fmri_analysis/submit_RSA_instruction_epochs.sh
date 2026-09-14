@@ -7,6 +7,16 @@
 #   DRYRUN=1 bash submit_RSA_instruction_epochs.sh        # print what would be submitted
 #   SKIP_CHANGED=1 bash submit_RSA_instruction_epochs.sh  # leave results whose settings differ
 #
+# WHICH CONFIG (env RSA_CONFIG, default rsa_instruction_samedirection.json)
+#   RSA_CONFIG=rsa_instruction_cumulative_rew.json bash submit_RSA_instruction_epochs.sh
+# The default is the same-direction masked instruction config: the *_rew_instr
+# models fitted only on RDM cells that do NOT cross the forward/backward cue.
+# Every *_instr model forces dissimilarity 0 on the same-task forward/backward
+# pairs, but the instruction screen differs there ('please backwards' text), and
+# no nuisance regressor can absorb that -- see the 2026-09-14 CHANGELOG entries.
+# The two configs write to different RSA folders (name_of_RSA) and get separate
+# audit dirs, so they never collide and either can be rerun independently.
+#
 # The GLMs are not named by a TR index ('01-TR4') but by the epoch they measure
 # ('instr_see-A-first'), so each job gets a config snapshot with
 # regression_version set to the epoch GLM and TR set to null --
@@ -29,16 +39,19 @@
 scratchDir="/home/fs0/xpsy1114/scratch/data"
 analysisDir="/home/fs0/xpsy1114/scratch/analysis"
 scriptname="fMRI_run_RSA_instruction.py"
-base_config="rsa_instruction_cumulative_rew.json"
+base_config="${RSA_CONFIG:-rsa_instruction_samedirection.json}"
+configTag=$(basename "${base_config}" .json)
 
-# Wall-time estimate in minutes for one RSA job. This was 30, which is nowhere
-# near enough: one job fits 28 whole-brain searchlight OLS models (21 single +
-# 7 combo) over ~126k searchlights, and jobs were being killed about two thirds
-# of the way through, leaving partial results/ folders that looked plausible.
-# fMRI_run_RSA_instruction.py now resumes, so a job that still runs out of time
-# picks up where it stopped instead of starting over. Override with
-# FSLSUB_T=<minutes>.
-jobTime="${FSLSUB_T:-240}"
+# Wall-time estimate in minutes for one RSA job. 240 was sized for the full
+# cumulative-reward config: 28 whole-brain searchlight OLS models (21 single +
+# 7 combo) over ~126k searchlights. The same-direction config fits 7 single
+# models on 40 RDM cells instead, and reuses the searchlight data-RDM cache
+# (keyed on regression_version + searchlight_mask, not on name_of_RSA), so it
+# is far cheaper -- start at 120 and escalate only if jobs are killed.
+# Under-requesting is cheap here: fMRI_run_RSA_instruction.py resumes, so a job
+# that runs out of time picks up where it stopped instead of starting over.
+# Override with FSLSUB_T=<minutes>; use 240 for the cumulative-reward config.
+jobTime="${FSLSUB_T:-120}"
 
 # Audits are logs, not results: keep them next to the analysis code.
 logDir="${analysisDir}/logs_mid_sept"
@@ -52,7 +65,7 @@ module load fsl
 todoFile="$1"
 
 if [ -z "$todoFile" ]; then
-    auditDir="${logDir}/rsa_audit_$(date +%F)"
+    auditDir="${logDir}/rsa_audit_${configTag}_$(date +%F)"
     echo "No list given -- auditing first, so that finished RSAs are not rerun."
     pythonBin=$(command -v python3 || command -v python)
     if [ -z "$pythonBin" ]; then
@@ -82,7 +95,7 @@ if [ "$n_runs" -eq 0 ]; then
     echo "Nothing to submit -- every RSA is either done or blocked (see the report)."
     exit 0
 fi
-echo "Submitting $n_runs job(s) from $todoFile"
+echo "Submitting $n_runs job(s) from $todoFile  (config: ${base_config}, -T ${jobTime})"
 
 n_submitted=0
 while read -r subjectTag epoch_config; do

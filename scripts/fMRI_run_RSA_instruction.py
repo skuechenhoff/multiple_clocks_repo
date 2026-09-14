@@ -310,6 +310,40 @@ def within_half_mask(n_pairs):
     return _lower_tri_flat(blk) == 0
 
 
+def same_direction_mask_2d(labels):
+    """(2n, 2n) boolean, True for pairs instructed with the SAME direction cue.
+
+    The instruction screen is NOT identical for the two directions of a task:
+    it shows the same four reward locations plus a "please backwards" text, or
+    nothing, implying forwards. Every `_instr` model ignores that cue and so
+    forces dissimilarity 0 on exactly the same-task forward/backward pairs --
+    which are precisely the cells where the cue differs.
+
+    Those cells carry enormous leverage (they are the only 0 level in a model
+    whose other levels are >= 0.25), and no nuisance regressor can absorb them:
+    anything correlated enough with the instruction model to move its
+    coefficient IS the instruction model's own main contrast. Masking to
+    same-direction cells removes the confound by design instead, at the cost of
+    dropping the d = 0 level entirely.
+
+    Note the retained cells measure each task pair TWICE -- once forward-forward
+    and once backward-backward -- with an identical model value, because the
+    instruction model gives a backward condition its forward vector. The model
+    therefore has n_pairs*(n_pairs-1)/2 independent predictions per half, not
+    twice that, and the duplicate pair is a free split-half reliability check.
+    """
+    direction = np.array([l.rsplit('_', 1)[-1] for l in labels])
+    assert set(direction) <= {'forw', 'backw'}, (
+        f"cannot read forw/backw from condition labels: {sorted(set(direction))}")
+    return direction[:, None] == direction[None, :]
+
+
+def same_direction_mask(labels):
+    """Boolean over the strict lower triangle, True for same-direction pairs.
+    Flat companion to `same_direction_mask_2d`, ordering as `_lower_tri_flat`."""
+    return _lower_tri_flat(same_direction_mask_2d(labels).astype(float)) == 1
+
+
 def within_half_mask_2d(n_pairs):
     """(2n, 2n) boolean, True for the two WITHIN-half blocks. Display companion
     to `within_half_mask`, which returns the same selection over the flattened
@@ -439,10 +473,16 @@ SCOPE_ALIASES = {
     'across_only': 'across_only', 'across': 'across_only',
     'within_only': 'within_only', 'within': 'within_only',
     'full_no_diag': 'full_no_diag', 'full': 'full_no_diag',
+    # within-half AND same-direction: drops every forward/backward crossing,
+    # see same_direction_mask_2d for why the instruction models need it
+    'within_same_direction': 'within_same_direction',
+    'within_samedir': 'within_same_direction',
+    'same_direction': 'within_same_direction',
 }
 # Suffix appended to the output map names of a combo that declares "scope",
 # so the within- and across-half fits of one combo never overwrite each other.
-SCOPE_TAGS = {'across_only': 'across', 'within_only': 'within', 'full_no_diag': 'full'}
+SCOPE_TAGS = {'across_only': 'across', 'within_only': 'within', 'full_no_diag': 'full',
+              'within_same_direction': 'within-samedir'}
 
 
 def normalise_scope(name):
@@ -685,6 +725,8 @@ for sub in subjects:
     # subset both the model regressors and the cached data RDM when
     # data_rdm_scope == 'within_only'.
     within_mask = within_half_mask(len(th1_labels))
+    # Cells that are within-half AND do not cross the forward/backward cue.
+    same_direction_cells = within_mask & same_direction_mask(th1_labels + th2_labels)
 
     model_RDM_dir = {}
     # In 'full_no_diag' mode we additionally store the assembled (2n, 2n)
@@ -789,7 +831,8 @@ for sub in subjects:
     for m, scs in scopes_per_model.items():
         if not scs:                      # built but never fitted — still plot it
             scopes_per_model[m] = [data_rdm_scope]
-    all_scopes_used = [sc for sc in ("within_only", "across_only", "full_no_diag")
+    all_scopes_used = [sc for sc in ("within_only", "within_same_direction",
+                                     "across_only", "full_no_diag")
                        if any(sc in v for v in scopes_per_model.values())]
     print("\n[scopes] " + ", ".join(
         f"{m}: {'+'.join(SCOPE_TAGS[sc] for sc in scs)}"
@@ -805,6 +848,8 @@ for sub in subjects:
         subset in the same order."""
         if scope == "within_only":
             return within_mask
+        if scope == "within_same_direction":
+            return same_direction_cells
         if scope == "across_only":
             return ~within_mask
         return np.ones(within_mask.shape, dtype=bool)
@@ -826,6 +871,8 @@ for sub in subjects:
         """(2n, 2n) boolean, True for the cells `scope` fits. Display companion
         to `_scope_cells`, which selects the same cells over the flat triangle."""
         w = within_half_mask_2d(len(th1_labels))
+        if scope == "within_same_direction":
+            return w & same_direction_mask_2d(th1_labels + th2_labels)
         return w if scope == "within_only" else (~w if scope == "across_only"
                                                  else np.ones_like(w))
 
@@ -846,6 +893,7 @@ for sub in subjects:
         keep = _mask_2d_for_scope(scope)
         M[~keep] = np.nan
         caption = {"within_only": "within-half blocks only; white = not fitted",
+                   "within_same_direction": "within-half, same-direction cells only; white = not fitted",
                    "across_only": "across-half block only; white = not fitted",
                    "full_no_diag": "full 2n x 2n (W1 | A | W2)"}[scope]
         # Both axes of the assembled matrix run over ALL conditions of BOTH
@@ -905,6 +953,7 @@ for sub in subjects:
         # 9 pt Arial, so a two-line sentence would swamp the matrix. The long
         # form lives in the print-out and the settings json instead.
         SCOPE_CAPTION = {"within_only": "within-half",
+                         "within_same_direction": "within-half, same-direction",
                          "across_only": "across-half",
                          "full_no_diag": "full"}
         for model in selected_models:
@@ -957,6 +1006,7 @@ for sub in subjects:
                     ex = ex_full.copy()
                     ex[~_mask_2d_for_scope(scope)] = np.nan
                     caption = {"within_only": "within-half blocks only; white = not fitted",
+                               "within_same_direction": "within-half, same-direction cells only; white = not fitted",
                                "across_only": "across-half block only; white = not fitted",
                                "full_no_diag": "full 2n x 2n (W1 | A | W2)"}[scope]
                     mc.analyse.my_RSA.plot_instruction_RDM(
