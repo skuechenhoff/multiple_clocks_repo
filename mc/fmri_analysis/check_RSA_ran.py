@@ -130,6 +130,21 @@ SCOPE_TAGS = {'across_only': 'across', 'within_only': 'within',
               'full_no_diag': 'full',
               'within_same_direction': 'within-samedir'}
 INSTR_SUFFIX = '_instr'
+# Mirrors fMRI_run_RSA_instruction.py: the order-independent set models are
+# instruction models that CAN be fitted across task halves, so they form their
+# own `single_model_scopes` family, as does the reserved direction regressor.
+UNORDERED_SUFFIX = '_instr_unordered'
+DIRECTION_REGRESSOR = 'direction'
+
+
+def model_family(name):
+    if name == DIRECTION_REGRESSOR:
+        return 'direction'
+    if name.endswith(UNORDERED_SUFFIX):
+        return 'instruction_unordered'
+    if name.endswith(INSTR_SUFFIX):
+        return 'instruction'
+    return 'execution'
 
 # The three per-subject stages, in pipeline order. Each is a directory under
 # the RSA folder plus the name one model's map carries there. Only the BETA map
@@ -195,8 +210,8 @@ def _scopes_for_single(model, cfg_scopes, default):
     """Mirrors single_model_scopes() in fMRI_run_RSA_instruction.py."""
     if not cfg_scopes:
         return [default], False
-    key = 'instruction' if model.endswith(INSTR_SUFFIX) else 'execution'
-    raw = cfg_scopes.get(key, default)
+    # exact model name overrides its family; [] means never fitted as a single
+    raw = cfg_scopes.get(model, cfg_scopes.get(model_family(model), default))
     raw = [raw] if isinstance(raw, str) else list(raw)
     return [SCOPE_ALIASES[x] for x in raw], True
 

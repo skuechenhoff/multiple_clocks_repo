@@ -7,15 +7,21 @@
 #   DRYRUN=1 bash submit_RSA_instruction_epochs.sh        # print what would be submitted
 #   SKIP_CHANGED=1 bash submit_RSA_instruction_epochs.sh  # leave results whose settings differ
 #
-# WHICH CONFIG (env RSA_CONFIG, default rsa_instruction_samedirection.json)
+# WHICH CONFIG (env RSA_CONFIG, default rsa_instruction_direction_and_unordered.json)
 #   RSA_CONFIG=rsa_instruction_cumulative_rew.json bash submit_RSA_instruction_epochs.sh
-# The default is the same-direction masked instruction config: the *_rew_instr
-# models fitted only on RDM cells that do NOT cross the forward/backward cue.
-# Every *_instr model forces dissimilarity 0 on the same-task forward/backward
-# pairs, but the instruction screen differs there ('please backwards' text), and
-# no nuisance regressor can absorb that -- see the 2026-09-14 CHANGELOG entries.
-# The two configs write to different RSA folders (name_of_RSA) and get separate
-# audit dirs, so they never collide and either can be rerun independently.
+# The default fits the forward/backward direction cue explicitly, plus the
+# order-independent ("set") instruction models. Background: every *_rew_instr
+# model forces dissimilarity 0 on the same-task forward/backward pairs, but the
+# instruction screen differs there ('please backwards' text), and no nuisance
+# regressor can absorb it -- see the 2026-09-14 / 2026-09-15 CHANGELOG entries.
+#
+# DO NOT USE rsa_instruction_samedirection.json. It masks the crossing cells out,
+# and on the cells that remain *_rew_instr and the execution model are
+# bit-identical regressors -- so it writes the EXECUTION model under an _instr
+# name. Kept only so the 2026-09-15 CHANGELOG entry has something to point at.
+#
+# Each config writes to its own RSA folder (name_of_RSA) and gets its own audit
+# dir, so they never collide and any of them can be rerun independently.
 #
 # The GLMs are not named by a TR index ('01-TR4') but by the epoch they measure
 # ('instr_see-A-first'), so each job gets a config snapshot with
@@ -39,7 +45,7 @@
 scratchDir="/home/fs0/xpsy1114/scratch/data"
 analysisDir="/home/fs0/xpsy1114/scratch/analysis"
 scriptname="fMRI_run_RSA_instruction.py"
-base_config="${RSA_CONFIG:-rsa_instruction_samedirection.json}"
+base_config="${RSA_CONFIG:-rsa_instruction_direction_and_unordered.json}"
 configTag=$(basename "${base_config}" .json)
 
 # Wall-time estimate in minutes for one RSA job. 240 was sized for the full

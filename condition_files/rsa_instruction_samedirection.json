@@ -1,4 +1,13 @@
 {
+  "_DEPRECATED": [
+    "DO NOT RUN. On same-direction cells *_rew_instr and the execution model are",
+    "bit-identical regressors (verified: max|diff| = 0.000, r = 1.0000, for F-F",
+    "and B-B separately), because reversing both members of a pair preserves",
+    "position-wise hamming. This config therefore writes the EXECUTION model under",
+    "an _instr name. Superseded by rsa_instruction_direction_and_unordered.json,",
+    "which fits the direction cue explicitly instead of masking it out.",
+    "See the 2026-09-15 CHANGELOG entry. Kept only as the referent for that entry."
+  ],
   "_comment": [
     "Instruction/memory models fitted ONLY on same-direction RDM cells.",
     "",

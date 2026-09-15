@@ -1,0 +1,98 @@
+{
+  "_comment": [
+    "Instruction-phase RSA: forward/backward direction regressor + order-independent",
+    "('set') instruction models. Everything already estimated elsewhere is fitted",
+    "ONLY as part of a combo, never again as a single model.",
+    "",
+    "WHAT IS FITTED AS A SINGLE MODEL",
+    "  - the order-independent set models (they are new)",
+    "  - `direction` on its own, as the reference for reading every partial below",
+    "The ordered *_rew_instr models and the *_rew execution models are listed in",
+    "selected_models only so combos can use them; their single_model_scopes are [].",
+    "",
+    "THE SET MODELS. d = 1 - |multiset overlap of the first k instructed locations| / k.",
+    "A location revealed twice counts twice, keeping the 0/0.25/0.5/0.75/1 scale of",
+    "the ordered models; at k=1 this reduces exactly to A_rew_instr. Hypothesis:",
+    "subjects hold the revealed locations in working memory as a set, without the",
+    "sequence position.",
+    "",
+    "THERE IS NO k=1 SET MODEL. With one location per condition order cannot matter,",
+    "so A_rew_instr_unordered would be arithmetically identical to A_rew_instr",
+    "(verified: the whole 20x20 RDM matches, r = 1.0000) -- both as a single and in",
+    "a +direction combo. It is omitted rather than run as a duplicate. It would also",
+    "have been constant across task halves, so it could never have been fitted there.",
+    "",
+    "WHY DIRECTION IS IN THE ACROSS COMBOS. Across halves `direction` is exactly",
+    "orthogonal to every set model (r = 0.0000), so on its own it would be neutral.",
+    "But it correlates about -0.55 with the execution models there, so once",
+    "execution is in the design the partial correlation of direction with the set",
+    "model is +0.37 (ABC) and +0.45 (ABCD). It is NOT conditionally neutral, and",
+    "leaving it out would let execution absorb direction-driven variance.",
+    "",
+    "K=4 CAVEAT. The full multiset is reversal-invariant, so ABCD_rew_instr_unordered",
+    "cannot distinguish instructed from executed ORDER -- read it as a 'locations",
+    "this task uses' model. It is NOT equal to ABCD_rew (r ~ 0.18), which is why",
+    "every across combo carries its ordered execution counterpart.",
+    "",
+    "Reuses the data_RDMs_glmbase_<glm>_<mask> cache (keyed on regression_version +",
+    "searchlight_mask, not on name_of_RSA): no searchlight is recomputed."
+  ],
+
+  "name_of_RSA": "instr_dir_unord",
+  "load_EVs_from": "DSR_loc-fut-rews-state-dur-type",
+  "regression_version": "01",
+  "TR": 4,
+  "smoothing": false,
+  "fwhm": 5,
+  "searchlight_mask": "grey_matter",
+
+  "data_rdm_scope": "within_only",
+  "run_single_models": true,
+  "single_model_scopes": {
+    "execution": [],
+    "instruction": [],
+    "direction": ["within_only", "across_only"],
+    "instruction_unordered": ["within_only", "across_only"]
+  },
+  "run_combo_models": true,
+  "plot_example_data_RDM": true,
+
+  "selected_models": [
+    "direction",
+    "A_rew_instr", "AB_rew_instr", "ABC_rew_instr", "ABCD_rew_instr",
+    "AB_rew", "ABC_rew", "ABCD_rew",
+    "AB_rew_instr_unordered", "ABC_rew_instr_unordered", "ABCD_rew_instr_unordered"
+  ],
+
+  "combo_models": [
+    {"name": "A_instr_vs_dir",    "scope": "within_only",
+     "regressors": ["A_rew_instr",    "direction"]},
+    {"name": "AB_instr_vs_dir",   "scope": "within_only",
+     "regressors": ["AB_rew_instr",   "direction"]},
+    {"name": "ABC_instr_vs_dir",  "scope": "within_only",
+     "regressors": ["ABC_rew_instr",  "direction"]},
+    {"name": "ABCD_instr_vs_dir", "scope": "within_only",
+     "regressors": ["ABCD_rew_instr", "direction"]},
+
+    {"name": "AB_unord_vs_dir",   "scope": "within_only",
+     "regressors": ["AB_rew_instr_unordered",   "direction"]},
+    {"name": "ABC_unord_vs_dir",  "scope": "within_only",
+     "regressors": ["ABC_rew_instr_unordered",  "direction"]},
+    {"name": "ABCD_unord_vs_dir", "scope": "within_only",
+     "regressors": ["ABCD_rew_instr_unordered", "direction"]},
+
+    {"name": "AB_unord_vs_exe",   "scope": "across_only",
+     "regressors": ["AB_rew_instr_unordered",   "AB_rew"]},
+    {"name": "ABC_unord_vs_exe",  "scope": "across_only",
+     "regressors": ["ABC_rew_instr_unordered",  "ABC_rew"]},
+    {"name": "ABCD_unord_vs_exe", "scope": "across_only",
+     "regressors": ["ABCD_rew_instr_unordered", "ABCD_rew"]},
+
+    {"name": "AB_unord_vs_exe_dir",   "scope": "across_only",
+     "regressors": ["AB_rew_instr_unordered",   "AB_rew",   "direction"]},
+    {"name": "ABC_unord_vs_exe_dir",  "scope": "across_only",
+     "regressors": ["ABC_rew_instr_unordered",  "ABC_rew",  "direction"]},
+    {"name": "ABCD_unord_vs_exe_dir", "scope": "across_only",
+     "regressors": ["ABCD_rew_instr_unordered", "ABCD_rew", "direction"]}
+  ]
+}

@@ -108,6 +108,7 @@ import pandas as pd
 import os
 from nilearn.image import load_img
 from rsatoolbox.util.searchlight import get_volume_searchlight
+from collections import Counter as _Counter
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
 import mc
@@ -217,6 +218,55 @@ def check_no_legacy_names(model_names, where):
 # '_backw_' key's value with its '_forw_' counterpart so that A1_forw and
 # A1_backw share the same model vector (they saw the same instruction).
 INSTR_SUFFIX = '_instr'
+
+# ORDER-INDEPENDENT ("set") instruction models: {name: number of leading rewards}.
+# Same nesting as REWDSR_PREFIX_CHANNELS, but dissimilarity is multiset overlap
+# of the first k INSTRUCTED reward locations rather than position-wise hamming:
+#
+#     d = 1 - |multiset_overlap(first k of X, first k of Y)| / k
+#
+# The hypothesis is that subjects hold the revealed locations in working memory
+# as a SET, without the sequence position. At k=1 this is arithmetically
+# identical to A_rew_instr (with one location, order cannot matter).
+#
+# Two properties that the ordered instruction models do NOT have:
+#   * it is fittable ACROSS task halves. The ordered instruction models are
+#     constant there (across halves the same task is instructed in the reverse
+#     order, so every position mismatches); the set is unchanged by reversal, so
+#     the set model keeps its variance.
+#   * across halves it is exactly orthogonal to the direction regressor
+#     (r = 0.0000), because each task appears once forward and once backward in
+#     each half, so direction is balanced against set overlap.
+# Caveat at k=4: the full multiset is reversal-invariant, so the instructed-set
+# and executed-set models coincide. k=4 is therefore a "locations this task
+# uses" model, not evidence about instructed ORDER specifically -- fit it
+# alongside the ordered execution model (ABCD_rew), which it is NOT equal to
+# (r ~ 0.18).
+UNORDERED_SUFFIX = '_instr_unordered'
+UNORDERED_CHANNELS = {f'{p}_rew{UNORDERED_SUFFIX}': k
+                      for p, k in (('A', 1), ('AB', 2), ('ABC', 3), ('ABCD', 4))}
+
+# Reserved regressor: 1 if the two conditions of a cell were instructed with
+# DIFFERENT direction cues (one "please backwards", one not), else 0. It is a
+# property of the conditions, not of the reward sequence, so it is built from
+# the condition labels rather than from model_EVs.
+DIRECTION_REGRESSOR = 'direction'
+
+
+def model_family(name):
+    """Which `single_model_scopes` key a model belongs to.
+
+    Three families rather than two, because the order-independent instruction
+    models are instruction models that CAN be fitted across task halves, which
+    the ordered ones cannot.
+    """
+    if name == DIRECTION_REGRESSOR:
+        return 'direction'
+    if name.endswith(UNORDERED_SUFFIX):
+        return 'instruction_unordered'
+    if name.endswith(INSTR_SUFFIX):
+        return 'instruction'
+    return 'execution'
 
 
 def strip_instr(name):
@@ -464,6 +514,54 @@ def slice_rewDSR_channels(model_EVs, EV_keys, use_instruction=False):
     return out
 
 
+def instructed_reward_locations(model_EVs, EV_keys, k):
+    """(th1, th2) arrays of the first k INSTRUCTED reward locations per condition.
+
+    Cut from the same rewDSR A_reward vector the ordered models use — four equal
+    chunks, each holding one raw location value repeated — so the locations here
+    are literally the ones A_rew/AB_rew/... compare, just taken one per chunk.
+    Instruction relabelling is applied first, so a backward condition carries the
+    sequence its instruction screen actually showed.
+    """
+    rewDSR_sub = {key: v for key, v in model_EVs['rewDSR'].items()
+                  if key.endswith('_A_reward')}
+    rewDSR_sub = instruction_relabel_dict(rewDSR_sub)
+    rewDSR_keys = [key.replace('_instruction_onset', '_A_reward') for key in EV_keys]
+    th1_full, th2_full, _ = pair_correct_tasks(rewDSR_sub, rewDSR_keys)
+    assert th1_full.shape[1] % 4 == 0, (
+        f"rewDSR at A_reward has {th1_full.shape[1]} elements, not divisible by 4.")
+    chunk = th1_full.shape[1] // 4
+    take = lambda mat: np.stack([mat[:, i * chunk] for i in range(k)], axis=1)
+    return take(th1_full), take(th2_full)
+
+
+def compute_unordered_overlap_RDM(rows_a, rows_b, k):
+    """1 - |multiset overlap| / k between every row of `rows_a` and `rows_b`.
+
+    Multiset, not set: a location revealed twice counts twice, which keeps the
+    scale identical to the ordered models (0, 1/k, ..., 1) and makes k=1 reduce
+    exactly to A_rew_instr.
+    """
+    counters_b = [_Counter(row.tolist()) for row in rows_b]
+    out = np.zeros((len(rows_a), len(rows_b)))
+    for i, row in enumerate(rows_a):
+        ca = _Counter(row.tolist())
+        for j, cb in enumerate(counters_b):
+            out[i, j] = 1.0 - sum((ca & cb).values()) / k
+    return out
+
+
+def build_direction_RDM_blocks(th1_labels, th2_labels):
+    """(W1, A, W2) blocks of the direction regressor: 1 = cell crosses the cue."""
+    d1 = np.array([l.rsplit('_', 1)[-1] for l in th1_labels])
+    d2 = np.array([l.rsplit('_', 1)[-1] for l in th2_labels])
+    assert set(d1) | set(d2) <= {'forw', 'backw'}, (
+        f"cannot read forw/backw from condition labels: {sorted(set(d1) | set(d2))}")
+    return ((d1[:, None] != d1[None, :]).astype(float),
+            (d1[:, None] != d2[None, :]).astype(float),
+            (d2[:, None] != d2[None, :]).astype(float))
+
+
 # ── Scope names ───────────────────────────────────────────────────────────
 # Canonical scope names plus the short aliases a config may use. A combo model
 # can carry its own "scope" (string or list) to be fitted in a scope other than
@@ -519,8 +617,14 @@ def single_model_scopes(model, cfg_scopes, default_scope):
     its plain output name, exactly as before."""
     if not cfg_scopes:
         return [default_scope], False
-    key = 'instruction' if model.endswith(INSTR_SUFFIX) else 'execution'
-    raw = cfg_scopes.get(key, default_scope)
+    # An exact model name in the config overrides its family, so one member of a
+    # family can be restricted without splitting the family: e.g.
+    # A_rew_instr_unordered must never be fitted across task halves (with one
+    # location per condition the set model is constant there unless two halves
+    # happen to share a first instructed reward), while the other set models are
+    # fitted in both scopes. An empty list means "never fit this as a single
+    # model" -- used for models that are only wanted inside combos.
+    raw = cfg_scopes.get(model, cfg_scopes.get(model_family(model), default_scope))
     raw = [raw] if isinstance(raw, str) else list(raw)
     return [normalise_scope(x) for x in raw], True
 
@@ -752,6 +856,26 @@ for sub in subjects:
     # hamming dissim over its A_reward vectors, TH1 x TH2, full off-block.
     # Models ending in '_instr' are built with instruction relabelling first.
     for model in selected_models:
+        # Order-independent set models and the direction regressor are not
+        # hamming over an A_reward vector, so they are built before the generic
+        # path rather than through strip_instr / model_EVs.
+        if model in UNORDERED_CHANNELS:
+            k_rewards = UNORDERED_CHANNELS[model]
+            loc_th1, loc_th2 = instructed_reward_locations(model_EVs, EV_keys, k_rewards)
+            model_RDM_dir[model] = compute_unordered_overlap_RDM(loc_th1, loc_th2, k_rewards)
+            if not legacy_across_block:
+                model_RDM_full_dir[model] = assemble_full_rdm_from_blocks(
+                    compute_unordered_overlap_RDM(loc_th1, loc_th1, k_rewards),
+                    model_RDM_dir[model],
+                    compute_unordered_overlap_RDM(loc_th2, loc_th2, k_rewards))
+            continue
+        if model == DIRECTION_REGRESSOR:
+            dir_W1, dir_A, dir_W2 = build_direction_RDM_blocks(th1_labels, th2_labels)
+            model_RDM_dir[model] = dir_A
+            if not legacy_across_block:
+                model_RDM_full_dir[model] = assemble_full_rdm_from_blocks(
+                    dir_W1, dir_A, dir_W2)
+            continue
         base_name, is_instr = strip_instr(model)
         if base_name == 'simple':
             continue
@@ -1160,6 +1284,7 @@ for sub in subjects:
         json.dump(run_settings, f, indent=2)
 
     skipped_maps = []
+    degenerate_maps = []
 
     def already_done(out_name):
         """True if this map's three volumes are all present and non-empty."""
@@ -1185,6 +1310,32 @@ for sub in subjects:
         for c in combo_cfg:
             for sc in combo_scopes(c, data_rdm_scope)[0]:
                 _to_check.append((f"combo '{c['name']}' [{sc}]", c["regressors"], sc))
+
+    # A regressor with NO variance in a given scope is a property of THIS
+    # subject's design, not a bug: A_rew_instr_unordered is constant across task
+    # halves whenever no first instructed reward is shared between the halves,
+    # and which subjects that hits depends on their task assignment. Failing the
+    # whole run would block every other model for that subject, so those
+    # (model, scope) pairs are dropped here, loudly and on the record, before
+    # the rank check. Genuine rank deficiency -- collinear but non-constant
+    # regressors -- still raises below, because that IS a design bug.
+    _constant_in_scope = {}
+    _kept = []
+    for label, regs, sc in _to_check:
+        flat = {m: _model_regressor(m, sc) for m in regs}
+        dead = [m for m, v in flat.items() if np.nanstd(v) == 0]
+        if dead:
+            _constant_in_scope[label] = dead
+            degenerate_maps.append(label)
+            print(f"  DROP {label:44s} constant regressor(s): {dead} -- not fitted")
+        else:
+            _kept.append((label, regs, sc))
+    _skip_scope = {(m, sc) for label, regs, sc in _to_check
+                   for m in _constant_in_scope.get(label, [])}
+    _dropped_combo_scopes = {(label.split("'")[1], sc)
+                             for label, regs, sc in _to_check
+                             if label in _constant_in_scope}
+    _to_check = _kept
     for label, regs, sc in _to_check:
         ok, msg = design_rank_report(
             regs, np.stack([_model_regressor(m, sc) for m in regs], axis=1))
@@ -1216,6 +1367,10 @@ for sub in subjects:
                 if already_done(out_name):
                     print(f"  [resume] skipping {out_name}, already complete")
                     skipped_maps.append(out_name)
+                    continue
+                if (model, scope) in _skip_scope:
+                    print(f"  [skip] {out_name}: regressor is constant over the "
+                          f"{SCOPE_TAGS[scope]} cells -- no map written")
                     continue
                 model_flat = _model_regressor(model, scope)
                 RSA_results[out_name] = Parallel(n_jobs=3)(
@@ -1257,6 +1412,10 @@ for sub in subjects:
             # `_within` / `_across` / `_full` suffix so they cannot collide.
             scopes, tag_outputs = combo_scopes(combo, data_rdm_scope)
             for scope in scopes:
+                if (combo_model_name, scope) in _dropped_combo_scopes:
+                    print(f"  [skip] combo '{combo_model_name}' [{scope}]: a "
+                          f"regressor is constant over these cells -- not fitted")
+                    continue
                 combo_out_name = (f"{combo_model_name}_{SCOPE_TAGS[scope]}"
                                   if tag_outputs else combo_model_name)
                 print(f"running combo model {combo_out_name} (scope = {scope})")
@@ -1345,6 +1504,11 @@ for sub in subjects:
         "resume_enabled": bool(resume_ok),
         "resumed_maps": skipped_maps,
         "n_resumed_maps": len(skipped_maps),
+        # Maps deliberately NOT written because the regressor carried no variance
+        # in that scope. Recorded so the audit can tell "never ran" apart from
+        # "cannot be fitted for this subject".
+        "degenerate_maps": degenerate_maps,
+        "n_degenerate_maps": len(degenerate_maps),
         "data_dir": data_dir,
         "results_dir": results_dir
     }

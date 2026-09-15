@@ -1,5 +1,128 @@
 # CHANGELOG
 
+## 2026-09-15 (b) — Direction regressor + order-independent instruction models
+
+Replaces the masking approach (see the correction below) with fitting the
+forward/backward cue explicitly, and adds a new model family.
+
+**`scripts/fMRI_run_RSA_instruction.py`**
+- `DIRECTION_REGRESSOR = 'direction'` — reserved name, 1 = the cell crosses the
+  cue. Built from condition labels (`build_direction_RDM_blocks`), has variance
+  in both scopes.
+- `UNORDERED_CHANNELS` — `AB/ABC/ABCD_rew_instr_unordered`, with
+  `d = 1 - |multiset overlap of the first k instructed locations| / k`. Multiset,
+  not set: a location revealed twice counts twice, which keeps the
+  0/0.25/0.5/0.75/1 scale of the ordered models. Cut from the same rewDSR
+  A_reward chunks the ordered models use.
+- `model_family()` — three families (`execution`, `instruction`,
+  `instruction_unordered`) plus `direction`, because the set models are
+  instruction models that CAN be fitted across task halves. `single_model_scopes`
+  now keys on it, accepts an exact model name as an override, and accepts `[]`
+  to mean "only ever fit inside a combo".
+- Degenerate designs are now DROPPED, not fatal. A regressor with no variance in
+  a scope is a property of the subject's task assignment, not a bug; failing the
+  run would block all other models for that subject. Recorded in
+  `degenerate_maps` in the settings summary. Genuine rank deficiency (collinear
+  but non-constant) still raises.
+
+**`condition_files/rsa_instruction_direction_and_unordered.json`** — 37 maps.
+Singles: `direction` (within+across) and the three set models (within+across).
+Within combos: each ordered `*_rew_instr + direction`, each set model +
+direction. Across combos: each set model + its ordered execution counterpart,
+with and without direction. No singles for the ordered instruction or execution
+models — those are already estimated.
+
+**No k=1 set model.** With one location per condition order cannot matter, so
+`A_rew_instr_unordered` is arithmetically identical to `A_rew_instr` — verified,
+the whole 20x20 RDM matches at r = 1.0000. Omitted rather than run as a
+duplicate. It would also have been constant across halves.
+
+**Why direction is in the across combos.** Across halves `direction` is exactly
+orthogonal to every set model (r = 0.0000, because each task appears once
+forward and once backward per half). But it correlates about -0.55 with the
+execution models there, so once execution is in the design the partial
+correlation reappears: +0.029 (AB), **+0.372 (ABC)**, **+0.454 (ABCD)**.
+Marginally orthogonal is not conditionally orthogonal; leaving it out would let
+execution absorb direction-driven variance.
+
+**k=4 caveat.** The full multiset is reversal-invariant, so
+`ABCD_rew_instr_unordered` cannot distinguish instructed from executed ORDER —
+read it as a "locations this task uses" model. It is NOT equal to `ABCD_rew`
+(r ~ 0.18), which is why every across combo carries its execution counterpart.
+
+**Design pre-flight (sub-02, 01-TR4 proxy):** all fitted designs well
+conditioned — within-half condition numbers 1.6-2.3, across-half 1.8-2.9.
+
+**`mc/fmri_analysis/check_RSA_ran.py`** — mirrors the three families and the
+exact-name override, so `expected_map_names` resolves the new names.
+
+**`mc/fmri_analysis/submit_RSA_instruction_epochs.sh`** — default config changed
+to this one. It had been left pointing at `rsa_instruction_samedirection.json`
+by commit c32824a, which would have run the execution model under an `_instr`
+name; that config is now marked `_DEPRECATED` in its own body.
+
+## 2026-09-15 — CORRECTION: the same-direction mask cannot test the instruction model
+
+SK spotted this. Verified, and it is exact: **on same-direction cells,
+`ABCD_rew_instr` and `ABCD_rew` are bit-identical regressors** — max|diff| =
+0.000, r = 1.0000, for the F-F and the B-B cells separately.
+
+Reason: the backward execution sequence is the exact reverse of the forward
+one, and reversing BOTH members of a pair preserves position-wise Hamming
+distance. So for a B-B pair, `Hamming(reverse(a), reverse(b)) ==
+Hamming(a, b)`, which is the instruction value. For an F-F pair the two models
+are trivially the same. Masking to same-direction cells therefore does not
+produce a cleaner instruction model — it produces the **execution** model under
+an `_instr` name, and fitting it returned exactly the same beta (+0.00682) for
+both.
+
+### The design entanglement this exposes
+
+The within-half RDM contains only two kinds of cell, and each kills one model:
+
+| cells | n | `ABCD_rew_instr` | `ABCD_rew` | tests |
+|---|---:|---|---|---|
+| same-direction (F-F, B-B) | 40 | varies | **identical to instr** | reward overlap, not instruction |
+| direction-crossing (B-F) | 50 | varies | **constant at 1.0** | instruction, but every pair crosses the cue |
+
+`ABCD_rew` is constant on every crossing cell because a forward and a backward
+sequence never match at any of the four positions. So the
+instruction-vs-execution contrast is identifiable **only** on direction-crossing
+cells — which is exactly where the "please backwards" cue differs.
+
+The confound is therefore not removable by any means tried, and this explains
+the whole series: no control regressor works because the confound is collinear
+with the hypothesis *by construction*, and masking does not work because it
+deletes the contrast entirely. It is a design-level entanglement, not an
+analysis choice.
+
+### The one clean fit that remains
+
+On **B-F cross-task cells (40)**, `ABCD_rew` is constant AND direction-crossing
+is constant (every pair is one forward with one backward, both orderings
+present), so neither can confound anything, and the forced-zero cells are
+excluded. Only the instruction model varies there:
+
+    ABCD_rew_instr on B-F cross-task cells = -0.05547
+
+That is an unconfounded test of whether instructed reward-sequence overlap
+predicts instruction-period pattern similarity across a direction switch, and
+it is clearly negative.
+
+### Status of (d) and (e), written yesterday
+
+`condition_files/rsa_instruction_samedirection.json` and the
+`within_same_direction` scope are **not withdrawn but must not be run or
+reported under the `_instr` name** — the maps it writes are the execution model.
+The scope machinery itself is correct and the runner/audit changes in (e)
+(including the smoothing-config collision fix) stand on their own. Decision
+pending: drop the config, or rename it to what it actually fits (a
+reward-sequence-overlap model on the cells where instruction and execution
+coincide).
+
+The 2026-09-14 (c) conclusion — the negative is a forward/backward effect, not
+a time effect — is unaffected and still holds.
+
 ## 2026-09-14 (e) — Cluster runner + audit adjusted for the same-direction config
 
 **`mc/fmri_analysis/submit_RSA_instruction_epochs.sh`**
