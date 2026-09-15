@@ -38,10 +38,16 @@ OUT_DIR = None
 
 
 def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
-         include_needs_review=True, clean_name=None):
+         include_needs_review=True, clean_name=None, pad_s=None):
     """`clean_name` is the LFP-clean extraction the detect/hfb stages READ.
     Defaults to `analysis_name`; set it to re-detect an existing extraction
-    under a new name (a pad sweep) without re-reading any raw file."""
+    under a new name (a pad sweep) without re-reading any raw file.
+
+    `pad_s` is written into the detect/hfb lines. **A pad sweep needs it.**
+    Without it every variant runs at the module default and four differently
+    named analyses come out identical -- silently, since nothing errors and each
+    one looks like a valid run on its own.
+    """
     R = swr_io.get_data_root()
     if out_dir is None:
         out_dir = os.path.join(swr_io.derivatives_dir(R), "group", "swr",
@@ -59,6 +65,15 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
 
     # stage 2 needs bipolar_pairs; stage 3 needs continuous.npy
     clean = analysis_name if clean_name is None else str(clean_name)
+    # A pad variant that carries no pad is the one mistake here that produces a
+    # believable wrong answer rather than an error, so it is refused up front.
+    if pad_s is None and "pad" in str(analysis_name).lower():
+        raise ValueError(
+            f"analysis_name={analysis_name!r} looks like a pad variant but no "
+            f"--pad_s was given.\n"
+            f"  Without it every variant runs at the module default and they all "
+            f"come out identical.\n"
+            f"  -> add e.g. --pad_s=0.5")
     rows_pre, rows_det, rows_qc, rows_fig, rows_hfb = [], [], [], [], []
     stale_pairs = []
     for _, r in ok.iterrows():
@@ -69,6 +84,7 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
                             clean, "continuous.npy")
         arg = f"--session={s} --analysis_name={analysis_name}"
         arg_read = arg + (f" --clean_name={clean}" if clean != analysis_name else "")
+        arg_read += f" --pad_s={pad_s}" if pad_s is not None else ""
         if os.path.isfile(pairs):
             # A pair file with no `role` column predates the cortical montage.
             # It would extract silently -- hippocampus only -- and the session
@@ -142,6 +158,8 @@ def make(stage="both", analysis_name="swr_v1", out_dir=OUT_DIR,
     print("     qc       needs ripple_events.csv      (swr_detect_session.py)")
     print("     qcfig    needs ripple_events.csv      (same, but draws figures)")
     print("     hfb      needs continuous.npy         (sibling of detect, not after it)")
+    if pad_s is not None:
+        print(f"\n  pad_s={pad_s} written into every detect/hfb line.")
     print("  Re-run this script after each stage to pick up what just finished.")
     if stage in ("both", "detect") and not rows_det:
         print("\n  NOTE stage-3 list is empty: no continuous.npy yet.")
