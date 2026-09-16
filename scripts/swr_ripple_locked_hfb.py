@@ -96,7 +96,24 @@ SHIFT_RANGE_S = (5.0, 120.0)   # shifted-null offsets, either sign
 # and RSA analyses, which have no epoch requirement.
 PAD_SWEEP = (0.25, 0.50, 1.00, 1.50, 2.00, 3.00)
 PAD_INERT_BELOW = HALF_S
-ROI_ORDER = ["mPFC", "mOFC", "TemporalLateral", "Auditory", "Visual"]
+ROI_ORDER = ["A24_z-10_to_5", "mPFC", "mOFC", "TemporalLateral", "Auditory",
+             "Visual"]
+
+# A z-defined medial-frontal group cutting across the mPFC/mOFC label boundary.
+# Area 24 is a principal hippocampal input to prefrontal cortex and straddles
+# that boundary as this project draws it, so the labels may be splitting one
+# functional zone. Derivations in mPFC or mOFC whose midpoint z falls in the
+# band are ADDED under this name; their original rows are left untouched, so
+# mPFC and mOFC statistics are unchanged and the groups OVERLAP -- never sum
+# them or treat them as independent.
+#
+# ⚠ The band was chosen after seeing the gradient scatter. It is defensible on
+# anatomy (perigenual/subgenual area 24 is the classic input zone) but it is
+# NOT independent of the data that suggested it. The continuous z regression in
+# `_z_gradient` is the non-circular version of the same question -- quote that
+# one when the distinction matters.
+A24_BAND = (-10.0, 5.0)
+A24_NAME = "A24_z-10_to_5"
 
 
 def _clean_mask(rows, n, fs):
@@ -206,6 +223,29 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
 
     d = pd.DataFrame(rows)
     d["diff"] = d.peri - d.nonperi
+
+    # Duplicate the medial-frontal rows that fall in the A24 band under the new
+    # label. The traces are indexed, not copied, so the figure gets it too.
+    zmap = hp.drop_duplicates("pair_id").set_index("pair_id")["mni_z"]
+    d["mni_z"] = d.cx_pair.map(zmap)
+    in_band = (d.roi.isin(["mPFC", "mOFC"])
+               & d.mni_z.between(A24_BAND[0], A24_BAND[1]))
+    if in_band.any():
+        extra = d[in_band].copy()
+        extra["roi"] = A24_NAME
+        d = pd.concat([d, extra], ignore_index=True)
+        ti = pd.DataFrame(tc_ix)
+        ti["mni_z"] = ti.cx_pair.map(zmap)
+        tb = (ti.roi.isin(["mPFC", "mOFC"])
+              & ti.mni_z.between(A24_BAND[0], A24_BAND[1]))
+        ex = ti[tb].copy()
+        ex["roi"] = A24_NAME
+        ex["trace_row"] = ti.index[tb]           # point at the same trace
+        ti["trace_row"] = ti.index
+        tc_ix = pd.concat([ti, ex], ignore_index=True).to_dict("records")
+        print(f"  {A24_NAME}: {int(extra.cx_pair.nunique())} derivations "
+              f"(z {A24_BAND[0]:.0f} to {A24_BAND[1]:.0f} mm), overlapping "
+              f"mPFC/mOFC -- do not sum")
     print(f"\n\n{len(d)} rows, {d.cx_pair.nunique()} cortical derivations, "
           f"{d.session.nunique()} sessions, {d.subject.nunique()} subjects")
 
@@ -248,7 +288,12 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
                                     "identical subset: a +-HALF_S epoch must be "
                                     "artifact-free, so nearer events are excluded "
                                     "at any detection pad"),
-                       "levels": ["session", "subject"],
+                       "levels": ["session (PRIMARY)", "subject (control)"],
+                       "a24_band": list(A24_BAND),
+                       "a24_note": ("overlaps mPFC/mOFC by construction; "
+                                    "band chosen after seeing the gradient, "
+                                    "so the continuous z regression is the "
+                                    "non-circular version"),
                        "n_shifts": n_shifts, "shift_range_s": list(SHIFT_RANGE_S),
                        "seed": seed, "min_ripples": MIN_RIPPLES,
                        "created": datetime.now().isoformat(timespec="seconds"),
@@ -412,7 +457,8 @@ def _report(res, pads):
     print(" peri = +-250 ms; non-peri = (-750:-250) U (+250:+750); epoch +-1 s")
     print("=" * 80)
     for lvl in ("session", "subject"):
-        print(f"\n  --- {lvl.upper()}-level, different shaft "
+        tag = "PRIMARY" if lvl == "session" else "control"
+        print(f"\n  --- {lvl.upper()}-level [{tag}], different shaft "
               f"(volume-conduction free) ---")
         print(f"    {'ROI':<17s}{'n_cx':>6s}{'n_' + lvl:>9s}{'align':>9s}"
               f"{'effect':>10s}{'t':>7s}{'p':>9s}")
@@ -485,8 +531,23 @@ def _smooth(y, fs, ms=SMOOTH_MS):
     return gaussian_filter1d(y, (ms / 1000.0 * fs) / 2.355, axis=-1)
 
 
+def _curves(tr, ix, roi, unit, flank, fs, smooth_ms):
+    """Per-unit real-minus-null trace for one ROI, baselined to the non-peri band."""
+    sel = (ix.roi == roi) & (~ix.same_shaft)
+    out = []
+    for _, gi in ix[sel].groupby(unit):
+        rr = gi.trace_row.to_numpy()
+        r = tr[rr[gi.is_real.to_numpy()]]
+        n = tr[rr[~gi.is_real.to_numpy()]]
+        if not len(r) or not len(n):
+            continue
+        c = r.mean(0) - n.mean(0)
+        out.append(c - c[flank].mean())          # non-peri IS the baseline
+    return _smooth(np.stack(out), fs, smooth_ms) if out else None
+
+
 def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
-    """Time courses and per-ROI effects, at BOTH levels of inference."""
+    """Session-level primary; subject-level as a control figure."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -497,49 +558,71 @@ def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
     res = json.load(open(os.path.join(R, "result.json")))["results"]
     t_ms = z["t_ms"]
     fs = 1000.0 / (t_ms[1] - t_ms[0])
-    C = rfig.MONTAGE_C
+    C = dict(rfig.MONTAGE_C)
+    C[A24_NAME] = "#7B3294"                     # a distinct hue: it is a new group
     CM = 1 / 2.54
-    SHORT = {"TemporalLateral": "Lat. temporal", "Auditory": "Auditory",
-             "Visual": "Visual", "mPFC": "mPFC", "mOFC": "mOFC"}
+    SHORT = {"TemporalLateral": "Lat. temporal", A24_NAME: "A24 (z −10:5)",
+             "Auditory": "Auditory", "Visual": "Visual",
+             "mPFC": "mPFC", "mOFC": "mOFC"}
     tr = z["traces"]
     ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
     ix["same_shaft"] = ix.same_shaft.astype(bool)
     ix["is_real"] = ix.is_real.astype(bool)
+    if "trace_row" not in ix.columns:
+        ix["trace_row"] = np.arange(len(ix))
     flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
 
-    fig, axes = plt.subplots(2, 2, figsize=(19.0 * CM, 13.5 * CM),
-                             constrained_layout=True)
-    for col, unit in enumerate(("session", "subject")):
+    for unit, tag in (("session", "PRIMARY"), ("subject", "control")):
         present = [r for r in ROI_ORDER if r in res[unit].get("different_shaft", {})]
+        n = len(present)
+        fig = plt.figure(figsize=(22.0 * CM, 14.0 * CM), constrained_layout=True)
+        gs = fig.add_gridspec(2, n, height_ratios=[1.0, 1.25])
 
-        ax = axes[0, col]
-        for roi in present:
-            sel = (ix.roi == roi) & (~ix.same_shaft)
-            curves = []
-            for _, gi in ix[sel].groupby(unit):
-                r = tr[gi.index[gi.is_real.to_numpy()]]
-                n = tr[gi.index[~gi.is_real.to_numpy()]]
-                if not len(r) or not len(n):
-                    continue
-                c = r.mean(0) - n.mean(0)
-                curves.append(c - c[flank].mean())
-            if not curves:
+        # --- row 1: one panel per ROI, EACH WITH ITS OWN Y-SCALE ------------
+        # Sharing an axis lets mOFC set the scale and makes every other region
+        # look flat, which is a plotting artefact rather than a result. The
+        # traces are already baselined to the non-peri band, so 0 on each axis
+        # is that region's own non-peri level and the peak is directly readable.
+        for i, roi in enumerate(present):
+            ax = fig.add_subplot(gs[0, i])
+            A = _curves(tr, ix, roi, unit, flank, fs, smooth_ms)
+            if A is None:
                 continue
-            A = _smooth(np.stack(curves), fs, smooth_ms)
             m, se = A.mean(0), A.std(0, ddof=1) / np.sqrt(len(A))
+            ax.plot(t_ms, m, color=C.get(roi, "#888"), lw=1.4)
+            ax.fill_between(t_ms, m - se, m + se, color=C.get(roi, "#888"),
+                            alpha=0.2, lw=0)
+            ax.axvline(0, color="0.4", lw=0.7, ls="--")
+            ax.axhline(0, color="0.7", lw=0.6)
+            ax.axvspan(-PERI_S * 1000, PERI_S * 1000, color="#F15A29",
+                       alpha=0.07, lw=0)
+            v = res[unit]["different_shaft"][roi]
+            ax.set_title(f"{SHORT.get(roi, roi)}\nn={v['n_units']}, "
+                         f"p={v['p']:.3f}", fontsize=8, pad=3)
+            ax.tick_params(labelsize=7)
+            ax.set_xticks([-1000, 0, 1000])
+            ax.margins(x=0)
+            if i == 0:
+                ax.set_ylabel("HFB, real − null\n(vs non-peri, z)", fontsize=8)
+            for sp in ("top", "right"):
+                ax.spines[sp].set_visible(False)
+
+        # --- row 2 left: overlay; right: bars ------------------------------
+        half = max(1, n // 2)
+        ax = fig.add_subplot(gs[1, :half])
+        for roi in present:
+            A = _curves(tr, ix, roi, unit, flank, fs, smooth_ms)
+            if A is None:
+                continue
+            m = A.mean(0)
             ax.plot(t_ms, m, color=C.get(roi, "#888"), lw=1.5,
                     label=f"{SHORT.get(roi, roi)} ({len(A)})")
-            ax.fill_between(t_ms, m - se, m + se, color=C.get(roi, "#888"),
-                            alpha=0.15, lw=0)
         ax.axvline(0, color="0.35", lw=0.8, ls="--")
         ax.axhline(0, color="0.7", lw=0.6)
         ax.axvspan(-PERI_S * 1000, PERI_S * 1000, color="#F15A29", alpha=0.07, lw=0)
         ax.set_xlabel("Time from ripple peak (ms)", fontsize=9)
-        if col == 0:
-            ax.set_ylabel("HFB, real − null, vs non-peri (z)", fontsize=9)
-        ax.set_title(f"{unit}-level  (n = "
-                     f"{max(v['n_units'] for v in res[unit]['different_shaft'].values())}"
-                     f" max)", fontsize=10.5)
+        ax.set_ylabel("HFB, real − null, vs non-peri (z)", fontsize=9)
+        ax.set_title("all regions, shared scale", fontsize=10)
         ax.legend(fontsize=7, frameon=False, loc="upper left", handlelength=1.3,
                   labelspacing=0.28)
         ax.tick_params(labelsize=8)
@@ -547,7 +630,7 @@ def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
 
-        ax = axes[1, col]
+        ax = fig.add_subplot(gs[1, half:])
         vals = [res[unit]["different_shaft"][r] for r in present]
         top = max(v["effect"] + v["sem"] for v in vals)
         bot = min(0.0, min(v["effect"] - v["sem"] for v in vals))
@@ -561,27 +644,30 @@ def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
         ax.set_ylim(bot - 0.08 * top, top * 1.28)
         ax.set_xticks(range(len(present)))
         ax.set_xticklabels([f"{SHORT.get(r, r)}\n({v['n_units']})"
-                            for r, v in zip(present, vals)], fontsize=8,
+                            for r, v in zip(present, vals)], fontsize=7.5,
                            rotation=30, ha="right")
-        if col == 0:
-            ax.set_ylabel("peri − non-peri, minus null (z)", fontsize=9)
-        ax.set_title(f"{unit}-level effect ± s.e.m.", fontsize=10.5)
+        ax.set_ylabel("peri − non-peri, minus null (z)", fontsize=9)
+        ax.set_title(f"effect ± s.e.m.", fontsize=10)
         ax.tick_params(labelsize=8)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
 
-    fig.suptitle("Ripple-locked cortical HFB — different-shaft derivations only",
-                 fontsize=11.5)
-    stem = out_stem or os.path.join(R, "ripple_locked_hfb")
-    fig.savefig(stem + ".pdf")
-    fig.savefig(stem + ".png", dpi=300)
-    plt.close(fig)
+        fig.suptitle(f"Ripple-locked cortical HFB — {unit}-level [{tag}], "
+                     f"different-shaft derivations", fontsize=11.5)
+        stem = (out_stem or os.path.join(R, "ripple_locked_hfb")) + (
+            "" if unit == "session" else "_subject_control")
+        fig.savefig(stem + ".pdf")
+        fig.savefig(stem + ".png", dpi=300)
+        plt.close(fig)
+        print(f"figure -> {stem}.pdf / .png")
 
     # ---- medial-frontal dorsoventral gradient -----------------------------
     zg = res.get("z_gradient") or {}
     if zg.get("_table"):
         e = pd.DataFrame(zg["_table"])
-        fig, ax = plt.subplots(figsize=(8.5 * CM, 7.0 * CM), constrained_layout=True)
+        fig, ax = plt.subplots(figsize=(9.0 * CM, 7.0 * CM), constrained_layout=True)
+        ax.axvspan(A24_BAND[0], A24_BAND[1], color="#7B3294", alpha=0.10, lw=0,
+                   label=f"A24 band ({A24_BAND[0]:.0f} to {A24_BAND[1]:.0f})")
         for roi, g in e.groupby("roi"):
             ax.scatter(g.mni_z, g.effect, s=16, alpha=0.8,
                        color=C.get(roi, "#888"), edgecolors="none",
@@ -595,18 +681,17 @@ def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
         ax.set_xlabel("MNI z (mm)   ventral → dorsal", fontsize=9)
         ax.set_ylabel("ripple-locked HFB effect (z)", fontsize=9)
         ax.set_title(f"Medial frontal dorsoventral gradient\n"
-                     f"ρ = {sp['rho']:+.3f}, p = {sp['p']:.3f}, "
-                     f"n = {len(e)}", fontsize=10)
-        ax.legend(fontsize=7.5, frameon=False)
+                     f"ρ = {sp['rho']:+.3f}, p = {sp['p']:.3f}, n = {len(e)}",
+                     fontsize=10)
+        ax.legend(fontsize=7, frameon=False)
         ax.tick_params(labelsize=8)
         for s_ in ("top", "right"):
             ax.spines[s_].set_visible(False)
-        gs = os.path.join(R, "medial_frontal_z_gradient")
-        fig.savefig(gs + ".pdf")
-        fig.savefig(gs + ".png", dpi=300)
+        gs2 = os.path.join(R, "medial_frontal_z_gradient")
+        fig.savefig(gs2 + ".pdf")
+        fig.savefig(gs2 + ".png", dpi=300)
         plt.close(fig)
-        print(f"figure -> {gs}.pdf / .png")
-    print(f"figure -> {stem}.pdf / .png")
+        print(f"figure -> {gs2}.pdf / .png")
     return None
 
 
