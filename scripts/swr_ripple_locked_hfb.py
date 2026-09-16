@@ -65,8 +65,14 @@ except ImportError:
 print("ARGS:", sys.argv)
 
 ANALYSIS_NAME = "ripple_locked_hfb"
-HALF_S = 0.75                  # epoch half-width = He's non-peri outer edge
+# Epoch is +-1 s: Norman et al. 2021 plot and test over that range, and He et al.
+# plot it even though their windows stop at 750 ms. The STATISTIC keeps He's
+# windows exactly, so it stays comparable to them; the extra 250 ms either side
+# is for looking at.
+HALF_S = 1.00                  # epoch half-width (plotting)
 PERI_S = 0.25                  # He: peri = +-250 ms
+NONPERI_S = (0.25, 0.75)       # He: non-peri = (-750:-250) U (+250:+750)
+SMOOTH_MS = 50.0               # time-course smoothing; 0 disables
 MIN_RIPPLES = 20               # per (HC x cortical) pair, for a stable mean
 SHIFT_RANGE_S = (5.0, 120.0)   # shifted-null offsets, either sign
 # Artifact-pad stability. swr_v2 detects at 0.1 s and every event carries
@@ -82,7 +88,14 @@ SHIFT_RANGE_S = (5.0, 120.0)   # shifted-null offsets, either sign
 # Sweeping 0.10/0.25/0.50 therefore compares three identical subsets and looks
 # reassuringly flat while testing nothing. The informative range is above the
 # epoch half-width, where 0.75 -> 3.0 s takes the usable set from 100% to ~40%.
-PAD_SWEEP = (0.75, 1.00, 1.50, 2.00, 3.00)
+# SK asked to carry 0.25 and 0.5 forward. They are recorded in the settings and
+# swept, but for THIS design they are inert and that must not be mistaken for
+# stability: a +-1 s epoch has to be artifact-free, so every event nearer than
+# 1 s to a crossing is excluded whatever the detection pad. Pads at or below the
+# epoch half-width all select the identical subset. They do matter for the rate
+# and RSA analyses, which have no epoch requirement.
+PAD_SWEEP = (0.25, 0.50, 1.00, 1.50, 2.00, 3.00)
+PAD_INERT_BELOW = HALF_S
 ROI_ORDER = ["mPFC", "mOFC", "TemporalLateral", "Auditory", "Visual"]
 
 
@@ -118,6 +131,9 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
     fs = float(B["hfb_index"].out_fs.iloc[0]) if len(B["hfb_index"]) else 100.0
     w, wp = int(HALF_S * fs), int(PERI_S * fs)
     off = np.arange(-w, w)
+    t_s = off / fs
+    peri_ix = np.abs(t_s) < PERI_S
+    nonperi_ix = (np.abs(t_s) >= NONPERI_S[0]) & (np.abs(t_s) < NONPERI_S[1])
     print(f"\nbundle {b_dir}\n  {len(hp)} usable derivations, fs={fs:.0f} Hz, "
           f"{n_shifts} shifted nulls in +-[{lo:.0f},{hi:.0f}] s")
 
@@ -175,12 +191,13 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
                             "roi": x.roi_family, "same_shaft": bool(x.same_shaft),
                             "shift_s": sh, "is_real": sh == 0.0, "pad_s": pad,
                             "n_ripples": int(keep.sum()),
-                            "peri": float(m[w - wp:w + wp].mean()),
-                            "nonperi": float(np.r_[m[:w - wp], m[w + wp:]].mean()),
+                            "peri": float(m[peri_ix].mean()),
+                            "nonperi": float(m[nonperi_ix].mean()),
                         })
                     m = stack.mean(0)
                     tc.append(m)
                     tc_ix.append({"subject": x.subject_label,
+                                  "session": sess,
                                   "roi": x.roi_family,
                                   "same_shaft": bool(x.same_shaft),
                                   "is_real": sh == 0.0,
@@ -192,11 +209,17 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
     print(f"\n\n{len(d)} rows, {d.cx_pair.nunique()} cortical derivations, "
           f"{d.session.nunique()} sessions, {d.subject.nunique()} subjects")
 
-    native = min(pad_sweep)
-    res = _stats(d[d.pad_s == native])
-    res["pad_sweep"] = _pad_sweep(d, pad_sweep)
-    _report(res, d[d.pad_s == native])
-    _report_sweep(res["pad_sweep"], pad_sweep)
+    native = min(p for p in pad_sweep if p >= PAD_INERT_BELOW)
+    dn = d[d.pad_s == native]
+    res = {}
+    for lvl in ("session", "subject"):
+        res[lvl] = _stats(dn, unit=lvl)
+        res[f"contrasts_{lvl}"] = _contrasts(dn, unit=lvl)
+    res["pad_sweep"] = {lvl: _pad_sweep(d, pad_sweep, unit=lvl)
+                        for lvl in ("session", "subject")}
+    res["z_gradient"] = _z_gradient(dn, hp)
+    res["native_pad_s"] = native
+    _report(res, pad_sweep)
 
     if save:
         out_dir = out_dir or os.path.join(
@@ -218,6 +241,14 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
         with open(os.path.join(out_dir, "result.json"), "w") as f:
             json.dump({"analysis": ANALYSIS_NAME, "bundle": b_dir,
                        "peri_s": PERI_S, "half_s": HALF_S,
+                       "nonperi_s": list(NONPERI_S), "smooth_ms": SMOOTH_MS,
+                       "pad_sweep": list(pad_sweep),
+                       "pad_inert_below": PAD_INERT_BELOW,
+                       "pad_note": ("pads <= the epoch half-width select the "
+                                    "identical subset: a +-HALF_S epoch must be "
+                                    "artifact-free, so nearer events are excluded "
+                                    "at any detection pad"),
+                       "levels": ["session", "subject"],
                        "n_shifts": n_shifts, "shift_range_s": list(SHIFT_RANGE_S),
                        "seed": seed, "min_ripples": MIN_RIPPLES,
                        "created": datetime.now().isoformat(timespec="seconds"),
@@ -233,8 +264,23 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
     return None
 
 
-def _stats(d):
-    """Subject-level real-minus-shifted-null, per ROI, split by shaft."""
+def _effect(g, unit):
+    """Real-minus-shifted-null per `unit` (session or subject)."""
+    real = g[g.is_real].groupby(unit)["diff"].mean()
+    null = g[~g.is_real].groupby(unit)["diff"].mean()
+    c = real.index.intersection(null.index)
+    return (real[c] - null[c])
+
+
+def _stats(d, unit="subject"):
+    """Effect per ROI, split by shaft. `unit` is the level of inference.
+
+    Both levels are reported because they can disagree and the disagreement is
+    informative: a session-level test treats two sessions from one patient as
+    independent, which they are not, while a subject-level test throws away the
+    within-patient replication. Where they agree, the result does not depend on
+    that choice.
+    """
     from scipy import stats as st
     out = {}
     for same in (False, True):
@@ -245,129 +291,202 @@ def _stats(d):
             g = g0[g0.roi == roi]
             if not len(g):
                 continue
-            real = g[g.is_real].groupby("subject")["diff"].mean()
-            null = g[~g.is_real].groupby("subject")["diff"].mean()
-            c = real.index.intersection(null.index)
-            if len(c) < 5:
+            v = _effect(g, unit)
+            if len(v) < 5:
                 continue
-            v = (real[c] - null[c]).to_numpy()
-            t, p = st.ttest_1samp(v, 0.0)
+            t, p = st.ttest_1samp(v.to_numpy(), 0.0)
             out[lab][roi] = {
-                "n_subjects": int(len(c)),
+                "unit": unit, "n_units": int(len(v)),
                 "n_derivations": int(g.cx_pair.nunique()),
                 "n_ripple_alignments": int(g[g.is_real].n_ripples.sum()),
-                "real": float(real[c].mean()), "null": float(null[c].mean()),
-                "effect": float(v.mean()), "sem": float(v.std(ddof=1)/np.sqrt(len(v))),
+                "effect": float(v.mean()),
+                "sem": float(v.std(ddof=1) / np.sqrt(len(v))),
                 "t": float(t), "p": float(p)}
-    # ROI contrasts, different-shaft only
+    return out
+
+
+def _contrasts(d, unit="subject"):
+    from scipy import stats as st
     g0 = d[~d.same_shaft]
-    eff = (g0[g0.is_real].groupby(["subject", "roi"])["diff"].mean()
-           - g0[~g0.is_real].groupby(["subject", "roi"])["diff"].mean()).reset_index()
-    piv = eff.pivot(index="subject", columns="roi", values="diff")
-    out["contrasts_different_shaft"] = {}
+    eff = (g0[g0.is_real].groupby([unit, "roi"])["diff"].mean()
+           - g0[~g0.is_real].groupby([unit, "roi"])["diff"].mean()).reset_index()
+    piv = eff.pivot(index=unit, columns="roi", values="diff")
+    out = {}
     for a, b in [("mOFC", "Visual"), ("mPFC", "Visual"),
                  ("mOFC", "TemporalLateral"), ("mPFC", "TemporalLateral"),
                  ("mOFC", "mPFC")]:
         if a not in piv or b not in piv:
             continue
-        s = piv[[a, b]].dropna()
-        if len(s) < 5:
+        x = piv[[a, b]].dropna()
+        if len(x) < 5:
             continue
-        t, p = st.ttest_rel(s[a], s[b])
-        out["contrasts_different_shaft"][f"{a}_vs_{b}"] = {
-            "n_subjects": int(len(s)), "diff": float((s[a] - s[b]).mean()),
-            "t": float(t), "p": float(p)}
+        t, p = st.ttest_rel(x[a], x[b])
+        out[f"{a}_vs_{b}"] = {"unit": unit, "n_units": int(len(x)),
+                              "diff": float((x[a] - x[b]).mean()),
+                              "t": float(t), "p": float(p)}
     return out
 
 
-def _pad_sweep(d, pads):
+def _z_gradient(d, hfb_pairs):
+    """Does the medial-frontal effect vary along the dorsoventral (MNI z) axis?
+
+    Area 24 is a principal hippocampal input to prefrontal cortex and straddles
+    the mPFC/mOFC boundary as this project draws it, so the ROI labels may be
+    cutting one functional gradient in two. Regressing the per-derivation effect
+    on MNI z asks that directly, without depending on where the label boundary
+    sits.
+
+    Per derivation (not per subject) because z varies WITHIN subject -- that is
+    the whole point -- with subject as a random effect.
+    """
+    import statsmodels.formula.api as smf
+    from scipy import stats as st
+    g0 = d[(~d.same_shaft) & d.roi.isin(["mPFC", "mOFC"])]
+    if not len(g0):
+        return {}
+    eff = (g0[g0.is_real].groupby(["cx_pair", "subject", "roi"])["diff"].mean()
+           - g0[~g0.is_real].groupby(["cx_pair", "subject", "roi"])["diff"].mean())
+    e = eff.reset_index().rename(columns={0: "effect", "diff": "effect"})
+    coord = hfb_pairs[["pair_id", "mni_x", "mni_y", "mni_z"]].drop_duplicates("pair_id")
+    e = e.merge(coord, left_on="cx_pair", right_on="pair_id", how="left").dropna(
+        subset=["mni_z", "effect"])
+    if len(e) < 10:
+        return {}
+    out = {"n_derivations": int(len(e)),
+           "n_subjects": int(e.subject.nunique()),
+           "z_range": [float(e.mni_z.min()), float(e.mni_z.max())],
+           "roi_counts": e.roi.value_counts().to_dict()}
+    rho, p = st.spearmanr(e.mni_z, e.effect)
+    out["spearman_z_vs_effect"] = {"rho": float(rho), "p": float(p)}
+    try:
+        m = smf.mixedlm("effect ~ mni_z", e, groups=e["subject"].astype(str)).fit(
+            reml=True, method="nm", maxiter=2000)
+        out["lme_effect_on_z"] = {"beta_per_mm": float(m.params.get("mni_z", np.nan)),
+                                  "p": float(m.pvalues.get("mni_z", np.nan))}
+    except Exception as ex:
+        out["lme_effect_on_z"] = {"error": f"{type(ex).__name__}: {ex}"}
+    # also y, since area 24 runs anteroposteriorly too
+    rho_y, p_y = st.spearmanr(e.mni_y, e.effect)
+    out["spearman_y_vs_effect"] = {"rho": float(rho_y), "p": float(p_y)}
+    out["_table"] = e[["cx_pair", "subject", "roi", "mni_x", "mni_y", "mni_z",
+                       "effect"]].to_dict("records")
+    return out
+
+
+def _pad_sweep(d, pads, unit="subject"):
     """Effect at each artifact pad. Larger pad = fewer, cleaner ripples.
 
     A real effect should be stable or STRENGTHEN with more data. One that grows
     as ripples are discarded is a small-n artefact -- the failure mode the
-    ripple-RSA mPFC result showed (CHANGELOG 2026-09-16).
+    ripple-RSA mPFC effect showed (CHANGELOG 2026-09-16).
 
-    Pads below HALF_S are not tested: the epoch requirement already excludes
-    every event nearer than HALF_S to a crossing, so they would compare
-    identical subsets. See the PAD_SWEEP comment.
+    Pads at or below the epoch half-width select the IDENTICAL subset, because a
+    +-HALF_S epoch must be artifact-free. They are swept anyway so the table
+    shows it rather than leaving it to be assumed.
     """
     from scipy import stats as st
     g0 = d[~d.same_shaft]
     out = {}
     for pad in pads:
         g1 = g0[g0.pad_s == pad]
-        out[f"{pad:.2f}"] = {}
+        k = f"{pad:.2f}"
+        out[k] = {"_inert": bool(pad <= PAD_INERT_BELOW)}
         for roi in ROI_ORDER:
             g = g1[g1.roi == roi]
             if not len(g):
                 continue
-            real = g[g.is_real].groupby("subject")["diff"].mean()
-            null = g[~g.is_real].groupby("subject")["diff"].mean()
-            c = real.index.intersection(null.index)
-            if len(c) < 5:
+            v = _effect(g, unit)
+            if len(v) < 5:
                 continue
-            v = (real[c] - null[c]).to_numpy()
-            t, p = st.ttest_1samp(v, 0.0)
-            out[f"{pad:.2f}"][roi] = {
-                "n_subjects": int(len(c)),
-                "n_ripple_alignments": int(g[g.is_real].n_ripples.sum()),
-                "effect": float(v.mean()), "t": float(t), "p": float(p)}
+            t, p = st.ttest_1samp(v.to_numpy(), 0.0)
+            out[k][roi] = {"n_units": int(len(v)),
+                           "n_ripple_alignments": int(g[g.is_real].n_ripples.sum()),
+                           "effect": float(v.mean()), "t": float(t), "p": float(p)}
     return out
 
 
-def _report_sweep(sw, pads):
-    print("\n" + "=" * 78)
-    print(" ARTIFACT-PAD STABILITY   (different shaft; larger pad = fewer ripples)")
-    print(" a real effect should NOT grow as ripples are discarded")
-    print(f" sweep starts at the epoch half-width ({HALF_S:.2f}s): events nearer than"
-          f" that to a\n crossing cannot enter at ANY detection pad, so smaller"
-          f" pads test nothing")
-    print("=" * 78)
-    keys = [f"{p:.2f}" for p in pads]
-    print(f"\n  {'ROI':<16s}" + "".join(f"{'pad ' + k:>16s}" for k in keys))
-    for roi in ROI_ORDER:
-        if not any(roi in sw.get(k, {}) for k in keys):
-            continue
-        line = f"  {roi:<16s}"
-        for k in keys:
-            v = sw.get(k, {}).get(roi)
-            line += (f"{v['effect']:>8.4f} p={v['p']:<6.3f}" if v
-                     else f"{'--':>16s}")
-        print(line)
-    print(f"\n  {'alignments':<16s}" + "".join(
-        f"{max((sw[k][r]['n_ripple_alignments'] for r in sw[k]), default=0):>16,d}"
-        for k in keys))
-
-
-def _report(res, d):
-    print("\n" + "=" * 78)
-    print(" RIPPLE-LOCKED CORTICAL HFB   (real minus shifted null, subject-level)")
-    print("=" * 78)
-    for lab in ("different_shaft", "same_shaft"):
-        if not res.get(lab):
-            continue
-        note = ("PRIMARY -- volume-conduction free"
-                if lab == "different_shaft" else
-                "volume conduction: same electrode as the hippocampal contact")
-        print(f"\n  {lab}   ({note})")
-        print(f"    {'ROI':<17s}{'n_cx':>6s}{'subj':>6s}{'align':>9s}"
+def _report(res, pads):
+    print("\n" + "=" * 80)
+    print(f" RIPPLE-LOCKED CORTICAL HFB   (real minus shifted null, "
+          f"pad {res['native_pad_s']:.2f}s)")
+    print(" peri = +-250 ms; non-peri = (-750:-250) U (+250:+750); epoch +-1 s")
+    print("=" * 80)
+    for lvl in ("session", "subject"):
+        print(f"\n  --- {lvl.upper()}-level, different shaft "
+              f"(volume-conduction free) ---")
+        print(f"    {'ROI':<17s}{'n_cx':>6s}{'n_' + lvl:>9s}{'align':>9s}"
               f"{'effect':>10s}{'t':>7s}{'p':>9s}")
-        for roi, v in res[lab].items():
+        for roi, v in res[lvl].get("different_shaft", {}).items():
             star = "*" if v["p"] < 0.05 else " "
-            print(f"    {roi:<17s}{v['n_derivations']:>6d}{v['n_subjects']:>6d}"
+            print(f"    {roi:<17s}{v['n_derivations']:>6d}{v['n_units']:>9d}"
                   f"{v['n_ripple_alignments']:>9d}{v['effect']:>10.4f}"
                   f"{v['t']:>7.2f}{v['p']:>9.4f}{star}")
-    if res.get("contrasts_different_shaft"):
-        print("\n  ROI contrasts (different shaft only, paired within subject)")
-        for k, v in res["contrasts_different_shaft"].items():
-            star = "*" if v["p"] < 0.05 else " "
-            print(f"    {k:<30s} n={v['n_subjects']:>3d}  "
-                  f"{v['diff']:+.4f}  t={v['t']:+.2f}  p={v['p']:.4f}{star}")
-    print("\n" + "=" * 78)
+        cs = res.get(f"contrasts_{lvl}", {})
+        if cs:
+            print(f"    contrasts: " + ";  ".join(
+                f"{k} {v['diff']:+.4f} p={v['p']:.3f}" for k, v in cs.items()))
+
+    print("\n  --- SAME shaft (volume conduction; not for anatomical claims) ---")
+    for roi, v in res["subject"].get("same_shaft", {}).items():
+        print(f"    {roi:<17s}{v['n_derivations']:>6d}{v['n_units']:>9d}"
+              f"{'':>9s}{v['effect']:>10.4f}{v['t']:>7.2f}{v['p']:>9.4f}")
+
+    zg = res.get("z_gradient") or {}
+    if zg:
+        print(f"\n  --- MEDIAL FRONTAL dorsoventral gradient "
+              f"({zg['n_derivations']} derivations, {zg['n_subjects']} subjects, "
+              f"z {zg['z_range'][0]:.0f} to {zg['z_range'][1]:.0f} mm) ---")
+        sp = zg["spearman_z_vs_effect"]
+        print(f"    effect vs MNI z : Spearman rho = {sp['rho']:+.3f}, "
+              f"p = {sp['p']:.4f}")
+        lme = zg.get("lme_effect_on_z", {})
+        if "beta_per_mm" in lme:
+            print(f"                      LME beta = {lme['beta_per_mm']:+.5f} "
+                  f"per mm, p = {lme['p']:.4f}")
+        sy = zg["spearman_y_vs_effect"]
+        print(f"    effect vs MNI y : Spearman rho = {sy['rho']:+.3f}, "
+              f"p = {sy['p']:.4f}")
+        print(f"    ROI mix: {zg['roi_counts']}")
+
+    for lvl in ("session", "subject"):
+        sw = res["pad_sweep"][lvl]
+        keys = [f"{p:.2f}" for p in pads]
+        print(f"\n  --- PAD STABILITY, {lvl}-level "
+              f"(pads <= {PAD_INERT_BELOW:.2f}s are the SAME subset) ---")
+        print(f"    {'ROI':<16s}" + "".join(f"{'pad ' + k:>15s}" for k in keys))
+        for roi in ROI_ORDER:
+            if not any(roi in sw.get(k, {}) for k in keys):
+                continue
+            line = f"    {roi:<16s}"
+            for k in keys:
+                v = sw.get(k, {}).get(roi)
+                line += (f"{v['effect']:>8.4f} p={v['p']:<4.2f}" if v
+                         else f"{'--':>15s}")
+            print(line)
+        print(f"    {'alignments':<16s}" + "".join(
+            f"{max((sw[k][r]['n_ripple_alignments'] for r in sw[k] if r != '_inert'), default=0):>15,d}"
+            for k in keys))
+    print("\n" + "=" * 80)
 
 
-def figure(results=None, out_stem=None):
-    """Time courses and the effect per ROI, different-shaft set."""
+def _smooth(y, fs, ms=SMOOTH_MS):
+    """Gaussian smoothing of a time course, in milliseconds.
+
+    The HFB is already a sub-band-averaged envelope at 100 Hz, so this is
+    cosmetic rather than a filter with consequences -- but without it a
+    +-1 s trace of 200 points is dominated by sample-to-sample wobble and only
+    the largest effect is visible. He et al. and Norman et al. both plot
+    visibly smoothed traces. The STATISTICS are computed on unsmoothed data;
+    smoothing is applied only here.
+    """
+    if not ms:
+        return y
+    from scipy.ndimage import gaussian_filter1d
+    return gaussian_filter1d(y, (ms / 1000.0 * fs) / 2.355, axis=-1)
+
+
+def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
+    """Time courses and per-ROI effects, at BOTH levels of inference."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -377,85 +496,116 @@ def figure(results=None, out_stem=None):
     z = np.load(os.path.join(R, "timecourses.npz"))
     res = json.load(open(os.path.join(R, "result.json")))["results"]
     t_ms = z["t_ms"]
+    fs = 1000.0 / (t_ms[1] - t_ms[0])
     C = rfig.MONTAGE_C
     CM = 1 / 2.54
-
     SHORT = {"TemporalLateral": "Lat. temporal", "Auditory": "Auditory",
              "Visual": "Visual", "mPFC": "mPFC", "mOFC": "mOFC"}
     tr = z["traces"]
     ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
     ix["same_shaft"] = ix.same_shaft.astype(bool)
     ix["is_real"] = ix.is_real.astype(bool)
-    present = [r for r in ROI_ORDER if r in res.get("different_shaft", {})
-               and ((ix.roi == r) & ~ix.same_shaft).any()]
+    flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
 
-    fig, axes = plt.subplots(1, 2, figsize=(18.0 * CM, 7.0 * CM),
-                             gridspec_kw={"width_ratios": [1.45, 1.0]},
+    fig, axes = plt.subplots(2, 2, figsize=(19.0 * CM, 13.5 * CM),
                              constrained_layout=True)
+    for col, unit in enumerate(("session", "subject")):
+        present = [r for r in ROI_ORDER if r in res[unit].get("different_shaft", {})]
 
-    ax = axes[0]
-    flank = np.abs(t_ms) >= PERI_S * 1000          # He's non-peri window
-    for roi in present:
-        sel = (ix.roi == roi) & (~ix.same_shaft)
-        # SUBJECT-level, exactly as the test: mean within subject first, then
-        # across subjects. Averaging over derivations instead lets a subject
-        # with 14 Visual contacts outweigh one with 1.
-        curves = []
-        for subj, gi in ix[sel].groupby("subject"):
-            r = tr[gi.index[gi.is_real.to_numpy()]]
-            n = tr[gi.index[~gi.is_real.to_numpy()]]
-            if not len(r) or not len(n):
+        ax = axes[0, col]
+        for roi in present:
+            sel = (ix.roi == roi) & (~ix.same_shaft)
+            curves = []
+            for _, gi in ix[sel].groupby(unit):
+                r = tr[gi.index[gi.is_real.to_numpy()]]
+                n = tr[gi.index[~gi.is_real.to_numpy()]]
+                if not len(r) or not len(n):
+                    continue
+                c = r.mean(0) - n.mean(0)
+                curves.append(c - c[flank].mean())
+            if not curves:
                 continue
-            c = r.mean(0) - n.mean(0)
-            curves.append(c - c[flank].mean())
-        if not curves:
-            continue
-        A = np.stack(curves)
-        m, se = A.mean(0), A.std(0, ddof=1) / np.sqrt(len(A))
-        ax.plot(t_ms, m, color=C.get(roi, "#888"), lw=1.5,
-                label=f"{SHORT.get(roi, roi)} ({len(A)} subj)")
-        ax.fill_between(t_ms, m - se, m + se, color=C.get(roi, "#888"),
-                        alpha=0.15, lw=0)
-    ax.axvline(0, color="0.35", lw=0.8, ls="--")
-    ax.axhline(0, color="0.7", lw=0.6)
-    ax.axvspan(-PERI_S * 1000, PERI_S * 1000, color="#F15A29", alpha=0.07, lw=0)
-    ax.set_xlabel("Time from hippocampal ripple peak (ms)", fontsize=9)
-    ax.set_ylabel("HFB, real − null, vs non-peri (z)", fontsize=9)
-    ax.set_title("Ripple-locked cortical HFB\n(subject-level, different shaft)",
-                 fontsize=10.5)
-    ax.legend(fontsize=7.5, frameon=False, loc="upper left", handlelength=1.4,
-              labelspacing=0.3)
-    ax.tick_params(labelsize=8)
-    ax.margins(x=0)
-    for sp in ("top", "right"):
-        ax.spines[sp].set_visible(False)
+            A = _smooth(np.stack(curves), fs, smooth_ms)
+            m, se = A.mean(0), A.std(0, ddof=1) / np.sqrt(len(A))
+            ax.plot(t_ms, m, color=C.get(roi, "#888"), lw=1.5,
+                    label=f"{SHORT.get(roi, roi)} ({len(A)})")
+            ax.fill_between(t_ms, m - se, m + se, color=C.get(roi, "#888"),
+                            alpha=0.15, lw=0)
+        ax.axvline(0, color="0.35", lw=0.8, ls="--")
+        ax.axhline(0, color="0.7", lw=0.6)
+        ax.axvspan(-PERI_S * 1000, PERI_S * 1000, color="#F15A29", alpha=0.07, lw=0)
+        ax.set_xlabel("Time from ripple peak (ms)", fontsize=9)
+        if col == 0:
+            ax.set_ylabel("HFB, real − null, vs non-peri (z)", fontsize=9)
+        ax.set_title(f"{unit}-level  (n = "
+                     f"{max(v['n_units'] for v in res[unit]['different_shaft'].values())}"
+                     f" max)", fontsize=10.5)
+        ax.legend(fontsize=7, frameon=False, loc="upper left", handlelength=1.3,
+                  labelspacing=0.28)
+        ax.tick_params(labelsize=8)
+        ax.margins(x=0)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
 
-    ax = axes[1]
-    vals = [res["different_shaft"][r] for r in present]
-    top = max(v["effect"] + v["sem"] for v in vals)
-    bot = min(0.0, min(v["effect"] - v["sem"] for v in vals))
-    for i, (roi, v) in enumerate(zip(present, vals)):
-        ax.bar(i, v["effect"], yerr=v["sem"], color=C.get(roi, "#888"),
-               width=0.68, capsize=3, error_kw=dict(lw=0.9))
-        if v["p"] < 0.05:
-            ax.text(i, v["effect"] + v["sem"] + 0.03 * top,
-                    "**" if v["p"] < 0.01 else "*", ha="center", fontsize=10)
-    ax.axhline(0, color="0.4", lw=0.8)
-    ax.set_ylim(bot - 0.06 * top, top * 1.25)
-    ax.set_xticks(range(len(present)))
-    ax.set_xticklabels([f"{SHORT.get(r, r)}\n(n={v['n_subjects']})"
-                        for r, v in zip(present, vals)], fontsize=8,
-                       rotation=30, ha="right")
-    ax.set_ylabel("peri − non-peri, minus null (z)", fontsize=9)
-    ax.set_title("Effect per region\n(subject-level, mean ± s.e.m.)", fontsize=11)
-    ax.tick_params(labelsize=8)
-    for sp in ("top", "right"):
-        ax.spines[sp].set_visible(False)
+        ax = axes[1, col]
+        vals = [res[unit]["different_shaft"][r] for r in present]
+        top = max(v["effect"] + v["sem"] for v in vals)
+        bot = min(0.0, min(v["effect"] - v["sem"] for v in vals))
+        for i, (roi, v) in enumerate(zip(present, vals)):
+            ax.bar(i, v["effect"], yerr=v["sem"], color=C.get(roi, "#888"),
+                   width=0.68, capsize=3, error_kw=dict(lw=0.9))
+            if v["p"] < 0.05:
+                ax.text(i, v["effect"] + v["sem"] + 0.03 * top,
+                        "**" if v["p"] < 0.01 else "*", ha="center", fontsize=10)
+        ax.axhline(0, color="0.4", lw=0.8)
+        ax.set_ylim(bot - 0.08 * top, top * 1.28)
+        ax.set_xticks(range(len(present)))
+        ax.set_xticklabels([f"{SHORT.get(r, r)}\n({v['n_units']})"
+                            for r, v in zip(present, vals)], fontsize=8,
+                           rotation=30, ha="right")
+        if col == 0:
+            ax.set_ylabel("peri − non-peri, minus null (z)", fontsize=9)
+        ax.set_title(f"{unit}-level effect ± s.e.m.", fontsize=10.5)
+        ax.tick_params(labelsize=8)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
 
+    fig.suptitle("Ripple-locked cortical HFB — different-shaft derivations only",
+                 fontsize=11.5)
     stem = out_stem or os.path.join(R, "ripple_locked_hfb")
     fig.savefig(stem + ".pdf")
     fig.savefig(stem + ".png", dpi=300)
     plt.close(fig)
+
+    # ---- medial-frontal dorsoventral gradient -----------------------------
+    zg = res.get("z_gradient") or {}
+    if zg.get("_table"):
+        e = pd.DataFrame(zg["_table"])
+        fig, ax = plt.subplots(figsize=(8.5 * CM, 7.0 * CM), constrained_layout=True)
+        for roi, g in e.groupby("roi"):
+            ax.scatter(g.mni_z, g.effect, s=16, alpha=0.8,
+                       color=C.get(roi, "#888"), edgecolors="none",
+                       label=f"{roi} ({len(g)})")
+        if len(e) > 2:
+            b = np.polyfit(e.mni_z, e.effect, 1)
+            xs = np.linspace(e.mni_z.min(), e.mni_z.max(), 50)
+            ax.plot(xs, np.polyval(b, xs), color="0.25", lw=1.2, ls="--")
+        sp = zg["spearman_z_vs_effect"]
+        ax.axhline(0, color="0.7", lw=0.6)
+        ax.set_xlabel("MNI z (mm)   ventral → dorsal", fontsize=9)
+        ax.set_ylabel("ripple-locked HFB effect (z)", fontsize=9)
+        ax.set_title(f"Medial frontal dorsoventral gradient\n"
+                     f"ρ = {sp['rho']:+.3f}, p = {sp['p']:.3f}, "
+                     f"n = {len(e)}", fontsize=10)
+        ax.legend(fontsize=7.5, frameon=False)
+        ax.tick_params(labelsize=8)
+        for s_ in ("top", "right"):
+            ax.spines[s_].set_visible(False)
+        gs = os.path.join(R, "medial_frontal_z_gradient")
+        fig.savefig(gs + ".pdf")
+        fig.savefig(gs + ".png", dpi=300)
+        plt.close(fig)
+        print(f"figure -> {gs}.pdf / .png")
     print(f"figure -> {stem}.pdf / .png")
     return None
 
