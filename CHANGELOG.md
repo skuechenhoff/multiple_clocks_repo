@@ -1,4 +1,76 @@
-# CHANGELOG\n\n## 2026-09-15 (g) — Interval scheme (supervisor's suggestion), and the mPFC D effect does not survive it
+# CHANGELOG
+
+## 2026-09-16 — Artifact-pad sweep on the swr_v2 bundle: the mPFC effect runs backwards
+
+**New:** `scripts/swr_ripple_rsa_pad_sweep.py`; `pad_s` filtering and
+`default_bundle_dir()` in `mc/analyse/ripple_rsa.py`.
+**Results:** `.../group/swr/ripple_rsa_pad_sweep_2026-09-16/`.
+
+⚠ **Path change:** the old `group/swr/bundle/` is now `bundle_08.09.2026/` and
+the new one is `bundle_v2/`. Hardcoded `.../swr/bundle` paths are stale;
+`rrsa.default_bundle_dir()` now resolves this.
+
+### The new bundle
+
+`swr_v2` detects at a **0.1 s** artifact pad and carries `dist_to_artifact_s`,
+so larger pads are nested subsets. 100,737 events vs 64,760 in swr_v1 (1.56x);
+**pad 1.0 s reproduces swr_v1 almost exactly** (64,895 vs 64,760), so that is
+the pad the old results were computed at.
+
+`meta.json` warns that re-padding also needs exposure rebuilt from
+`artifact_intervals`. **That caveat does not apply here**: this analysis
+measures firing DURING ripples and never divides by artifact-free seconds, so
+filtering events is sufficient and complete.
+
+Still absent from the export: `t_start_s` / `t_end_s`. The `peak ± duration/2`
+approximation therefore stands — worth adding on the next export, it costs
+nothing (the columns already exist per-session).
+
+### The sweep: 5 pads x 2 schemes x 5 ROIs x 4 states x 2 models = 332 cells
+
+**The pre-declared cell, mPFC at D, window scheme — it grows as ripples are
+REMOVED:**
+
+| pad (s) | ripples at D | pairs missing | rho | p |
+|---|---|---|---|---|
+| **0.10** (most data) | **311** | 0 | **+0.104** | **0.300** |
+| 0.25 | 290 | 0 | +0.266 | 0.101 |
+| 0.50 | 257 | 2 | +0.440 | 0.025 |
+| 1.00 (old bundle) | 209 | 4 | **+0.563** | 0.017 |
+| 2.00 | 139 | — | not estimable | — |
+
+Monotonic, and backwards. A real effect gets clearer with more data; this one
+is largest where the data are thinnest and the RDM is least complete. At the
+native pad, with 50% more ripples and a complete RDM, it is rho = +0.10,
+p = 0.30. The interval scheme shows no mPFC D effect at any pad
+(-0.084 to -0.180).
+
+### The whole sweep produces fewer hits than chance
+
+**11 of 332 cells reach p < 0.05 uncorrected = 3.3%**, against the ~5% expected
+under the global null. The hits do not concentrate in any ROI, state, model or
+pad: mOFC B at pads 0.10/0.25, HC_mid D at 0.25, mPFC D at 0.50/1.00, mPFC B at
+0.50/2.00, HC_mid A at 2.00. That is the signature of no effect.
+
+**The pad is not a free parameter.** Choosing 1.0 s because the effect is
+biggest there is exactly the post-hoc gate this project avoids; the sweep is a
+stability check, and this effect fails it.
+
+### Null width does not improve with more ripples
+
+Median null SD across the sweep: 0.200-0.222, against the 28-pair floor of
+1/sqrt(27) = 0.192. Going from 2,610 to 5,866 ripples (interval scheme) moves
+it from 0.199 to 0.203 — i.e. not at all. **The binding constraint is the 8 x 8
+RDM, not the ripple count.** More ripples cannot fix this design; more
+conditions could.
+
+### Where this leaves the analysis
+
+The entry (f) mPFC result is now contradicted from two independent directions:
+loosening the ripple-to-condition rule removes it (entry g), and adding ripples
+at a smaller artifact pad removes it (here). It should not be carried forward.
+
+## 2026-09-15 (g) — Interval scheme (supervisor's suggestion), and the mPFC D effect does not survive it
 
 **New:** `ripples_in_intervals` + `SCHEMES` in `mc/analyse/ripple_rsa.py`;
 `scripts/swr_ripple_rsa_diagnostics.py`.

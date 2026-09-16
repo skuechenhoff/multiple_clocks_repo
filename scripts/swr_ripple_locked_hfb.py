@@ -106,7 +106,7 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
     print(f"\nbundle {b_dir}\n  {len(hp)} usable derivations, fs={fs:.0f} Hz, "
           f"{n_shifts} shifted nulls in +-[{lo:.0f},{hi:.0f}] s")
 
-    rows, tc = [], {}
+    rows, tc, tc_ix = [], [], []
     for sess in sorted(hp.session.unique()):
         g = hp[hp.session == sess]
         if not (g.roi_family == "HPC").any():
@@ -152,8 +152,12 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
                         "peri": float(m[w - wp:w + wp].mean()),
                         "nonperi": float(np.r_[m[:w - wp], m[w + wp:]].mean()),
                     })
-                    tc.setdefault((x.roi_family, bool(x.same_shaft),
-                                   sh == 0.0), []).append(m)
+                    tc.append(m)
+                    tc_ix.append({"subject": x.subject_label,
+                                  "roi": x.roi_family,
+                                  "same_shaft": bool(x.same_shaft),
+                                  "is_real": sh == 0.0,
+                                  "cx_pair": x.pair_id})
         print(f"  s{sess:02d}: {len(hc)} HC x {len(cx)} cortical", end="\r")
 
     d = pd.DataFrame(rows)
@@ -170,11 +174,17 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
             f"{ANALYSIS_NAME}_{datetime.now():%Y-%m-%d}")
         os.makedirs(out_dir, exist_ok=True)
         d.to_csv(os.path.join(out_dir, "per_pair.csv"), index=False)
-        np.savez_compressed(
-            os.path.join(out_dir, "timecourses.npz"),
-            t_ms=off / fs * 1000.0,
-            **{f"{roi}__{'same' if ss else 'diff'}__{'real' if rl else 'null'}":
-               np.stack(v) for (roi, ss, rl), v in tc.items()})
+        # Flat stack plus an index, rather than one array per (roi, shaft,
+        # real) cell. The keyed form forced the figure to average over
+        # derivations while the statistics average over subjects, and for
+        # Visual -- whose coverage is concentrated, max 14 derivations in one
+        # subject -- those differ fourfold (+0.0044 vs +0.0011). The two panels
+        # then told different stories. With the index, the figure aggregates
+        # exactly as the test does.
+        np.savez_compressed(os.path.join(out_dir, "timecourses.npz"),
+                            t_ms=off / fs * 1000.0, traces=np.stack(tc))
+        pd.DataFrame(tc_ix).to_csv(
+            os.path.join(out_dir, "timecourse_index.csv"), index=False)
         with open(os.path.join(out_dir, "result.json"), "w") as f:
             json.dump({"analysis": ANALYSIS_NAME, "bundle": b_dir,
                        "peri_s": PERI_S, "half_s": HALF_S,
@@ -283,9 +293,13 @@ def figure(results=None, out_stem=None):
 
     SHORT = {"TemporalLateral": "Lat. temporal", "Auditory": "Auditory",
              "Visual": "Visual", "mPFC": "mPFC", "mOFC": "mOFC"}
-    present = [r for r in ROI_ORDER
-               if f"{r}__diff__real" in z.files and f"{r}__diff__null" in z.files
-               and r in res.get("different_shaft", {})]
+    tr = z["traces"]
+    ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
+    ix["same_shaft"] = ix.same_shaft.astype(bool)
+    ix["is_real"] = ix.is_real.astype(bool)
+    present = [r for r in ROI_ORDER if r in res.get("different_shaft", {})
+               and ((ix.roi == r) & ~ix.same_shaft).any()]
+
     fig, axes = plt.subplots(1, 2, figsize=(18.0 * CM, 7.0 * CM),
                              gridspec_kw={"width_ratios": [1.45, 1.0]},
                              constrained_layout=True)
@@ -293,33 +307,35 @@ def figure(results=None, out_stem=None):
     ax = axes[0]
     flank = np.abs(t_ms) >= PERI_S * 1000          # He's non-peri window
     for roi in present:
-        # real MINUS the shifted null, so this panel and the bars measure the
-        # same thing. Plotting the raw peri-ripple trace instead makes Visual
-        # look like it has a response when its null has the identical bump --
-        # which is the whole point of the shifted control.
-        a = np.asarray(z[f"{roi}__diff__real"], float)
-        b = np.asarray(z[f"{roi}__diff__null"], float)
-        m = a.mean(0) - b.mean(0)
-        # Baseline to the NON-PERI flanks, not to the epoch edge. real-minus-null
-        # carries a DC offset -- ripples sit in higher-activity states, so the
-        # real epochs have a higher overall mean than the shifted ones. The bar
-        # panel subtracts the non-peri window, so baselining the trace the same
-        # way makes the peri-window average of this curve exactly the bar.
-        m = m - m[flank].mean()
-        se = a.std(0, ddof=1) / np.sqrt(len(a))
-        n_sub = res["different_shaft"][roi]["n_subjects"]
+        sel = (ix.roi == roi) & (~ix.same_shaft)
+        # SUBJECT-level, exactly as the test: mean within subject first, then
+        # across subjects. Averaging over derivations instead lets a subject
+        # with 14 Visual contacts outweigh one with 1.
+        curves = []
+        for subj, gi in ix[sel].groupby("subject"):
+            r = tr[gi.index[gi.is_real.to_numpy()]]
+            n = tr[gi.index[~gi.is_real.to_numpy()]]
+            if not len(r) or not len(n):
+                continue
+            c = r.mean(0) - n.mean(0)
+            curves.append(c - c[flank].mean())
+        if not curves:
+            continue
+        A = np.stack(curves)
+        m, se = A.mean(0), A.std(0, ddof=1) / np.sqrt(len(A))
         ax.plot(t_ms, m, color=C.get(roi, "#888"), lw=1.5,
-                label=f"{SHORT.get(roi, roi)} ({n_sub} subj)")
+                label=f"{SHORT.get(roi, roi)} ({len(A)} subj)")
         ax.fill_between(t_ms, m - se, m + se, color=C.get(roi, "#888"),
                         alpha=0.15, lw=0)
     ax.axvline(0, color="0.35", lw=0.8, ls="--")
     ax.axhline(0, color="0.7", lw=0.6)
     ax.axvspan(-PERI_S * 1000, PERI_S * 1000, color="#F15A29", alpha=0.07, lw=0)
     ax.set_xlabel("Time from hippocampal ripple peak (ms)", fontsize=9)
-    ax.set_ylabel("HFB power, real − null, vs non-peri (z)", fontsize=9)
-    ax.set_title("Ripple-locked cortical HFB", fontsize=11)
-    ax.legend(fontsize=7.5, frameon=False, loc="upper left",
-              bbox_to_anchor=(0.0, 1.0), handlelength=1.4, labelspacing=0.3)
+    ax.set_ylabel("HFB, real − null, vs non-peri (z)", fontsize=9)
+    ax.set_title("Ripple-locked cortical HFB\n(subject-level, different shaft)",
+                 fontsize=10.5)
+    ax.legend(fontsize=7.5, frameon=False, loc="upper left", handlelength=1.4,
+              labelspacing=0.3)
     ax.tick_params(labelsize=8)
     ax.margins(x=0)
     for sp in ("top", "right"):
