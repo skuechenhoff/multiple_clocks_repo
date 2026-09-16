@@ -21,6 +21,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import glob
 import json
@@ -59,7 +60,8 @@ def _fmt(missing, limit=12):
     return s + (f" ... (+{len(missing) - limit})" if len(missing) > limit else "")
 
 
-def check(analysis_name="swr_v2", verbose=False, data_root=None):
+def check(analysis_name="swr_v2", verbose=False, data_root=None,
+          bundle_dir=None):
     R = data_root or swr_io.get_data_root()
     D = swr_io.derivatives_dir(R)
     G = os.path.join(D, "group", "swr")
@@ -185,15 +187,49 @@ def check(analysis_name="swr_v2", verbose=False, data_root=None):
         print("           -> re-run stage 3b AFTER detection, to get it computed")
 
     # ---- bundle ------------------------------------------------------------
-    bp = os.path.join(G, "bundle", "swr_bundle.pkl")
-    if os.path.isfile(bp):
+    # Look for a bundle belonging to THIS analysis first. Exporting swr_v2 to
+    # `bundle_v2` (so the swr_v1 bundle survives) otherwise leaves this line
+    # reporting the old bundle -- "0 with HFB, re-paddable NO" -- for a run that
+    # is complete and fine.
+    # Glob rather than guess names: bundles get renamed by hand
+    # (`bundle_08.09.2026`, `bundle_old_from_cluster`, `bundle_v2`), so a fixed
+    # candidate list finds nothing and reports "not exported yet" for a run that
+    # is finished. Prefer one whose meta matches THIS analysis; otherwise show
+    # the most recent and say it is a different analysis.
+    bp, bname = None, None
+    found = []
+    for q in sorted(glob.glob(os.path.join(G, "*", "swr_bundle.pkl"))):
+        try:
+            import pickle as _pk
+            an = _pk.load(open(q, "rb"))["meta"].get("analysis_name")
+        except Exception:
+            an = None
+        found.append((q, os.path.basename(os.path.dirname(q)), an,
+                      os.path.getmtime(q)))
+    if bundle_dir:
+        found = [f for f in found if f[1] == bundle_dir]
+    match = [f for f in found if f[2] == analysis_name]
+    pick = (sorted(match, key=lambda f: -f[3]) or
+            sorted(found, key=lambda f: -f[3]))
+    if pick:
+        bp, bname = pick[0][0], pick[0][1]
+    if len(found) > 1:
+        print(f"\n           ({len(found)} bundles on disk: "
+              + ", ".join(f"{f[1]}[{f[2]}]" for f in found) + ")")
+    if bp:
         import pickle
         b = pickle.load(open(bp, "rb"))
         has_repad = ("dist_to_artifact_s" in b["ripples"].columns
                      and len(b.get("artifact_intervals", [])) > 0)
-        print(f"\n{OK} bundle                 : {len(b['ripples'])} ripples, "
+        stale = b["meta"].get("analysis_name") != analysis_name
+        print(f"\n{WARN if stale else OK} bundle ({bname:<12s}): "
+              f"{len(b['ripples'])} ripples, "
               f"{b['meta'].get('n_sessions')} sessions, "
               f"{len(b.get('hfb_index', []))} with HFB")
+        if stale:
+            print(f"           ⚠ this bundle is analysis_name="
+                  f"{b['meta'].get('analysis_name')!r}, not {analysis_name!r} "
+                  f"-- it has not been exported yet")
         print(f"           re-paddable on the laptop: "
               f"{'YES' if has_repad else 'NO -- rebuild with the current code'}")
     else:
@@ -203,13 +239,42 @@ def check(analysis_name="swr_v2", verbose=False, data_root=None):
     errs = glob.glob(os.path.join(G, "slurm_logs", "*", "*.err"))
     bad = [e for e in errs if os.path.getsize(e) > 0
            and "Traceback" in open(e, errors="ignore").read()]
-    print(f"\n{BAD if bad else OK} slurm .err with a Traceback: {len(bad)}"
-          f"/{len(errs)}")
-    for e in (bad if verbose else bad[:5]):
+    # `slurm_logs/` accumulates every run ever. A traceback from three weeks ago
+    # is not a failure of the run that just finished, and reporting it as one
+    # sends you hunting a bug that was fixed long since. Anything older than the
+    # newest stage output cannot have produced that output.
+    newest_out = 0.0
+    for pat in (("s*", "LFP-hfb", analysis_name, "hfb.npz"),
+                ("s*", "LFP-ripples", analysis_name, "ripple_events.csv")):
+        for f in glob.glob(os.path.join(D, *pat)):
+            newest_out = max(newest_out, os.path.getmtime(f))
+    fresh = [e for e in bad if os.path.getmtime(e) >= newest_out - 86400]
+    old_ones = [e for e in bad if e not in fresh]
+
+    tag = BAD if fresh else (OK if not bad else WARN)
+    print(f"\n{tag} slurm .err with a Traceback: {len(bad)}/{len(errs)}"
+          + (f"  ({len(fresh)} from this run, {len(old_ones)} older)"
+             if bad else ""))
+    if old_ones and not fresh:
+        print(f"           all {len(old_ones)} predate the current outputs "
+              f"-- earlier runs, not this one")
+
+    def _cause(path):
+        """The exception line, not the last line -- a traceback often ends in a
+        pandas repr fragment like '[1 rows x 12 columns]', which says nothing."""
+        lines = [l.rstrip() for l in open(path, errors="ignore").read().split("\n") if l.strip()]
+        for l in reversed(lines):
+            if re.match(r"^\s*[\w.]*(Error|Exception|Warning)\b", l.strip()):
+                return l.strip()
+        return lines[-1] if lines else ""
+
+    show = (fresh or old_ones) if verbose else (fresh or old_ones)[:5]
+    for e in show:
         job = os.path.basename(os.path.dirname(e))
-        last = [l for l in open(e, errors="ignore").read().strip().split("\n") if l]
-        print(f"           {job}/{os.path.basename(e)}: {last[-1][:90]}")
-    if bad and not verbose:
+        when = job.split("_")[0] if "_" in job else "?"
+        mark = "NEW " if e in fresh else "old "
+        print(f"           {mark}[{when}] {os.path.basename(e)}: {_cause(e)[:80]}")
+    if len(fresh or old_ones) > 5 and not verbose:
         print("           (--verbose=True for all)")
     print("\n" + "=" * 74)
     return None
