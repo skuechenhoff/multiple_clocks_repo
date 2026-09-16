@@ -1,5 +1,148 @@
 # CHANGELOG
 
+## 2026-09-16 (b) — I1: ripple-locked cortical HFB. Medial frontal yes, visual null; survives the pad sweep
+
+**New:** `scripts/swr_ripple_locked_hfb.py`. **Results:**
+`.../group/swr/ripple_locked_hfb_2026-09-16/`. Runs from `bundle_v2`, no cluster.
+
+61 sessions, 42 subjects, 505 cortical derivations, ~740k ripple-alignments.
+He et al. windows: epoch ±750 ms, **peri = ±250 ms**, **non-peri = (−750:−250) ∪
+(+250:+750)**. Estimate = peri − non-peri (each ripple against its own flanks),
+then **minus a shifted null**. Both windows must be artifact-free in the
+hippocampal *and* the cortical derivation.
+
+### Result — different-shaft derivations only
+
+| ROI | derivations | subjects | effect (z) | t | p |
+|---|---|---|---|---|---|
+| **mOFC** | 100 | 32 | **+0.0083** | 4.71 | **<0.0001** |
+| **mPFC** | 51 | 30 | **+0.0040** | 4.38 | **0.0001** |
+| Lat. temporal | 129 | 35 | +0.0028 | 3.70 | 0.0008 |
+| Auditory | 38 | 18 | +0.0016 | 1.44 | 0.17 |
+| Visual | 97 | 20 | +0.0011 | 0.51 | 0.62 |
+
+mOFC > mPFC (+0.0050, p = 0.016) and > lateral temporal (+0.0062, p = 0.015).
+Sharp transient peaking within ~100 ms of the ripple peak, back to baseline by
+±250 ms. **Replicates He et al.'s medial-frontal-yes / visual-no dissociation**,
+with medial OFC the stronger of the two medial frontal regions.
+
+### It passes the pad-stability check that the ripple-RSA effect failed
+
+Same standard as the entry below. 0.75 → 3.0 s takes the usable set from
+169,697 to 67,353 alignments (−60%):
+
+| ROI | 0.75 | 1.00 | 1.50 | 2.00 | 3.00 |
+|---|---|---|---|---|---|
+| mOFC | +0.0079 | +0.0078 | +0.0086 | +0.0079 | +0.0060 |
+| mPFC | +0.0040 | +0.0039 | +0.0033 | +0.0025 | +0.0046 |
+| Lat. temporal | +0.0029 | +0.0027 | +0.0024 | +0.0025 | +0.0032 |
+| Visual | +0.0011 | +0.0008 | −0.0001 | −0.0016 | −0.0015 |
+
+Flat-to-declining, not growing — the healthy direction. **mOFC is robust
+(p < 0.02 throughout); mPFC is the wobblier one**, dipping to p = 0.080 at pad
+2.0 s before recovering. Auditory drifts up at the largest pads (p = 0.052,
+0.072) without ever reaching significance, which at that n reads as noise.
+
+⚠ **The first version of this sweep was vacuous and looked reassuring.** It ran
+0.10/0.25/0.50/1.00 and gave a perfectly flat line — because a ±750 ms epoch
+must be artifact-free, so **every event nearer than 750 ms to a crossing is
+already excluded at any detection pad** (26.7% of the bundle). Three of those
+four pads were therefore the identical subset. The sweep now starts at the
+epoch half-width, where the comparison is real. A flat sweep is only evidence
+if the subsets actually differ.
+
+### Three controls, each of which changed the answer
+
+1. **The reference must be a SHIFTED NULL, not zero.** Against zero *every*
+   region is positive, controls included (Visual p = 0.044, Auditory p = 0.044)
+   — ripples cluster in states (F1) and cortical HFB tracks state too. Shifting
+   ripple times 5–120 s leaves ~0 everywhere. This is what makes the controls
+   null.
+2. **Same-shaft derivations are volume-conduction contaminated**, and the
+   2026-09-13 note recommending them as "the tightest control" was wrong about
+   which confound they control. The *entire* Visual effect came from 9
+   derivations on the hippocampal electrode (+0.0115, p = 0.039) against
+   +0.0011 and null on the other 97. Same-shaft is a good control for recording
+   quality, a bad one for anatomical specificity. Primary set is different-shaft.
+3. **Figure aggregation must match the test** (found by SK). The time-course
+   panel averaged over derivations while the bars averaged over subjects; for
+   Visual those differ fourfold (+0.0044 vs +0.0011) because its coverage is
+   concentrated — up to 14 derivations in one subject. The figure showed Visual
+   responding and mPFC not, the opposite of the statistics beside it. Traces are
+   now stored flat with an index and aggregated subject-level.
+
+### Status
+
+**Exploratory.** All three controls were chosen after seeing the naive result,
+so they are justified on mechanism rather than by prior declaration. No
+confirmatory run on held-out sessions. Effect sizes are small in absolute terms
+(0.003–0.008 z) and rest on very large alignment counts — the dissociation and
+the time-course shape are the evidence, not the p-values.
+
+⚠ The non-peri flanks are the baseline, so a response broader than ±250 ms
+would leak into its own baseline and be under-estimated. The measured responses
+return to ~0 by ±250 ms, so this does not bite here.
+
+
+## 2026-09-16 (b) — Time-resolved, descriptive: what the pad is actually changing
+
+**New:** `scripts/swr_ripple_rsa_timeresolved.py`.
+**Results:** `.../group/swr/ripple_rsa_timeresolved_2026-09-16/` (no tests, no
+p values anywhere in this entry's figures).
+
+### The pad is a UNIFORM ~30 % thinning
+
+Spearman(lag from uncover press, `dist_to_artifact_s`) = **+0.005, p = 0.69**.
+At pad 1.0 s, ~30 % of ripples are removed in EVERY lag bin (0-0.5 s: 29.4 %;
+0.5-1 s: 31.4 %; 1-2 s: 29.5 %; 2-4 s: 34.7 %; 4-8 s: 33.5 %). The pad is not
+preferentially deleting press-locked events, so "the pad removes the
+interesting ripples" is ruled out.
+
+### Therefore the pad-dependence is resampling noise — shown directly
+
+At pad 0.1 (window 0-1 s, 1254 ripples), randomly dropping 33 % of ripples
+300 times:
+
+| ROI | full-data rho | range under random thinning | SD |
+|---|---|---|---|
+| **mPFC D** | **+0.104** | **-0.386 to +0.679** | 0.200 |
+| PCC D | +0.056 | -0.486 to +0.641 | 0.172 |
+| HC_anterior D | -0.097 | -0.464 to +0.426 | 0.134 |
+
+**2.7 %** of random thinnings reach the pad-1.0 value of +0.563 or more.
+Dropping a random third of the data moves rho by up to ±0.4, so the gap between
++0.10 and +0.56 carries essentially no information. Full write-up in
+`random_thinning_result.md`.
+
+### Time-resolved view (uncover D, `known_set`, pads 0.25 and 1.0)
+
+CUMULATIVE (all ripples from the press to t) and SLIDING (1.5 s window stepped
+through), both capped at each event's own interval end so nothing leaks into
+the next reward's condition.
+
+- **Cumulative curves start extreme and decay toward 0 as ripples accumulate.**
+  At pad 1.0, mPFC begins at +0.59 with ~50 ripples and falls monotonically to
+  ~-0.05 by t = 4 s (~570 ripples). At pad 0.25 the same curve begins at +0.34.
+  The published-looking value is the left edge of a decaying curve, i.e. the
+  sparsest point.
+- **Sliding curves oscillate around 0 in every ROI with no sustained window.**
+  If a subset of ripples carried the plan, a sliding window should find a
+  stretch where the fit is consistently positive. None exists.
+- Ripple counts: cumulative reaches ~870 (pad 0.25) / ~640 (pad 1.0) by 8 s;
+  sliding peaks at ~420 / ~300 around 1.5 s.
+- **Firing rate inside ripples is genuinely event-locked**: mOFC falls from
+  ~4.1 Hz at the press to ~1.8 Hz by 2 s; HC_mid shows the opposite hump. So
+  the data do contain real uncover-locked dynamics — they just do not carry
+  configuration structure.
+
+### Anatomy: mPFC and mOFC do NOT overlap here
+
+SK asked whether the "mPFC" entry zone might sit in dorsal mOFC. It does not:
+mPFC cells sit at MNI z ~ -5 to +13 (mode ~0 to +5), mOFC at z ~ -25 to -12,
+with a clean gap between. Caveat: the 65 mPFC cells come from only ~8 distinct
+microwire locations (cells cluster on bundles), so this is 8 sites, not 65
+independent ones — which is itself part of why the estimate is unstable.
+
 ## 2026-09-16 — Artifact-pad sweep on the swr_v2 bundle: the mPFC effect runs backwards
 
 **New:** `scripts/swr_ripple_rsa_pad_sweep.py`; `pad_s` filtering and

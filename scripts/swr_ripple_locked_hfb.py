@@ -69,6 +69,20 @@ HALF_S = 0.75                  # epoch half-width = He's non-peri outer edge
 PERI_S = 0.25                  # He: peri = +-250 ms
 MIN_RIPPLES = 20               # per (HC x cortical) pair, for a stable mean
 SHIFT_RANGE_S = (5.0, 120.0)   # shifted-null offsets, either sign
+# Artifact-pad stability. swr_v2 detects at 0.1 s and every event carries
+# dist_to_artifact_s, so larger pads are nested SUBSETS of the same detection --
+# no re-run needed. A real effect should not grow as data is thrown away; the
+# ripple-RSA mPFC effect (CHANGELOG 2026-09-16) failed exactly this check, being
+# largest at the pad with fewest ripples. Applying the same standard here.
+#
+# The sweep STARTS at HALF_S, not at the detection pad, and that is not a
+# choice. A peri/non-peri epoch spans +-750 ms and must be artifact-free, so an
+# event closer than 750 ms to a crossing can never enter regardless of the pad
+# it was detected at -- 26.7% of the bundle is excluded on that ground alone.
+# Sweeping 0.10/0.25/0.50 therefore compares three identical subsets and looks
+# reassuringly flat while testing nothing. The informative range is above the
+# epoch half-width, where 0.75 -> 3.0 s takes the usable set from 100% to ~40%.
+PAD_SWEEP = (0.75, 1.00, 1.50, 2.00, 3.00)
 ROI_ORDER = ["mPFC", "mOFC", "TemporalLateral", "Auditory", "Visual"]
 
 
@@ -81,7 +95,8 @@ def _clean_mask(rows, n, fs):
     return m
 
 
-def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
+def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
+        pad_sweep=PAD_SWEEP):
     b_dir = bundle or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
                                    "group", "swr", "bundle_v2")
     with open(os.path.join(b_dir, "swr_bundle.pkl"), "rb") as f:
@@ -125,13 +140,16 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
         hc, cx = g[g.roi_family == "HPC"], g[g.roi_family != "HPC"]
 
         for _, h in hc.iterrows():
-            t0 = rip.loc[(rip.session == sess) & (rip.pair_id == h.pair_id),
-                         "t_peak_s"].to_numpy(float)
+            _r = rip.loc[(rip.session == sess) & (rip.pair_id == h.pair_id)]
+            t0 = _r["t_peak_s"].to_numpy(float)
+            d0 = (_r["dist_to_artifact_s"].to_numpy(float)
+                  if "dist_to_artifact_s" in _r else np.full(len(t0), np.inf))
             if len(t0) < MIN_RIPPLES:
                 continue
             for k, sh in enumerate(shifts):
-                c = np.round((t0 + sh) * fs).astype(int)
-                c = c[(c - w >= 0) & (c + w < n)]
+                c_all = np.round((t0 + sh) * fs).astype(int)
+                inb = (c_all - w >= 0) & (c_all + w < n)
+                c, dist = c_all[inb], d0[inb]
                 if len(c) < MIN_RIPPLES:
                     continue
                 win = c[:, None] + off[None, :]
@@ -142,16 +160,25 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
                     ok = hc_ok & masks[x.pair_id][win].all(1)
                     if ok.sum() < MIN_RIPPLES:
                         continue
-                    m = H[idx[x.pair_id]][win[ok]].mean(0)
-                    rows.append({
-                        "session": sess, "subject": x.subject_label,
-                        "hc_pair": h.pair_id, "cx_pair": x.pair_id,
-                        "roi": x.roi_family, "same_shaft": bool(x.same_shaft),
-                        "shift_s": sh, "is_real": sh == 0.0,
-                        "n_ripples": int(ok.sum()),
-                        "peri": float(m[w - wp:w + wp].mean()),
-                        "nonperi": float(np.r_[m[:w - wp], m[w + wp:]].mean()),
-                    })
+                    stack = H[idx[x.pair_id]][win[ok]]
+                    d_ok = dist[ok]
+                    # Larger pads are nested subsets of the SAME epochs, so the
+                    # whole sweep costs one extraction rather than four runs.
+                    for pad in pad_sweep:
+                        keep = d_ok >= pad
+                        if keep.sum() < MIN_RIPPLES:
+                            continue
+                        m = stack[keep].mean(0)
+                        rows.append({
+                            "session": sess, "subject": x.subject_label,
+                            "hc_pair": h.pair_id, "cx_pair": x.pair_id,
+                            "roi": x.roi_family, "same_shaft": bool(x.same_shaft),
+                            "shift_s": sh, "is_real": sh == 0.0, "pad_s": pad,
+                            "n_ripples": int(keep.sum()),
+                            "peri": float(m[w - wp:w + wp].mean()),
+                            "nonperi": float(np.r_[m[:w - wp], m[w + wp:]].mean()),
+                        })
+                    m = stack.mean(0)
                     tc.append(m)
                     tc_ix.append({"subject": x.subject_label,
                                   "roi": x.roi_family,
@@ -165,8 +192,11 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True):
     print(f"\n\n{len(d)} rows, {d.cx_pair.nunique()} cortical derivations, "
           f"{d.session.nunique()} sessions, {d.subject.nunique()} subjects")
 
-    res = _stats(d)
-    _report(res, d)
+    native = min(pad_sweep)
+    res = _stats(d[d.pad_s == native])
+    res["pad_sweep"] = _pad_sweep(d, pad_sweep)
+    _report(res, d[d.pad_s == native])
+    _report_sweep(res["pad_sweep"], pad_sweep)
 
     if save:
         out_dir = out_dir or os.path.join(
@@ -248,6 +278,65 @@ def _stats(d):
             "n_subjects": int(len(s)), "diff": float((s[a] - s[b]).mean()),
             "t": float(t), "p": float(p)}
     return out
+
+
+def _pad_sweep(d, pads):
+    """Effect at each artifact pad. Larger pad = fewer, cleaner ripples.
+
+    A real effect should be stable or STRENGTHEN with more data. One that grows
+    as ripples are discarded is a small-n artefact -- the failure mode the
+    ripple-RSA mPFC result showed (CHANGELOG 2026-09-16).
+
+    Pads below HALF_S are not tested: the epoch requirement already excludes
+    every event nearer than HALF_S to a crossing, so they would compare
+    identical subsets. See the PAD_SWEEP comment.
+    """
+    from scipy import stats as st
+    g0 = d[~d.same_shaft]
+    out = {}
+    for pad in pads:
+        g1 = g0[g0.pad_s == pad]
+        out[f"{pad:.2f}"] = {}
+        for roi in ROI_ORDER:
+            g = g1[g1.roi == roi]
+            if not len(g):
+                continue
+            real = g[g.is_real].groupby("subject")["diff"].mean()
+            null = g[~g.is_real].groupby("subject")["diff"].mean()
+            c = real.index.intersection(null.index)
+            if len(c) < 5:
+                continue
+            v = (real[c] - null[c]).to_numpy()
+            t, p = st.ttest_1samp(v, 0.0)
+            out[f"{pad:.2f}"][roi] = {
+                "n_subjects": int(len(c)),
+                "n_ripple_alignments": int(g[g.is_real].n_ripples.sum()),
+                "effect": float(v.mean()), "t": float(t), "p": float(p)}
+    return out
+
+
+def _report_sweep(sw, pads):
+    print("\n" + "=" * 78)
+    print(" ARTIFACT-PAD STABILITY   (different shaft; larger pad = fewer ripples)")
+    print(" a real effect should NOT grow as ripples are discarded")
+    print(f" sweep starts at the epoch half-width ({HALF_S:.2f}s): events nearer than"
+          f" that to a\n crossing cannot enter at ANY detection pad, so smaller"
+          f" pads test nothing")
+    print("=" * 78)
+    keys = [f"{p:.2f}" for p in pads]
+    print(f"\n  {'ROI':<16s}" + "".join(f"{'pad ' + k:>16s}" for k in keys))
+    for roi in ROI_ORDER:
+        if not any(roi in sw.get(k, {}) for k in keys):
+            continue
+        line = f"  {roi:<16s}"
+        for k in keys:
+            v = sw.get(k, {}).get(roi)
+            line += (f"{v['effect']:>8.4f} p={v['p']:<6.3f}" if v
+                     else f"{'--':>16s}")
+        print(line)
+    print(f"\n  {'alignments':<16s}" + "".join(
+        f"{max((sw[k][r]['n_ripple_alignments'] for r in sw[k]), default=0):>16,d}"
+        for k in keys))
 
 
 def _report(res, d):
