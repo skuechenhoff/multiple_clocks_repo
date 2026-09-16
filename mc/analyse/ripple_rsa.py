@@ -92,10 +92,14 @@ BIN_S = 0.025                      # the derivatives' bin, as in swr_units
 PERI_WIN_S = (0.0, 0.200)
 
 # Windows relative to the uncover press in which ripples are collected.
-# `pre` is short because the median gap from the PREVIOUS press to an uncover
-# press is only 0.35 s -- a longer pre-window would sit before the subject
-# arrived at the square and would encode the previous location instead.
-PRESS_WINDOWS = {"pre": (-0.35, 0.0), "post": (0.15, 0.70)}
+# One second either side. The earlier, narrower windows ([-0.35, 0] and
+# [+0.15, +0.70], taken from the ripple-rate cluster) left a median of 8
+# ripples per (config x state) in the pre window, too few for any RDM cell to
+# be estimated. A symmetric second either side gives 732 / 907 ripples
+# (median 22 / 28 per condition) and makes the before-vs-after comparison
+# estimable at all. The cost is that the post window no longer sits only on
+# the rate increase.
+PRESS_WINDOWS = {"pre": (-1.0, 0.0), "post": (0.0, 1.0)}
 
 DEDUP_S = 0.05                     # one ripple on several derivations is one event
 
@@ -117,11 +121,16 @@ PRIMARY_ROIS = ["HC", "ACC"]
 SECONDARY_ROIS = ["OFC", "EC"]
 ROIS = PRIMARY_ROIS + SECONDARY_ROIS
 
-# A config pair whose correlation rests on fewer cells than this is not
-# estimated. Kept low on purpose: dropping pairs breaks the exhaustive
-# permutation, so the whole (roi, state, window) cell is reported as unusable
-# instead of being silently patched.
+# A config pair whose correlation rests on fewer cells than this is left
+# unestimated (NaN). The RDM is then partial, which `fit_model` handles by
+# permuting the model rather than the data, so the observed-pair mask stays
+# fixed.
 MIN_CELLS_PER_PAIR = 10
+
+# Partial RDMs are fitted -- see `fit_model`. This is the floor on how many
+# config pairs must survive before a fit is attempted at all; below it the
+# correlation is a description of a handful of numbers, not an estimate.
+MIN_PAIRS_TO_FIT = 10
 
 
 # =============================================================================
@@ -174,111 +183,6 @@ def session_ripples(bundle, session):
 # =============================================================================
 # RIPPLE-TRIGGERED PATTERNS
 # =============================================================================
-
-def session_patterns(session, events, ripple_t, beh, window, data_root=None,
-                     split_halves=False):
-    """Ripple-triggered firing per cell, per (config, state), for one session.
-
-    For every discovery event, the ripples falling inside `window` relative to
-    the press are collected; each contributes the cell's mean firing over
-    `PERI_WIN_S` after the ripple peak; those are averaged within
-    (config, state).
-
-    Returns (labels, sums, counts) where
-        sums    (n_cells, N_CONFIG, 4)   summed peri-ripple firing
-        counts  (N_CONFIG, 4)            ripples contributing -- shared by all
-                                         cells of the session, since they see
-                                         the same ripples
-    With `split_halves`, sums/counts gain a leading axis of length 2 holding
-    alternate ripples (for the split-half reliability check).
-    """
-    labels = swu.unit_labels(session, data_root)
-    if labels is None:
-        return None
-    n_cells = len(labels)
-    n_half = 2 if split_halves else 1
-
-    lo = int(round(PERI_WIN_S[0] / BIN_S))
-    hi = int(round(PERI_WIN_S[1] / BIN_S))
-
-    sums = np.zeros((n_half, n_cells, N_CONFIG, len(STATES)))
-    counts = np.zeros((n_half, N_CONFIG, len(STATES)))
-
-    ev = events[events.session == session]
-    seen = 0
-    for grid, g in ev.groupby("grid_no"):
-        M = swu.grid_firing(session, grid, data_root)
-        if M is None or M.shape[0] != n_cells:
-            continue
-        onset = float(beh.loc[(beh.session == session) & (beh.grid_no == grid),
-                              "new_grid_onset"].iloc[0])
-        n_bins = M.shape[1]
-        for _, row in g.iterrows():
-            ci = CONFIG_LABELS.index(row.cfg)
-            si = STATES.index(row.state)
-            t0, t1 = row.t_s + window[0], row.t_s + window[1]
-            for t in ripple_t[(ripple_t >= t0) & (ripple_t < t1)]:
-                b = int(round((t - onset) / BIN_S))
-                if b + lo < 0 or b + hi > n_bins:
-                    continue
-                h = seen % n_half
-                sums[h, :, ci, si] += M[:, b + lo:b + hi].mean(axis=1)
-                counts[h, ci, si] += 1
-                seen += 1
-
-    if not split_halves:
-        return labels, sums[0], counts[0]
-    return labels, sums, counts
-
-
-def collect_patterns(bundle, events, sessions=None, data_root=None,
-                     split_halves=False, verbose=True):
-    """Pool ripple-triggered patterns over sessions into one cell x config x state
-    array per press window.
-
-    Cells are pooled ACROSS sessions -- legitimate only because these 28
-    sessions share the same 8 configs, which is what makes the feature space
-    236 HC / 67 mPFC cells instead of the ~9 / ~3 available within a session.
-    A cell whose session contributed no ripple to a (config, state) cell is NaN
-    there; nothing is imputed.
-    """
-    sessions = DSR_SESSIONS if sessions is None else sessions
-    beh = bundle["behaviour"]
-    out = {}
-    for wname, window in PRESS_WINDOWS.items():
-        P, rois, sess_of_cell, N = [], [], [], []
-        for s in sessions:
-            rip = session_ripples(bundle, s)
-            res = session_patterns(s, events, rip, beh, window, data_root,
-                                   split_halves=split_halves)
-            if res is None:
-                if verbose:
-                    print(f"  [{wname}] s{s}: no unit labels -- skipped")
-                continue
-            labels, sums, counts = res
-            # counts are shared by every cell of the session, so they need a
-            # cell axis to broadcast against `sums`
-            denom = counts[:, None] if split_halves else counts
-            with np.errstate(invalid="ignore", divide="ignore"):
-                mean = sums / np.where(denom == 0, np.nan, denom)
-            P.append(mean)
-            rois.extend(labels)
-            sess_of_cell.extend([s] * len(labels))
-            N.append(counts)
-        axis = 1 if split_halves else 0
-        out[wname] = {
-            "patterns": np.concatenate(P, axis=axis),
-            "roi": np.array(rois),
-            "session": np.array(sess_of_cell),
-            "counts": np.stack(N),          # (n_sessions, [2,] config, state)
-            "sessions": np.array(sessions),
-        }
-        if verbose:
-            tot = int(np.nansum(np.stack(N)))
-            print(f"  [{wname}] {tot} ripples, {len(rois)} cells "
-                  f"over {len(P)} sessions")
-    return out
-
 
 # =============================================================================
 # DATA RDMs
@@ -415,49 +319,67 @@ def all_permutations():
     return _PERMS
 
 
-def fit_model(rdm, model):
-    """Spearman correlation between a data RDM and a model RDM, with an EXACT
-    permutation test over config labels.
+def fit_model(rdm, model, exact=True):
+    """Spearman between a data RDM and a model RDM, with an EXACT permutation
+    test over config labels -- and it tolerates a PARTIAL data RDM.
 
-    The permutation relabels the configs of the data RDM, which is the null
-    "the population pattern carries no information about which config this is".
-    Because the observed value and all 40,320 null values come from the same
-    two lines of code, the CLAUDE.md rule on permutations is satisfied by
-    construction.
+    Partial RDMs are the normal case here: a config pair whose two conditions
+    share too few recorded cells cannot be estimated. Permuting the DATA labels
+    would then move the holes around, so the set of compared pairs would change
+    from permutation to permutation. Permuting the MODEL instead keeps the
+    observed-pair mask fixed and is exactly as valid a null -- "the plan
+    structure is assigned to configurations at random" -- so that is what is
+    done. Observed and null values come from the identical two lines.
 
-    Returns dict with rho, p_two_sided, p_one_sided (negative rho = similar
-    configs are less distant = the predicted direction) and the null.
+    Returns rho, the two-sided and one-sided p, and the null.
+
+    SIGN: both matrices are DISSIMILARITIES, so they co-vary POSITIVELY when
+    the region encodes the model. Two configurations that share few locations
+    are far apart in the model AND should be far apart in the data. Verified by
+    simulation: patterns built to encode the reward set give rho = +0.92.
+    The one-sided p is therefore the upper tail.
     """
     iu = np.triu_indices(N_CONFIG, 1)
-    ok = np.isfinite(rdm[iu]) & np.isfinite(model[iu])
-    if ok.sum() < N_CONFIG:                       # not enough pairs to say anything
+    d, m = rdm[iu], model[iu]
+    mask = np.isfinite(d) & np.isfinite(m)
+    n_obs = int(mask.sum())
+    if n_obs < MIN_PAIRS_TO_FIT or np.unique(m[mask]).size < 2 \
+            or np.unique(d[mask]).size < 2:
         return {"rho": np.nan, "p": np.nan, "p_one_sided": np.nan,
-                "n_pairs": int(ok.sum()), "null": np.array([])}
-    if not np.isfinite(rdm[iu]).all():
-        # a NaN pair would move between model entries under relabelling, so the
-        # permutation would not be exchangeable. Report rather than patch.
-        return {"rho": np.nan, "p": np.nan, "p_one_sided": np.nan,
-                "n_pairs": int(ok.sum()), "null": np.array([]),
-                "note": "incomplete RDM -- no exact permutation possible"}
+                "n_pairs": n_obs, "null": np.array([])}
 
-    # ranks are invariant to relabelling, so rank once and permute the matrix
-    R = np.zeros((N_CONFIG, N_CONFIG))
-    R[iu] = stats.rankdata(rdm[iu])
-    R = R + R.T
-    m = stats.rankdata(model[iu])
-    m = (m - m.mean()) / m.std()
+    dr = stats.rankdata(d[mask])
+    dr = (dr - dr.mean()) / dr.std()
 
-    perms = all_permutations()
-    Rp = R[perms[:, :, None], perms[:, None, :]][:, iu[0], iu[1]]
-    Rp = (Rp - Rp.mean(axis=1, keepdims=True)) / Rp.std(axis=1, keepdims=True)
-    null = Rp @ m / m.size
+    perms = all_permutations() if exact else _random_permutations()
+    Mp = model[perms[:, :, None], perms[:, None, :]][:, iu[0], iu[1]][:, mask]
+    Mr = stats.rankdata(Mp, axis=1)
+    Mr = (Mr - Mr.mean(axis=1, keepdims=True)) / Mr.std(axis=1, keepdims=True)
+    null = Mr @ dr / dr.size
 
-    obs = null[0]                                  # identity is the first perm
-    assert np.allclose(perms[0], np.arange(N_CONFIG))
+    obs = float(null[0])          # the first permutation is the identity
     p_two = float((np.abs(null) >= abs(obs) - 1e-12).mean())
-    p_one = float((null <= obs + 1e-12).mean())    # negative rho predicted
-    return {"rho": float(obs), "p": p_two, "p_one_sided": p_one,
-            "n_pairs": int(ok.sum()), "null": null}
+    p_one = float((null >= obs - 1e-12).mean())     # upper tail: see SIGN above
+    return {"rho": obs, "p": p_two, "p_one_sided": p_one, "n_pairs": n_obs,
+            "null": null}
+
+
+def fit_rho(rdm, model):
+    """Just the Spearman rho between a (possibly partial) data RDM and a model.
+
+    `fit_model` builds a whole permutation null on every call, which is wasted
+    work inside a permutation loop -- there, only the point estimate of each
+    permuted dataset is wanted. Same masking and same statistic, no null.
+    """
+    iu = np.triu_indices(N_CONFIG, 1)
+    d, m = rdm[iu], model[iu]
+    mask = np.isfinite(d) & np.isfinite(m)
+    if mask.sum() < MIN_PAIRS_TO_FIT:
+        return np.nan
+    d, m = d[mask], m[mask]
+    if np.unique(d).size < 2 or np.unique(m).size < 2:
+        return np.nan
+    return float(stats.spearmanr(d, m).correlation)
 
 
 def rank_offset_test(rdm, state="D"):
@@ -522,3 +444,585 @@ def jackknife_sessions(pack, roi, state, model):
         rdm, _ = build_rdm(P[sess != s])
         out.append({"left_out": int(s), "rho": fit_model(rdm, model)["rho"]})
     return pd.DataFrame(out)
+
+
+# =============================================================================
+# RAW SPIKE TIMES -- from abcd_passed.mat, not the 25 ms binned derivatives
+# =============================================================================
+#
+# The per-grid `all_cells_firing_rate_grid*.csv` matrices are 25 ms histograms
+# of exactly these spike times (`scripts/save_iEEG_as_csv.m`:
+# `edges = 0:0.025:end_time_behaviour`, `histcounts(spikeTimes, edges)`).
+# A ripple is ~60 ms long, so a peri-ripple window of +-10 ms is SMALLER THAN
+# ONE BIN and cannot be formed from them at all. Anything that needs firing
+# resolved inside a ripple has to come from here.
+#
+# Spike times are in seconds on the same session clock as the behaviour and
+# the ripple times -- `save_iEEG_as_csv.m` bins them from 0 with no offset, and
+# the behavioural timestamps are on that same clock.
+
+MAT_PATH = "abcd_passed.mat"
+ROI_TABLE = "neurons_with_ROI_labels.csv"
+
+# `neurons_with_ROI_labels.csv` carries the project's canonical ROI names in
+# `atlas_roi` (HC_anterior / HC_mid / mPFC / mOFC / EC / PCC), indexed by
+# `cell idx` within a subject. Verified 2026-09-15: that order matches the
+# `electrodeLabel` order in abcd_passed.mat for all 28 sessions, so the join is
+# positional and safe -- unlike `neurons_MNI_latest.csv`, which is NOT
+# row-aligned with the labels file for s27/s40/s50/s57/s60.
+ROI_COLUMN = "atlas_roi"
+
+
+def _derivatives(data_root=None):
+    import mc.analyse.swr_io as swr_io
+    return swr_io.derivatives_dir(data_root)
+
+
+def _mat_str(f, ref):
+    return "".join(chr(c) for c in np.array(f[ref]).ravel())
+
+
+def load_spike_times(sessions=None, data_root=None, cache_dir=None,
+                     verbose=True):
+    """Raw spike times per cell, per session, straight from abcd_passed.mat.
+
+    Returns {session: {"spikes": [np.ndarray, ...], "electrode": [str, ...]}}.
+    The mat file is 5.8 GB and HDF5-v7.3, so extracted spike times are cached
+    as one .npz per session; delete the cache to force a re-read.
+    """
+    import h5py
+    sessions = DSR_SESSIONS if sessions is None else sessions
+    deriv = _derivatives(data_root)
+    cache_dir = cache_dir or os.path.join(deriv, "group", "swr", "spike_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    out, need = {}, []
+    for s in sessions:
+        p = os.path.join(cache_dir, f"spikes_s{s:02d}.npz")
+        if os.path.isfile(p):
+            z = np.load(p, allow_pickle=True)
+            out[s] = {"spikes": list(z["spikes"]),
+                      "electrode": [str(x) for x in z["electrode"]]}
+        else:
+            need.append(s)
+    if need:
+        if verbose:
+            print(f"  reading {len(need)} session(s) from {MAT_PATH} "
+                  f"(cached afterwards)")
+        with h5py.File(os.path.join(deriv, MAT_PATH), "r") as f:
+            nd = f["abcd_passed/abcd_data"]["neural_data"]
+            for s in need:
+                g = f[nd[s - 1, 0]]
+                st = g["spikeTimes"]
+                spikes = [np.sort(np.array(f[st[i, 0]]).ravel().astype(float))
+                          for i in range(st.shape[0])]
+                elec = [_mat_str(f, g["electrodeLabel"][i, 0])
+                        for i in range(st.shape[0])]
+                np.savez_compressed(
+                    os.path.join(cache_dir, f"spikes_s{s:02d}.npz"),
+                    spikes=np.array(spikes, dtype=object),
+                    electrode=np.array(elec, dtype=object))
+                out[s] = {"spikes": spikes, "electrode": elec}
+                if verbose:
+                    print(f"    s{s}: {len(spikes)} cells, "
+                          f"{sum(len(x) for x in spikes):,} spikes")
+    return out
+
+
+def cell_roi_table(sessions=None, data_root=None):
+    """One row per cell: session, 0-based cell index, electrode, ROI.
+
+    Rows are in the SAME order as `load_spike_times` returns cells, so the two
+    can be zipped without a join.
+    """
+    sessions = DSR_SESSIONS if sessions is None else sessions
+    t = pd.read_csv(os.path.join(_derivatives(data_root), ROI_TABLE))
+    t = t[t.subject.isin(sessions)].copy()
+    t = t.sort_values(["subject", "cell idx"]).reset_index(drop=True)
+    return pd.DataFrame({
+        "session": t.subject.astype(int),
+        "cell": t["cell idx"].astype(int) - 1,
+        "electrode": t["electrode label"].astype(str),
+        "roi": t[ROI_COLUMN].astype(str),
+    })
+
+
+def spike_counts_in_windows(spikes, centres, half_widths):
+    """Spikes per window for one cell -- vectorised over windows.
+
+    `half_widths` may be a scalar or one value per centre (e.g. each ripple's
+    own duration/2).
+    """
+    centres = np.asarray(centres, float)
+    hw = np.broadcast_to(np.asarray(half_widths, float), centres.shape)
+    lo = np.searchsorted(spikes, centres - hw, side="left")
+    hi = np.searchsorted(spikes, centres + hw, side="right")
+    return hi - lo
+
+
+def ripples_near_events(bundle, session, events, window, with_duration=True):
+    """Ripples falling in `window` around each discovery press of one session.
+
+    Returns a DataFrame with one row per ripple: t_peak_s, duration_s, and the
+    config/state of the event it belongs to.
+
+    NOTE ON RIPPLE EXTENT: `ripple_events.csv` on the cluster carries
+    `t_start_s` / `t_peak_s` / `t_end_s`, but the bundle export keeps only the
+    peak and `duration_s`. On the one session held locally (s38) the peak sits
+    essentially at the centre of the event -- median 23 ms before, 24 ms after
+    -- so `peak +- duration/2` reconstructs the extent well. Re-exporting the
+    bundle with the two existing columns removes the approximation; no
+    re-detection is needed.
+    """
+    r = bundle["ripples"]
+    r = r[r.session == session]
+    t = r.t_peak_s.values
+    dur = r.duration_s.values if with_duration else np.full(len(r), np.nan)
+    order = np.argsort(t)
+    t, dur = t[order], dur[order]
+
+    rows = []
+    ev = events[events.session == session]
+    for _, e in ev.iterrows():
+        lo = np.searchsorted(t, e.t_s + window[0])
+        hi = np.searchsorted(t, e.t_s + window[1])
+        for k in range(lo, hi):
+            rows.append({"session": session, "t_peak_s": t[k],
+                         "duration_s": dur[k], "cfg": e.cfg, "state": e.state,
+                         "grid_no": e.grid_no, "press_t_s": e.t_s})
+    cols = ["session", "t_peak_s", "duration_s", "cfg", "state", "grid_no",
+            "press_t_s"]
+    out = pd.DataFrame(rows, columns=cols)
+    if len(out):
+        # one ripple detected on several derivations is one event
+        out = out.sort_values("t_peak_s")
+        keep = np.concatenate([[True], np.diff(out.t_peak_s.values) > DEDUP_S])
+        out = out[keep]
+    return out.reset_index(drop=True)
+
+
+# =============================================================================
+# RIPPLE-TRIGGERED PATTERNS, FROM RAW SPIKES
+# =============================================================================
+
+def collect_spike_patterns(bundle, events, roi_tab, spikes, window,
+                           extent="duration", fixed_half_s=0.010,
+                           split_halves=False, drop_silent=True, verbose=True,
+                           rng=None, config_perm=None):
+    """Firing rate inside each ripple, averaged per (config, state), per cell.
+
+    A ripple's extent is taken as `t_peak +- duration_s/2` (`extent="duration"`),
+    which is what the bundle allows; `extent="fixed"` uses `+- fixed_half_s`
+    instead. Rate is spikes divided by the window's own width, so ripples of
+    different length are comparable.
+
+    Cells are pooled ACROSS sessions -- legitimate only because these 28
+    sessions share the same 8 configs. A cell whose session contributed no
+    ripple to a (config, state) cell is NaN there; nothing is imputed.
+
+    `drop_silent` removes cells that fire NO spike in ANY ripple of this
+    window. Those cells are an all-zero column: after the per-cell centring in
+    `build_rdm` they contribute exactly nothing to any correlation, but they do
+    inflate the apparent feature count, so they are dropped and counted.
+    NOTE: individual zero counts are NOT dropped -- "this neuron was silent in
+    this ripple" is data, and discarding it would bias every rate upward.
+    """
+    n_half = 2 if split_halves else 1
+    P, rois, sess_of_cell, N, silent = [], [], [], [], 0
+
+    for s in sorted(set(roi_tab.session)):
+        rip = ripples_near_events(bundle, s, events, window)
+        cells = roi_tab[roi_tab.session == s]
+        if rip.empty or cells.empty:
+            continue
+        ci = np.array([CONFIG_LABELS.index(c) for c in rip.cfg])
+        if config_perm is not None:
+            # a FIXED relabelling, supplied by the caller. Needed for the
+            # post-minus-pre contrast: both windows must be relabelled the same
+            # way inside one permutation, or the contrast null is inflated by
+            # two independent shuffles instead of one.
+            ci = config_perm[s][ci]
+        elif rng is not None:
+            # NULL: relabel this session's configurations at random. Ripple
+            # counts, states, cell coverage and the missing-data pattern are
+            # all preserved exactly; only the identity of which configuration
+            # a ripple belongs to is destroyed -- and because each session gets
+            # its OWN relabelling, the cross-session config alignment that
+            # pooling cells depends on is destroyed too. That alignment is the
+            # signal, so this is the null the design calls for.
+            ci = rng.permutation(N_CONFIG)[ci]
+        si = np.array([STATES.index(x) for x in rip.state])
+        half = (rip.duration_s.values / 2.0 if extent == "duration"
+                else np.full(len(rip), fixed_half_s))
+        width = 2 * half
+        hix = np.arange(len(rip)) % n_half
+
+        sums = np.zeros((n_half, len(cells), N_CONFIG, len(STATES)))
+        counts = np.zeros((n_half, N_CONFIG, len(STATES)))
+        for h in range(n_half):
+            m = hix == h
+            np.add.at(counts[h], (ci[m], si[m]), 1)
+
+        keep = []
+        for row, (_, c) in enumerate(cells.iterrows()):
+            n = spike_counts_in_windows(spikes[s]["spikes"][int(c.cell)],
+                                        rip.t_peak_s.values, half)
+            if drop_silent and n.sum() == 0:
+                silent += 1
+                continue
+            rate = n / width
+            for h in range(n_half):
+                m = hix == h
+                np.add.at(sums[h, row], (ci[m], si[m]), rate[m])
+            keep.append(row)
+
+        if not keep:
+            continue
+        sums = sums[:, keep]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean = sums / np.where(counts[:, None] == 0, np.nan, counts[:, None])
+        P.append(mean if split_halves else mean[0])
+        rois.extend(cells.iloc[keep].roi.tolist())
+        sess_of_cell.extend([s] * len(keep))
+        N.append(counts if split_halves else counts[0])
+
+    axis = 1 if split_halves else 0
+    pack = {"patterns": np.concatenate(P, axis=axis),
+            "roi": np.array(rois), "session": np.array(sess_of_cell),
+            "counts": np.stack(N), "n_silent_dropped": silent}
+    if verbose:
+        print(f"  {int(np.nansum(np.stack(N)))} ripples, {len(rois)} cells kept, "
+              f"{silent} silent cells dropped")
+    return pack
+
+
+def peri_ripple_control(bundle, roi_tab, spikes, extent="duration",
+                        fixed_half_s=0.010):
+    """Do units fire more inside ripples than just outside them?
+
+    Peri = the ripple's own extent. Non-peri = two windows of the SAME total
+    width, one on each side, offset by 250 ms -- equal width matters, because
+    comparing counts from windows of different length is the trap recorded in
+    `POTENTIAL_IDEAS.md`. One row per (session, ROI).
+
+    The doctrine from `swr_ripple_triggered_units.py` stands: hippocampal units
+    must show an increase, or nothing representational from these two clocks is
+    interpretable. It is a positive control, not a result.
+    """
+    rows = []
+    for s in sorted(set(roi_tab.session)):
+        r = bundle["ripples"]
+        r = r[r.session == s]
+        if r.empty:
+            continue
+        t = np.sort(r.t_peak_s.values)
+        dur = r.duration_s.values[np.argsort(r.t_peak_s.values)]
+        t = swu.dedup_ripples(t)
+        dur = dur[:len(t)] if len(dur) >= len(t) else np.pad(
+            dur, (0, len(t) - len(dur)), constant_values=np.median(dur))
+        half = dur / 2.0 if extent == "duration" else np.full(len(t), fixed_half_s)
+        cells = roi_tab[roi_tab.session == s]
+        for roi, g in cells.groupby("roi"):
+            peri, non = [], []
+            for _, c in g.iterrows():
+                st = spikes[s]["spikes"][int(c.cell)]
+                p = spike_counts_in_windows(st, t, half) / (2 * half)
+                a = spike_counts_in_windows(st, t - 0.25 - half, half) / (2 * half)
+                b = spike_counts_in_windows(st, t + 0.25 + half, half) / (2 * half)
+                peri.append(p.mean())
+                non.append((a.mean() + b.mean()) / 2)
+            rows.append({"session": int(s), "roi": roi, "n_units": len(g),
+                         "n_ripples": len(t), "peri": float(np.mean(peri)),
+                         "non_peri": float(np.mean(non))})
+    d = pd.DataFrame(rows)
+    d["pct_change"] = 100 * (d.peri - d.non_peri) / d.non_peri
+    return d
+
+
+def summarise_control(ctrl):
+    """Paired test plus a sign test per ROI -- the sign test matters here
+    because the per-session percentages are heavy-tailed at these unit counts."""
+    out = []
+    for roi, g in ctrl.groupby("roi"):
+        t, p = stats.ttest_rel(g.peri, g.non_peri)
+        n_pos = int((g.peri > g.non_peri).sum())
+        out.append({"roi": roi, "n_sessions": len(g),
+                    "n_units": int(g.n_units.sum()),
+                    "mean_pct_change": g["pct_change"].mean(),
+                    "sem_pct_change": g["pct_change"].sem(),
+                    "t": t, "p_paired": p, "n_sessions_positive": n_pos,
+                    "p_sign": stats.binomtest(n_pos, len(g), 0.5).pvalue})
+    return pd.DataFrame(out)
+
+
+def pipeline_null(bundle, events, roi_tab, spikes, window, roi, state, model,
+                  n_perm=100, seed=42, **kwargs):
+    """Null distribution of the model fit, re-estimated through the WHOLE
+    pipeline rather than by relabelling a finished RDM.
+
+    Each permutation draws a fresh per-session configuration relabelling, then
+    rebuilds the patterns, the RDM and the fit with the identical code that
+    produced the observed value -- CLAUDE.md rule 4. That makes it sensitive to
+    everything the RDM-level permutation cannot see: the cell centring, the
+    missing-data structure, and the fact that a condition's pattern rests on a
+    handful of spikes.
+
+    100 permutations is enough to see how big the effect is relative to chance;
+    it is not enough for a precise p (resolution 0.01).
+    """
+    rng = np.random.default_rng(seed)
+    M = model_rdms(state)[model]
+    out = []
+    for _ in range(n_perm):
+        pack = collect_spike_patterns(bundle, events, roi_tab, spikes, window,
+                                      verbose=False, rng=rng, **kwargs)
+        rdm, _ = rdm_for(pack, roi, state)
+        out.append(fit_model(rdm, M, exact=False)["rho"])
+    return np.array(out, float)
+
+
+_RAND_PERMS = None
+
+
+def _random_permutations(n=2000, seed=42):
+    """A fixed random subset of the 8! relabellings.
+
+    Used inside `pipeline_null`, where the exact 40,320 would be recomputed
+    100 times over for no gain -- the quantity wanted there is the observed
+    rho of each permuted dataset, not its own p.
+    """
+    global _RAND_PERMS
+    if _RAND_PERMS is None:
+        rng = np.random.default_rng(seed)
+        P = np.array([rng.permutation(N_CONFIG) for _ in range(n - 1)])
+        _RAND_PERMS = np.vstack([np.arange(N_CONFIG), P])
+    return _RAND_PERMS
+
+
+def pipeline_null_contrast(bundle, events, roi_tab, spikes, roi, state, model,
+                           n_perm=100, seed=42, **kwargs):
+    """Null for the post-minus-pre contrast of model fits.
+
+    A difference of two Spearman rhos has no standard sampling distribution, so
+    it is only interpretable against a null built the same way. Each
+    permutation draws ONE per-session configuration relabelling and applies it
+    to BOTH windows, then takes the difference of the two fits -- exactly the
+    arithmetic used on the real data. Anything the two windows share (session
+    composition, cell coverage, ripple counts) survives the permutation, so the
+    null isolates the config identity, which is what the contrast claims.
+    """
+    rng = np.random.default_rng(seed)
+    sessions = sorted(set(roi_tab.session))
+    M = model_rdms(state)[model]
+    out = []
+    for _ in range(n_perm):
+        perm = {s: rng.permutation(N_CONFIG) for s in sessions}
+        rho = {}
+        for wname, w in PRESS_WINDOWS.items():
+            pack = collect_spike_patterns(bundle, events, roi_tab, spikes, w,
+                                          verbose=False, config_perm=perm,
+                                          **kwargs)
+            rdm, _ = rdm_for(pack, roi, state)
+            rho[wname] = fit_model(rdm, M, exact=False)["rho"]
+        out.append(rho["post"] - rho["pre"])
+    return np.array(out, float)
+
+
+# =============================================================================
+# FAST PATH: cache the (cell x ripple) rates once, permute by re-indexing
+# =============================================================================
+#
+# `collect_spike_patterns` re-reads every spike train on every call, which caps
+# a permutation test at ~100 draws. But a permutation only changes which
+# (config, state) bin a ripple falls into -- the spike counts themselves never
+# change. Caching the (cell x ripple) rate matrix per session therefore makes a
+# permutation a re-indexing operation, and thousands of draws become cheap.
+# `patterns_from_cache` reproduces `collect_spike_patterns` exactly.
+
+def cache_ripple_rates(bundle, events, roi_tab, spikes, window,
+                       extent="duration", fixed_half_s=0.010,
+                       surrogate_rng=None, scheme="window"):
+    """Per session: the rate of every cell in every ripple, plus its labels.
+
+    `surrogate_rng` replaces each ripple time with a random time drawn from the
+    SAME press window of the SAME event, keeping its duration. Everything else
+    -- which event, which config, which state, how many windows, which cells --
+    is untouched, so a comparison against it isolates one thing: whether the
+    window had to be at a ripple.
+    """
+    get = SCHEMES[scheme]
+    out = []
+    for s in sorted(set(roi_tab.session)):
+        rip = get(bundle, s, events, window)
+        cells = roi_tab[roi_tab.session == s]
+        if rip.empty or cells.empty:
+            continue
+        t = rip.t_peak_s.values.copy()
+        if surrogate_rng is not None:
+            if scheme == "interval":
+                # a surrogate must stay inside the SAME interval, or it would
+                # change which knowledge state the window belongs to
+                lo = rip.press_t_s.values
+                hi = rip.interval_end_s.values
+                t = lo + surrogate_rng.uniform(0, 1, len(rip)) * (hi - lo)
+            else:
+                t = (rip.press_t_s.values
+                     + surrogate_rng.uniform(window[0], window[1], len(rip)))
+        half = (rip.duration_s.values / 2.0 if extent == "duration"
+                else np.full(len(rip), fixed_half_s))
+        width = 2 * half
+        rates = np.empty((len(cells), len(rip)))
+        for row, (_, c) in enumerate(cells.iterrows()):
+            n = spike_counts_in_windows(spikes[s]["spikes"][int(c.cell)], t, half)
+            rates[row] = n / width
+        out.append({
+            "session": s,
+            "rates": rates,
+            "ci": np.array([CONFIG_LABELS.index(c) for c in rip.cfg]),
+            "si": np.array([STATES.index(x) for x in rip.state]),
+            "roi": cells.roi.to_numpy(),
+        })
+    return out
+
+
+def patterns_from_cache(cache, config_perm=None, split_halves=False,
+                        drop_silent=True):
+    """Rebuild a pattern pack from cached rates -- same output as
+    `collect_spike_patterns`, but a permutation costs no spike lookups."""
+    n_half = 2 if split_halves else 1
+    P, rois, sess, N, silent = [], [], [], [], 0
+    for blk in cache:
+        ci = blk["ci"]
+        if config_perm is not None:
+            ci = config_perm[blk["session"]][ci]
+        si, rates = blk["si"], blk["rates"]
+        hix = np.arange(rates.shape[1]) % n_half
+
+        counts = np.zeros((n_half, N_CONFIG, len(STATES)))
+        for h in range(n_half):
+            m = hix == h
+            np.add.at(counts[h], (ci[m], si[m]), 1)
+
+        keep = np.ones(rates.shape[0], bool)
+        if drop_silent:
+            keep = rates.sum(axis=1) > 0
+            silent += int((~keep).sum())
+        if not keep.any():
+            continue
+        sums = np.zeros((n_half, int(keep.sum()), N_CONFIG, len(STATES)))
+        R = rates[keep]
+        for h in range(n_half):
+            m = hix == h
+            np.add.at(sums[h].transpose(1, 2, 0), (ci[m], si[m]), R[:, m].T)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean = sums / np.where(counts[:, None] == 0, np.nan, counts[:, None])
+        P.append(mean if split_halves else mean[0])
+        rois.extend(blk["roi"][keep].tolist())
+        sess.extend([blk["session"]] * int(keep.sum()))
+        N.append(counts if split_halves else counts[0])
+
+    axis = 1 if split_halves else 0
+    return {"patterns": np.concatenate(P, axis=axis), "roi": np.array(rois),
+            "session": np.array(sess), "counts": np.stack(N),
+            "n_silent_dropped": silent}
+
+
+def fit_pooled(pack, roi, model, states=("B", "C", "D")):
+    """One fit across several states instead of one fit per state.
+
+    The knowledge-gated model makes the SAME claim at B, C and D -- only the
+    known set grows -- so the states can be fitted together. Each state's pairs
+    are ranked within that state (their dissimilarity scales differ) and then
+    concatenated, which turns 28 observations into up to 84 and drops the null
+    SD from ~0.19 to ~0.11. State A is excluded: the model is constant there.
+    """
+    iu = np.triu_indices(N_CONFIG, 1)
+    D, M = [], []
+    for st in states:
+        rdm, _ = rdm_for(pack, roi, st)
+        m = model_rdms(st)[model][iu]
+        d = rdm[iu]
+        ok = np.isfinite(d) & np.isfinite(m)
+        if ok.sum() < 3 or np.unique(m[ok]).size < 2:
+            continue
+        D.append(stats.rankdata(d[ok]) / ok.sum())
+        M.append(stats.rankdata(m[ok]) / ok.sum())
+    if not D:
+        return {"rho": np.nan, "n_pairs": 0}
+    D, M = np.concatenate(D), np.concatenate(M)
+    if D.std() == 0 or M.std() == 0:
+        return {"rho": np.nan, "n_pairs": len(D)}
+    return {"rho": float(np.corrcoef(D, M)[0, 1]), "n_pairs": int(len(D))}
+
+
+# =============================================================================
+# RIPPLE -> CONDITION ASSIGNMENT: two schemes
+# =============================================================================
+
+def ripples_in_intervals(bundle, session, events, window=None):
+    """Every ripple between one reward discovery and the next.
+
+    Scheme suggested by SK's supervisor. A ripple is assigned to state k if it
+    falls in [uncover_k, uncover_{k+1}); state D runs until the NEXT repeat's
+    t_A. Three properties make this better than a fixed window around the
+    press:
+
+    1. **Coverage.** 4163 ripples instead of 885 (4.7x), median 126 per
+       (config x state) RDM cell instead of 28.
+    2. **No double counting.** The intervals tile the first traversal exactly
+       once, so no ripple can land in two conditions -- which a +-1 s window
+       around consecutive presses cannot guarantee.
+    3. **The knowledge state is constant throughout.** Between uncovering A and
+       uncovering B the subject knows exactly {A}, for the whole interval. That
+       is precisely what the knowledge-gated model describes, so the interval
+       is a better match to the model than a window that happens to sit near
+       the press.
+
+    The cost: it is no longer "the moment of discovery" -- most of the interval
+    is spent searching for the next reward. `window` is accepted and ignored,
+    so the two schemes are interchangeable at the call site.
+
+    Returns the same columns as `ripples_near_events`.
+    """
+    beh = bundle["behaviour"]
+    b = beh[beh.session == session]
+    ev = events[events.session == session]
+    t = np.sort(swu.dedup_ripples(
+        bundle["ripples"].loc[bundle["ripples"].session == session,
+                              "t_peak_s"].values))
+    dur = bundle["ripples"].loc[bundle["ripples"].session == session]
+    dur = dur.sort_values("t_peak_s")
+    # durations are matched to the deduplicated peaks by nearest time
+    idx = np.searchsorted(dur.t_peak_s.values, t)
+    idx = np.clip(idx, 0, len(dur) - 1)
+    dur = dur.duration_s.values[idx]
+
+    rows = []
+    for grid, g in ev.groupby("grid_no"):
+        gi = g.set_index("state")
+        gb = b[b.grid_no == grid].sort_values("rep_overall")
+        if gb.empty:
+            continue
+        later = gb[gb.rep_overall > gb.rep_overall.min()]
+        end_D = (float(later.t_A.iloc[0])
+                 if len(later) and np.isfinite(later.t_A.iloc[0]) else np.nan)
+        ts = {k: float(gi.t_s[k]) for k in STATES if k in gi.index}
+        for i, k in enumerate(STATES):
+            if k not in ts:
+                continue
+            t0 = ts[k]
+            t1 = ts[STATES[i + 1]] if (i < 3 and STATES[i + 1] in ts) else end_D
+            if not np.isfinite(t1) or t1 <= t0:
+                continue
+            lo, hi = np.searchsorted(t, t0), np.searchsorted(t, t1)
+            for j in range(lo, hi):
+                rows.append({"session": session, "t_peak_s": t[j],
+                             "duration_s": dur[j], "cfg": gi.cfg[k],
+                             "state": k, "grid_no": grid,
+                             "press_t_s": t0, "interval_end_s": t1})
+    cols = ["session", "t_peak_s", "duration_s", "cfg", "state", "grid_no",
+            "press_t_s", "interval_end_s"]
+    return pd.DataFrame(rows, columns=cols).reset_index(drop=True)
+
+
+SCHEMES = {"window": ripples_near_events, "interval": ripples_in_intervals}

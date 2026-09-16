@@ -1,4 +1,476 @@
-# CHANGELOG
+# CHANGELOG\n\n## 2026-09-15 (g) — Interval scheme (supervisor's suggestion), and the mPFC D effect does not survive it
+
+**New:** `ripples_in_intervals` + `SCHEMES` in `mc/analyse/ripple_rsa.py`;
+`scripts/swr_ripple_rsa_diagnostics.py`.
+**Results:** `.../group/swr/ripple_rsa_diagnostics_2026-09-15/`.
+The `window` scheme is kept and still runnable — entry (f) is not superseded,
+it is contextualised.
+
+### The interval scheme: 4.7x the data, complete RDMs
+
+Every ripple in [uncover_k, uncover_{k+1}) is assigned to state k; state D runs
+to the NEXT repeat's t_A. Three advantages: the intervals tile the first
+traversal exactly once so **no ripple can enter two conditions**; the knowledge
+state is **constant** throughout each interval, which is exactly what the
+knowledge-gated model describes; and coverage jumps.
+
+| scheme | ripples | per (config x state) | RDM pairs missing |
+|---|---|---|---|
+| post 0–1 s window | 885 | 28 | 0–23 depending on ROI |
+| inter-uncover interval | 4040 | **126** | **0 everywhere** |
+
+Ripples per state (interval): A 1011, B 1179, C 1132, **D 718** — D is the
+thinnest because the interval to the next repeat's t_A is short (median 3.1 s).
+
+### ⚠ The mPFC D effect does not survive
+
+| ROI / state | post 0–1 s window | whole interval |
+|---|---|---|
+| **mPFC D** | **+0.325** (p = 0.059) | **-0.135** (p = 0.726) |
+| PCC D | +0.248 (p = 0.129) | +0.200 (p = 0.162) |
+| HC_anterior D | -0.328 | -0.220 |
+
+### The diagnostic that settles it: early vs late within the interval
+
+If the effect were genuinely time-locked to the discovery, it should live in the
+first second and be ~0 afterwards. Splitting the SAME intervals:
+
+| ROI / state | early 0–1 s (885) | late 1 s–end (3155) | whole (4040) |
+|---|---|---|---|
+| **mPFC D** | **+0.325** | **-0.445** | -0.135 |
+| PCC D | +0.248 | +0.342 | +0.200 |
+| HC_anterior D | -0.328 | -0.274 | -0.220 |
+
+**mPFC flips sign**, and the late half is as extreme negative as the early half
+is positive — both ~1.6-2.2 SD of a null whose SD is 0.2. That is what a coin
+flip looks like across 20 cells, not a time-locked effect. By contrast **PCC is
+the only ROI positive in every subset** (+0.248 / +0.342 / +0.200), though it
+reaches p = 0.06 at best.
+
+Conclusion: the entry (f) mPFC result was a window-specific fluctuation. It
+should not be carried forward as a finding.
+
+### The two nulls are nearly the same distribution
+
+Plotted as histograms (`null_distributions.pdf`) rather than error bars: the
+config-relabel null and the surrogate-window null have almost identical width
+and centre. So the surrogate is NOT a tighter test — it answers a different
+question (does the window have to be at a ripple) and cannot tell you whether
+there is any configuration structure at all. **Keep both**: config relabel as
+the statistical null, surrogate as the specificity control.
+
+### Model support (`model_support.pdf`)
+
+Configuration pairs sharing >= 1 reward location, by state: A **0/28**,
+B 5/28, C 17/28, D 24/28. Rank offset of shared locations: **offset 0 never
+occurs at any state** — which is why a strict order model has literally no data
+and `position_locked` is flat. r(known_set, known_seq) = 1.00 / 0.97 / 0.92 at
+B / C / D, so the two are not separable over 28 pairs.
+
+### Runs per configuration
+
+A session contributes a median of 3 grids per configuration
+(`coverage_sweep.pdf` panel d). Currently all their ripples are pooled into one
+pattern. Pooling is NOT biased for the off-diagonal — two different
+configurations never share ripples, so their noise is independent — but a
+cross-run RDM (odd vs even grid occurrences, as the DSR pipeline does with its
+`across_only` scope) would additionally protect against slow drift shared by
+configurations recorded close in time. Worth adding now that the interval
+scheme makes each cell well populated. NOT yet implemented.
+
+## 2026-09-15 (f) — Controls for the ripple RSA, and why the null is 0.19 wide
+
+`scripts/swr_ripple_rsa_controls.py` + a fast cached path in
+`mc/analyse/ripple_rsa.py` (`cache_ripple_rates`, `patterns_from_cache`,
+`fit_rho`, `fit_pooled`) — verified to reproduce `collect_spike_patterns`
+exactly, 82x faster, which is what makes 2000-draw permutations affordable.
+**Results:** `data/ephys_humans/derivatives/group/swr/ripple_rsa_controls_2026-09-15/`.
+
+### The null width is arithmetic, not a pipeline quirk
+
+An 8 x 8 RDM has **28 unique pairs**, so a chance Spearman correlation over it
+has SD = 1/sqrt(27) = **0.19**. Measured null SDs: config relabel 0.207,
+surrogate window 0.185, pooled-over-84-pairs 0.122 (predicted 0.110),
+post-minus-pre 0.291 (a difference carries both variances). All four match
+their arithmetic prediction, which is the check that the nulls are built
+correctly.
+
+Consequence: **with 28 pairs you need |rho| > ~0.37 for p < 0.05.** A rho of
+0.3 that would be large in an RDM with hundreds of cells is 1.5 SD here. The
+fix is more RDM cells, not more permutations.
+
+### Four controls
+
+| test | draws | what it asks |
+|---|---|---|
+| C1 config relabel | 2000 | is the fit about configuration identity? |
+| C2 surrogate window | 200 | does the window have to be at a ripple? |
+| C3 pooled B+C+D | 2000 | same question, 84 pairs instead of 28 |
+| C4 post − pre | 1000 | is the fit specific to after the press? |
+
+C2 is the specificity control: each ripple's window is moved to a random time
+inside the SAME +-1 s press window of the SAME uncover event, keeping its
+duration. Same events, configs, states, cells and window count — the only
+thing removed is that the window sat on a ripple.
+
+### Result: mPFC at D, and C2 separates it from PCC
+
+| ROI | state | rho | C1 p | **C2 p (ripple-specific)** | C4 p |
+|---|---|---|---|---|---|
+| **mPFC** | **D** | **+0.325** | 0.058 | **0.040** | 0.107 |
+| mOFC | D | +0.285 | 0.214 | 0.060 | — |
+| PCC | D | +0.248 | 0.129 | **0.125** | 0.174 |
+| HC_anterior | D | -0.328 | 0.952 | 0.960 | 0.954 |
+
+mPFC at D is the pre-declared primary cell and is the only one to clear
+p < 0.05 on any control. **The surrogate-window control is what separates it
+from PCC**: mPFC's fit is specific to windows that sat on a ripple (z = +1.95),
+PCC's is not (z = +1.11). Neither survives FDR across the 14 cells of the C2
+family (mPFC p_fdr = 0.42), and C1 does not reach 0.05 (p = 0.058).
+
+**The effect is D-specific, not an accumulation.** Pooling B+C+D (C3) gives
+mPFC rho = +0.111 on 74 pairs, z = +0.93, p = 0.173 — the D effect is diluted
+by B (+0.079) and C (-0.094). That argues against "working memory accumulating
+with each reward" and for "the plan is assembled once the configuration is
+complete", which is the fMRI claim. It also means the pooled test, which would
+have had the tighter null, is the wrong test for this effect.
+
+HC_anterior runs NEGATIVE throughout (D: -0.328; pooled -0.198, z = -1.70) —
+configurations sharing more locations have LESS similar hippocampal patterns.
+No account offered.
+
+ 2026-09-15 (e) — Ripple RSA on raw spikes, +-1 s windows, ripple-extent firing
+
+Supersedes (c) and (d). `scripts/swr_ripple_rsa_plan.py` (binned-matrix
+version) DELETED; replaced by `scripts/swr_ripple_rsa_spikes.py`. The
+binned-data collection path was removed from `mc/analyse/ripple_rsa.py`.
+
+**Results:** `data/ephys_humans/derivatives/group/swr/ripple_rsa_spikes_2026-09-15/`.
+
+### What changed
+
+- **Firing measured INSIDE the ripple**: `t_peak +- duration_s/2`, rate =
+  spikes / window width, from raw `abcd_passed.mat` spike times.
+- **Press windows widened to +-1 s** (was [-0.35, 0] / [+0.15, +0.70]). The
+  narrow pre-window left a median of 8 ripples per (config x state) and no
+  estimable RDM at all. Now: **715 pre / 885 post ripples**, median 22 / 28 per
+  condition. Cost: the post window no longer sits only on the rate increase.
+- **Silent cells dropped**: 145 (pre) / 132 (post) cells fire no spike in ANY
+  ripple of that window and are removed — they are an all-zero column.
+  **Individual zero counts are KEPT**: "silent in this ripple" is data, and
+  dropping those would bias every rate upward.
+- ROIs from `neurons_with_ROI_labels.csv` / `atlas_roi`.
+
+### Positive control now PASSES for HC_anterior
+
+Firing inside the ripple vs two equal-width windows offset by 250 ms either
+side (equal width, to avoid the count-vs-window-length trap):
+
+| ROI | sessions | units | change | t | p |
+|---|---|---|---|---|---|
+| **HC_anterior** | 26 | 171 | **+4.4%** | **2.16** | **0.041** |
+| HC_mid | 19 | 145 | +2.9% | 1.05 | 0.310 |
+| PCC | 6 | 51 | +2.4% | 1.27 | 0.259 |
+| mPFC | 15 | 65 | +1.7% | -0.16 | 0.879 |
+| mOFC | 10 | 74 | -0.4% | -0.40 | 0.702 |
+
+Measuring the ripple's own extent is more sensitive than the fixed 0-200 ms
+post-peak window used in (c), which gave +2.2%, p = 0.104 for pooled HC.
+
+### ⚠ SIGN CORRECTION — this inverts the conclusions of the first version
+
+The first version of this entry reported "negative rho = predicted". **That was
+wrong.** Model and data RDMs are both DISSIMILARITIES, so a region that encodes
+the model produces a POSITIVE correlation: two configurations sharing few
+locations are far apart in the model AND far apart in the data. Verified by
+simulation — patterns constructed so each cell fires for its own rewarded
+location give **rho = +0.92** against `known_set`. All one-sided tests are
+upper-tail. `fit_model` and the figure labels are fixed.
+
+### known_set at D IS full_abcd
+
+Verified `np.allclose` = True: once D is uncovered the subject knows the whole
+configuration, so the knowledge-gated model and the fixed full-ABCD model
+coincide exactly at state D. That is why their rho is identical there.
+`known_seq` at D is NOT the same (rank-weighted, not a plain set).
+
+The ordered "compare all A-rewards, all B-rewards, ..." model is
+`position_locked`, and it is **constant at every state** (sd = 0.000) because
+within a state all eight configurations have distinct locations. It cannot be
+fitted. The testable model is the unordered set, as expected.
+
+### Result: direction is right in mPFC, but nothing is significant
+
+`known_set`, post-press, positive = predicted:
+
+| ROI | state | rho | exact p (1-sided) | pipeline p | z vs pipeline null |
+|---|---|---|---|---|---|
+| **mPFC** | **D** | **+0.325** | **0.054** | 0.090 | +1.49 |
+| PCC | D | +0.248 | 0.124 | 0.090 | +1.48 |
+| mOFC | D | +0.285 | 0.204 | 0.155 | +0.84 |
+| HC_mid | B | (full_abcd) +0.373 | 0.013 | — | — |
+| HC_anterior | D | -0.328 | 0.941 | 0.990 | -1.73 |
+
+mPFC at D is the largest effect in the predicted direction and the pre-declared
+primary cell. It does **not** reach significance under either null (0.054
+exact, 0.090 pipeline) and does not survive FDR across the three primary ROIs
+(0.162). **PCC at D matches it almost exactly (+0.248, p = 0.090)** and PCC is
+not a predicted region — which is the main reason not to read the mPFC value as
+a result yet.
+
+HC_anterior at D goes the OTHER way (-0.328, z = -1.73): configurations sharing
+more locations have LESS similar hippocampal patterns. No account is offered;
+at a null SD of 0.2 this is what the tail looks like.
+
+### THE PERMUTATION: how big is chance here?
+
+`pipeline_null` draws a fresh per-session configuration relabelling and re-runs
+the WHOLE estimator -- patterns, cell centring, missing-data structure, RDM,
+fit -- 100 times. Each session gets its own relabelling, destroying the
+cross-session config alignment that pooling cells depends on. That alignment is
+the signal, so this is the right null, and it passes through identical code
+(CLAUDE.md rule 4).
+
+**The null SD is ~0.20 for every ROI and every state.** That is the number to
+carry around: a Spearman rho of |0.2| in this design IS chance, and |0.3| is
+1.5 SD. Values of that size appear all over the table, in both directions, in
+regions with and without a prediction.
+
+At 100 permutations the p resolution is 0.01, so prefer z to p.
+
+### post - pre contrast: built a proper null for it, and it is not significant
+
+A difference of two Spearman rhos has no standard sampling distribution, so
+`pipeline_null_contrast` draws ONE per-session relabelling and applies it to
+BOTH windows before differencing -- the same arithmetic as the real data, with
+session composition, cell coverage and ripple counts preserved.
+
+| ROI | state | post-pre | null SD | z | p |
+|---|---|---|---|---|---|
+| mPFC | B | +0.334 | 0.296 | +1.14 | 0.13 |
+| mPFC | C | +0.320 | 0.317 | +1.05 | 0.17 |
+| mPFC | D | +0.394 | 0.331 | +1.08 | 0.14 |
+| PCC | D | +0.309 | 0.358 | +1.12 | 0.13 |
+| HC_anterior | D | -0.501 | 0.262 | -1.88 | 0.98 |
+
+mPFC is positive at all three testable states, which is a coherent pattern, but
+the contrast null is WIDER than the single-window null (SD 0.26-0.36, because a
+difference carries both variances) and nothing reaches significance. Note also
+that the mPFC contrast is driven as much by a NEGATIVE pre fit (-0.255, -0.414,
+-0.069) as by a positive post fit. Results in `contrast_permutation.csv`.
+
+HC_anterior flips sign between windows in the opposite direction to mPFC
+(pre +0.239 / +0.173 at C / D, post -0.180 / -0.328).
+
+### Figures
+
+- `model_RDMs.png/.pdf` — all four models x four states, with sd printed and
+  the constant (unfittable) panels outlined in red. Makes the counterbalancing
+  visible: `known_set`/`known_seq` are uniform at A, `position_locked` is
+  uniform everywhere.
+- `fit_timecourse_A_to_D.png/.pdf` — 3 models x {post, pre, post-pre}, all
+  ROIs. Panels ~6 cm wide, Arial 9-11 pt, 2.2 pt lines, per CLAUDE.md.
+- `overview_all_ROIs.png/.pdf` — (a) plan-model fit A->D for every ROI, post
+  solid / pre dashed; (b) observed effect against its re-estimated null;
+  (c) how complete each RDM is; (d) split-half reliability, restricted to
+  states with >= 10 observed pairs.
+- `rdm_reliability.png` — split-half reliability, so a flat timecourse is not
+  misread as a null.
+- `data_RDMs_<roi>.jpeg` — the measured RDMs.
+
+## 2026-09-15 (d) — Ripple RSA power, done properly on RAW spike times
+
+Redo of (c) after SK pointed out that the analysis must start from
+`abcd_passed.mat`, not the 25 ms binned per-grid matrices, and that firing
+should be measured DURING the ripple.
+
+**New:** `scripts/swr_ripple_rsa_power.py`; raw-spike loaders in
+`mc/analyse/ripple_rsa.py` (`load_spike_times`, `cell_roi_table`,
+`spike_counts_in_windows`, `ripples_near_events`).
+**Results:** `data/ephys_humans/derivatives/group/swr/ripple_rsa_power_2026-09-15/`.
+
+### Sources now used
+
+- **Spikes:** `abcd_passed.mat` -> `abcd_data.neural_data(c).spikeTimes`, in
+  seconds on the same session clock as behaviour and ripples
+  (`save_iEEG_as_csv.m` bins these from 0 with no offset). Cached per session
+  as .npz under `group/swr/spike_cache/`. 564 cells, 4.57 M spikes, 28 sessions.
+- **ROIs:** `neurons_with_ROI_labels.csv`, column `atlas_roi`, joined
+  positionally on `cell idx`. **Verified: that order matches the mat file's
+  `electrodeLabel` for all 28/28 sessions.** This replaces
+  `neurons_MNI_latest.csv`, which is not row-aligned for s27/s40/s50/s57/s60.
+
+### Ripple onset/offset — no cluster work needed
+
+`swr_detect.py` already computes `t_start_s`, `t_peak_s` and `t_end_s`, and all
+three are present in the per-session `ripple_events.csv`. **Only the bundle
+export drops them.** Re-exporting the bundle with those two columns is
+sufficient; re-detection is not required. On s38 (the one session held locally,
+461 accepted ripples, matching the bundle exactly) the peak sits essentially at
+the centre of the event — median 23 ms before, 24 ms after, duration 59 ms — so
+`peak +- duration/2` reconstructs the extent well in the meantime.
+
+### THE POWER VERDICT: yes, still a problem, and it is arithmetic
+
+Spikes per neuron per ripple, post-press window, 28 sessions:
+
+| ROI | n cells | ±10 ms | ±duration/2 | ±100 ms | % zero (±dur/2) |
+|---|---|---|---|---|---|
+| HC_anterior | 171 | 0.043 | 0.185 | 0.521 | 87% |
+| HC_mid | 145 | 0.072 | 0.278 | 0.787 | 83% |
+| mPFC | 65 | 0.032 | 0.129 | 0.389 | 89% |
+| mOFC | 74 | 0.115 | 0.319 | 0.810 | 78% |
+| PCC | 51 | 0.039 | 0.148 | 0.471 | 88% |
+| EC | 3 | 0.000 | 0.167 | 0.333 | 92% |
+
+Firing rate inside ripples is 1.5-4.6 Hz depending on ROI. A ripple is ~60 ms.
+**3 Hz x 60 ms = 0.18 spikes.** That product, not the analysis design, is the
+constraint.
+
+- **±10 ms is unusable**: 90-100% of (neuron, ripple) pairs contain no spike at
+  all; EC contains none anywhere.
+- Pooled over ALL 28 sessions, one (config x state) RDM cell is built from a
+  median of **0.15 (mPFC) to 0.35 (HC_mid) spikes per neuron**. The RDM entry
+  is therefore a comparison of near-empty count vectors.
+- Nothing about this changes with the raw data — the binned matrices gave the
+  same firing rates; what the raw data adds is the ability to ASK the question
+  at ripple resolution, and the answer is that the question is not affordable
+  in spikes.
+
+Reaching ~5 spikes per neuron per condition would need roughly 20-30x more
+ripples per condition. Available multipliers: all correct uncovers instead of
+discoveries only (~7x, but the reward is then already known), pooling the four
+states (4x, destroys the state axis), widening to ±100 ms (~2.8x, no longer
+"during the ripple"). No combination preserves the design and the question.
+
+**Conclusion unchanged from (c), now on the right data:** ripple-triggered
+single-unit RSA is not affordable in this dataset. HFB remains the route —
+`swr_extract_hfb` is continuous, has no spike-count floor, and covers every
+derivation rather than only the sessions with microwires.
+
+### ROI table disagreement — needs resolving
+
+`atlas_roi` and `neurons_MNI_latest.csv` disagree substantially on the same 28
+sessions: HC 316 (171 anterior + 145 mid) vs 236; **EC 3 vs 51**; PCC 51 vs 41;
+mPFC 65 vs ACC 67; mOFC 74 vs OFC 68. The EC discrepancy is a factor of 17 and
+changes whether EC is analysable at all. `atlas_roi` was used here because it
+carries the project's canonical names and its row order is verifiable against
+the mat file.
+
+## 2026-09-15 (c) — Ripple-triggered RSA on human cells: UNDERPOWERED, not a null
+
+The cell analogue of the instruction-phase fMRI RSA. Subjects discover A/B/C/D
+rather than being shown them, so "how much of the plan is assembled" is indexed
+by WHICH reward was just uncovered instead of by time within a 12 s instruction
+period. Ripple-triggered firing at the discovery presses, 8x8 config RDM per
+state, cells pooled across the 28 shared-config sessions.
+
+**New:** `mc/analyse/ripple_rsa.py`, `scripts/swr_ripple_rsa_plan.py`.
+**Results:** `data/ephys_humans/derivatives/group/swr/ripple_rsa_plan_2026-09-15/`.
+
+### What the task design forbids (verified, not assumed)
+
+Within any single state all 8 configs have DISTINCT reward locations
+(A: 3 8 1 4 6 9 7 2; B: 7 2 9 8 4 1 3 5; C: 9 6 5 1 2 3 4 7; D: 5 7 8 3 9 4 2 6).
+Therefore:
+
+- The position-locked Hamming model used in the fMRI (`rewDSR`) has **sd = 0.000
+  at every state** and cannot be fitted in a within-state RDM. The
+  generalisation that survives is set overlap of the locations known so far.
+- At state A every knowledge-gated model is constant (one known location, all
+  eight distinct). A is only testable with the fixed full-ABCD model, where it
+  is the knowledge null.
+- **Current location is constant within every within-state RDM**, so a
+  within-state effect cannot be a place code. The counterbalancing supplies the
+  confound control for free — stronger than the pre/post window.
+- `known_set` vs `known_seq` correlate r = 1.00 / 0.97 / 0.92 at B / C / D.
+  Not separable over 28 pairs; they are NOT run as a horse race. The sequence
+  question is asked as a rank-offset test instead.
+
+### Why this is underpowered, with numbers
+
+- 2,665 discovery events (correct, `is_discovery`, explore) in the 28 sessions.
+- Ripples in the windows: **265** in pre [-0.35, 0], **570** in post
+  [+0.15, +0.70]. That is **0.48 / 0.64 ripples per (session x config x state)**
+  — 64% / 56% of condition cells empty. Condition-averaging per session is
+  impossible; only cross-session cell pooling makes any RDM estimable at all.
+- **The whole `pre` window is unusable**: not one ROI/state yields a complete
+  8x8 RDM, so the pre-vs-post control could not be run.
+- In `post`, **only HC** gives complete RDMs (median 51-64 cells per pair).
+  mPFC/ACC, OFC and EC all have missing pairs at every state, so the exact
+  permutation is not defined for them and they are reported as NaN.
+- **Split-half reliability of the best-covered RDM (HC, post, D) is
+  rho = -0.06.** The RDMs are noise.
+
+### Positive control: WEAK, and it caps everything downstream
+
+Peri (0:+200 ms) vs non-peri (-750:-250 and +250:+750) firing, all ripples,
+session-level paired test:
+
+| ROI | sessions | units | mean change | t | p | sessions positive | sign test |
+|---|---|---|---|---|---|---|---|
+| HC | 25 | 236 | +2.2% | 1.69 | 0.104 | 19/25 | **0.015** |
+| ACC (mPFC) | 16 | 67 | +1.0% | 1.08 | 0.296 | 8/16 | 1.00 |
+| EC | 9 | 51 | +4.6% | 1.61 | 0.147 | 6/9 | 0.51 |
+| OFC | 8 | 68 | +0.7% | 1.13 | 0.297 | 5/8 | 0.73 |
+
+**This is not a clock problem.** A +/-10 s lag scan of HC firing against ripple
+peaks maxes at exactly **0.0 s** (`clock_lag_scan.csv`), and the firing matrices
+are raw unsmoothed 25 ms spike counts (integers 0-7, lag-1 autocorrelation
+0.013). The coupling is genuinely ~2-4%.
+
+**Nor is it probe co-location.** Unit electrode labels are `m` + probe name, so
+microwire and ripple-derivation probes can be compared directly. Only **66 of
+564 units (10 of 28 sessions)** sit on a probe that also produced ripples — but
+restricting to the row-aligned sessions, same-probe units show **+2.9% (n=5
+sessions)** and different-probe units **+3.7% (n=13)**. Co-location does not
+rescue the coupling; an earlier apparent +6.6% for different-probe was driven
+by sessions whose neuron table is not row-aligned (see below).
+
+### Results (all secondary except the one marked)
+
+Pre-declared primary: state D, post window, HC and mPFC, `known_set`.
+
+| ROI | state | model | rho | p (1-sided) | p FDR |
+|---|---|---|---|---|---|
+| HC | D | known_set | +0.112 | 0.722 | 0.722 | **PRIMARY — null, wrong sign** |
+| mPFC | D | known_set | — | — | — | RDM incomplete, not estimable |
+| HC | B | known_set | -0.339 | 0.012 | 0.054 |
+| HC | B | full_abcd | -0.322 | 0.042 | 0.125 |
+| HC | C | known_set | -0.266 | 0.073 | 0.132 |
+| HC | A | full_abcd | -0.117 | 0.297 | 0.404 |
+
+The knowledge-accumulation prediction (full-ABCD fit grows A -> D) is **not**
+borne out: -0.117, -0.322, -0.095, +0.112 across A/B/C/D. The B and C values sit
+in the predicted direction but do not survive FDR, sit in a family of 40-odd
+tests, and come from RDMs with ~zero split-half reliability.
+
+`rank_offset` at HC post-D is rho = +0.534, p = 0.007 uncorrected — reported in
+`controls.csv` and **not** believed, for the same reliability reason.
+
+### Conclusion
+
+**This is an underpowered design, not a negative result**, exactly as
+`POTENTIAL_IDEAS.md` I5 warned ("if it is thin, I5 is not a null result, it is
+an underpowered one, and those are different claims"). Do not re-run it as-is.
+What would change the answer, in order of expected value:
+
+1. More ripples per condition — the binding constraint. Either loosen detection
+   (the `ripple` envelope is stored continuously and is threshold-free) or drop
+   to a coarser condition space that keeps config variance.
+2. HFB instead of spikes: `swr_extract_hfb` covers every derivation, so the
+   feature space is not limited to the sessions with microwires.
+3. Accept that mPFC cannot support a pooled-cell RDM here (67 cells, 45%
+   coverage per condition) and go per-contact + LME, as He et al. do.
+
+### Incidental finding, needs fixing elsewhere
+
+`neurons_MNI_latest.csv` is **not row-aligned** with
+`all_cells_region_labels_sub<N>.txt` for **s27, s40, s50, s57, s60** (38%, 95%,
+44%, 81%, 63% of rows agree). Anything that joins the neuron table to firing
+matrix rows by position is wrong for those five sessions. This analysis uses
+`swu.unit_labels` (the row-aligned file) throughout and is unaffected, but the
+mismatch should be resolved at source.
 
 ## 2026-09-15 (b) — Direction regressor + order-independent instruction models
 
