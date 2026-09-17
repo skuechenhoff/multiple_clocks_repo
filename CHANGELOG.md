@@ -1,5 +1,182 @@
 # CHANGELOG
 
+## 2026-09-17 — Peri-ripple frontal HFB by what the ripple follows
+
+**New:** `scripts/swr_ripple_hfb_conditions.py`. **Results:**
+`.../group/swr/ripple_hfb_conditions_2026-09-17/`. Session-level, different-shaft,
+runs from `bundle_v2`.
+
+Each ripple is assigned to its nearest preceding labelled event within 2 s.
+Target = a rewarded uncovering during the first traversal (`reward_explore`);
+five matched controls. Each condition gets its own shifted null, because the
+conditions differ in state by construction (F1: rate rises with stillness; F3:
+the first traversal is stiller) so the state confound does NOT cancel.
+
+### Per condition (session-level, real minus shifted null)
+
+| condition | mPFC | mOFC | Frontal |
+|---|---|---|---|
+| **reward_explore** (target) | −0.0001 (0.98) | **+0.0110 (0.0003)** | +0.0053 (0.039) |
+| error_explore | +0.0033 (0.30) | +0.0019 (0.49) | +0.0031 (0.12) |
+| reward_plan | +0.0026 (0.67) | −0.0057 (0.32) | −0.0007 (0.88) |
+| reward_execute | **+0.0051 (0.0004)** | **+0.0089 (<0.0001)** | **+0.0075 (<0.0001)** |
+| move_explore | +0.0014 (0.66) | +0.0037 (0.28) | +0.0023 (0.39) |
+| still_explore | −0.0051 (0.58) | +0.0105 (0.17) | +0.0066 (0.19) |
+
+### Contrasts against the target, count-balanced pairwise
+
+**mOFC vs error_explore: +0.0098 ± 0.0040, p = 0.017** — same phase, same
+action, opposite feedback. vs reward_plan +0.0166, p = 0.053 (n = 23). Every
+other contrast null, in every ROI.
+
+Critically, **reward_explore ≈ reward_execute in mOFC** (−0.0009, p = 0.80).
+So this is not explore-specific or novelty-specific: both rewarded conditions
+show the response. The dissociation that survives is **reward vs error**, not
+**new vs known**.
+
+### Three things that qualify this
+
+1. **The error contrast is not robust to the balancing scheme.** Balancing all
+   six conditions to the smallest gave −0.0014, p = 0.77; balancing pairwise —
+   subsampling only the larger of each pair — gave +0.0098, p = 0.017. Pairwise
+   is the better design (global balancing cut the target from 46 ripples to 30
+   even when its comparison had 68) but the swing is large and the result
+   should be treated as unresolved rather than established.
+   ⚠ The first version of this script promised count-balancing in its docstring
+   and did not implement it. Found on reading back; both schemes are now
+   computed and the unbalanced number is printed alongside.
+2. **Multiple comparisons.** 3 ROIs × 5 contrasts = 15 tests; one reaches
+   p < 0.05 and one more p = 0.053, against ~0.75 expected by chance. That is
+   weak evidence on its own; what supports it is that both are in the ROI with
+   the robust main effect and both run in the predicted direction.
+3. **`still_explore` has 11–15 sessions** and is badly underpowered — its wide
+   intervals are not evidence of absence.
+
+### Collapsing mPFC + mOFC is a bad idea
+
+The `Frontal` column dilutes everything: the target drops from +0.0110 (mOFC)
+to +0.0053, and **no contrast survives**. mPFC's target is flatly null
+(−0.0001, p = 0.98) while its `reward_execute` is significant (+0.0051,
+p = 0.0004) — the two regions are not doing the same thing, so averaging them
+mixes signal with noise. Report them separately.
+
+
+## 2026-09-16 (d) — Sequence figure (fMRI-style), and why mOFC coverage differs between spikes and HFB
+
+**New:** `scripts/swr_ripple_rsa_sequence_figure.py`.
+**Results:** `.../group/swr/ripple_rsa_sequence_2026-09-16/`.
+
+### Why mOFC looked underpowered for spikes but well-powered for HFB
+
+Not a bug — the two measure different things.
+
+| ROI | cells | cell **sessions** | HFB derivations | HFB **sessions** |
+|---|---|---|---|---|
+| mOFC | 74 | **10** | 107 | **19** |
+| mPFC | 65 | 15 | 32 | 17 |
+| HC_anterior | 171 | 26 | 47 | 26 |
+| Visual | 21 | **1** | 81 | 18 |
+
+mOFC units fire fastest of any ROI (0.32 spikes/ripple, ~4.6 Hz), so
+spikes-per-ripple is high — but they sit in only **10 sessions**. A
+(config x state) RDM cell is populated only if a session that HAS mOFC cells
+also had a ripple in that config and state, so 10 sessions leaves 65 % of
+mOFC's config pairs unestimable. **RDM coverage is driven by SESSIONS, not by
+firing rate.** HFB mOFC spans 19 sessions, hence the difference.
+
+Same reason the Visual spike "control" was meaningless (21 cells, all from ONE
+session) while the HFB Visual control is real (81 derivations, 18 sessions).
+
+### The sequence figure
+
+Direct analogue of the fMRI instruction figure: x-axis is the four reward
+DISCOVERIES instead of 12 instruction seconds, and the two lines are the two
+model families — `known_set` ("memory": locations uncovered so far) and
+`full_abcd` ("plan": the whole configuration). They are identical at D by
+construction. Ripples from the first 1 s and first 2 s after each uncover,
+capped at the next uncover. Pad 0.25 s, 2000-draw config-relabel null.
+
+**mPFC, 0-1 s: both models rise monotonically A -> B -> C -> D**
+(full_abcd: -0.31, -0.11, -0.13, +0.26), which is the shape the fMRI figure
+shows and the shape the hypothesis predicts. It is the cleanest-looking result
+in the whole project so far. But every point sits inside the +-1 SD null band
+except D, and D reaches only p = 0.13. In the 0-2 s window the same panel is
+flat (+0.01 at D).
+
+**Two cells reach p < 0.05 uncorrected, and neither helps:**
+- mOFC `known_set` at B, +0.45, p = 0.031 (0-1 s)
+- PCC `full_abcd` at A, +0.39, p = 0.038 (0-2 s) — **state A is where the
+  subject CANNOT know the configuration**, so this is the built-in confound
+  detector firing, not a result.
+
+## 2026-09-16 (c) — Bootstrap, pooling, and the HFB variant is built
+
+### CLARIFICATION: the time-resolved figure plots rho, not p
+
+`timeresolved_D.pdf` row 1 is the **Spearman correlation** between data and
+model RDM. There are no p values in that figure. **Positive = predicted.** The
+dotted lines at 0 s and 1 s are the boundaries of the old post-press window.
+
+### Bootstrap over sessions — the most encouraging number so far
+
+Resampling the 27 sessions with replacement, 500x, uncover D, window 0-1 s:
+
+| pad | ROI | observed | bootstrap 95% CI | % resamples positive |
+|---|---|---|---|---|
+| 1.00 | **mPFC** | **+0.563** | **[+0.154, +0.713]** | **99 %** |
+| 1.00 | PCC | +0.020 | [-0.388, +0.255] | 52 % |
+| 1.00 | HC_anterior | -0.260 | [-0.398, +0.055] | 6 % |
+| 0.25 | **mPFC** | **+0.266** | **[-0.058, +0.633]** | **96 %** |
+| 0.25 | PCC | +0.007 | [-0.247, +0.279] | 61 % |
+
+So the mPFC value is **consistent across sessions** — it is not one subject.
+That is a genuine point in its favour and was not visible in the permutation.
+
+**But the two tests answer different questions and both are right.** The
+bootstrap resamples SESSIONS while holding the 8 configurations and the model
+fixed, so it measures stability across subjects; it cannot see the 28-pair
+resolution limit. The config-relabel permutation measures exactly that limit.
+An effect can be stable across sessions AND be within what random
+configuration labelling produces — which is this one at pad 0.25 (p = 0.101).
+
+### Pooling all four uncovers: nothing
+
+Collapsing A/B/C/D into one condition per configuration (8 conditions, model =
+full ABCD, 4x the ripples) across 3 pads x 2 schemes: every ROI p > 0.088,
+mPFC between -0.107 and +0.090. No pooled configuration signal.
+
+### HFB variant: BUILT, positive control passes, design limit unchanged
+
+`hfb_roi_table`, `load_hfb`, `cache_hfb_rates` in `mc/analyse/ripple_rsa.py`.
+Interchangeable with the spike path — `patterns_from_cache`, `rdm_for`,
+`fit_rho` and every null work unchanged.
+**Results:** `.../group/swr/ripple_rsa_hfb_2026-09-16/hfb_first_pass.csv`.
+
+Coverage in the 28 DSR sessions (597 usable derivations): mOFC 107 / 19
+sessions, Visual 81 / 18, HC_anterior 47 / 26, mPFC 32 / 17, HC_mid 28 / 19.
+Signal is float16 at 100 Hz on the same session clock; robust-z (median/IQR)
+per derivation before windowing, because gains differ by orders of magnitude.
+
+**Positive control passes** (mean robust-z inside vs outside ripples):
+HC_anterior +0.204, HC_mid +0.213 — but these are CIRCULAR, ripples are
+detected on those derivations and 80-120 Hz sits inside the 70-150 Hz band, so
+they are flagged `is_ripple_source`. Cortical: mPFC +0.021, mOFC +0.007,
+Visual -0.006. Cortical HFB barely moves at hippocampal ripples here, matching
+the weak spike coupling found earlier.
+
+**First pass, 51 cells (2 pads x 2 schemes x 5 ROIs x states B/C/D):**
+7 reach p < 0.05, but they are **dominated by Visual** — the negative control —
+at +0.357 (p = 0.035), +0.333, +0.420 (p = 0.025) and +0.473 (p = 0.007), plus
+HC_anterior at state B. mPFC is estimable only in the interval scheme
+(12 derivations) at +0.238, p = 0.184.
+
+A negative control lighting up as strongly as anything else says the apparent
+structure is not ROI-specific.
+
+**And HFB does not fix the resolution problem:** median null SD = 0.212 against
+the 28-pair floor of 0.192. More features and a continuous signal do not narrow
+a correlation over 28 pairs. That remains the binding constraint.
+
 ## 2026-09-16 (b) — I1: ripple-locked cortical HFB. Medial frontal yes, visual null; survives the pad sweep
 
 **New:** `scripts/swr_ripple_locked_hfb.py`. **Results:**
