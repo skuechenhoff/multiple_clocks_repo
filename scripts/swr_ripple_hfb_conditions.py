@@ -71,6 +71,19 @@ TARGET = "reward_explore"
 CONDITIONS = [TARGET, "error_explore", "reward_plan", "reward_execute",
               "move_explore", "still_explore"]
 FRONTAL = {"mPFC": ["mPFC"], "mOFC": ["mOFC"], "Frontal": ["mPFC", "mOFC"]}
+SMOOTH_MS = 50.0
+
+# Display names. The internal keys stay machine-readable; these are what a
+# reader sees, and they say what the event actually is rather than what the
+# code calls it.
+COND_LABEL = {
+    "reward_explore": "first reward uncovers",
+    "reward_execute": "reward uncovers during execution",
+    "reward_plan": "reward uncovers during planning",
+    "error_explore": "error, explore",
+    "move_explore": "movement press, explore",
+    "still_explore": "stillness, explore",
+}
 
 
 def _clean_mask(rows, n, fs):
@@ -174,6 +187,7 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
     non_ix = (np.abs(t_s) >= NONPERI_S[0]) & (np.abs(t_s) < NONPERI_S[1])
 
     rows, counts, bal_rows = [], [], []
+    tc, tc_ix = [], []
     for sess in sorted(hp.session.unique()):
         g = hp[hp.session == sess]
         cx = g[g.roi_family.isin(["mPFC", "mOFC"])]
@@ -248,6 +262,10 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
                         "cond": c, "shift_s": sh, "is_real": sh == 0.0,
                         "n_ripples": int(ok.sum()),
                         "diff": float(m[peri_ix].mean() - m[non_ix].mean())})
+                    tc.append(m.astype(np.float32))
+                    tc_ix.append({"session": sess, "subject": x.subject_label,
+                                  "cx_pair": x.pair_id, "roi": x.roi_family,
+                                  "cond": c, "is_real": sh == 0.0})
 
             # pairwise count-balanced estimates, one row per contrast per side
             for ctrl, sets in pair_bal.items():
@@ -297,6 +315,10 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
         if len(db):
             db.to_csv(os.path.join(out_dir, "per_cell_balanced.csv"),
                       index=False)
+        np.savez_compressed(os.path.join(out_dir, "timecourses.npz"),
+                            t_ms=off / fs * 1000.0, traces=np.stack(tc))
+        pd.DataFrame(tc_ix).to_csv(
+            os.path.join(out_dir, "timecourse_index.csv"), index=False)
         cnt.to_csv(os.path.join(out_dir, "ripple_counts.csv"), index=False)
         with open(os.path.join(out_dir, "result.json"), "w") as f:
             json.dump({"analysis": ANALYSIS_NAME, "bundle": b_dir,
@@ -498,8 +520,105 @@ def figure(results=None, out_stem=None):
     return None
 
 
+def timecourse_figure(results=None, out_stem=None, rois=("mPFC", "mOFC"),
+                      smooth_ms=100.0,
+                      conds=("reward_explore", "reward_execute", "error_explore",
+                             "move_explore", "still_explore")):
+    """Peri-ripple HFB time course per condition, per region.
+
+    Session-level, real minus each condition's own shifted null, baselined to
+    the non-peri band -- the same quantity the bars report, so the two agree.
+
+    Smoothed harder than the pooled figure (100 ms, not 50) because splitting by
+    condition costs an order of magnitude of ripples: the pooled analysis
+    averages thousands per cell, a single condition ~46. The y-limits are set
+    from the conditions with >= 20 sessions, so `stillness, explore` (11-12
+    sessions, and correspondingly wild) cannot decide the scale for everything
+    else -- it is still drawn, dotted, just not allowed to hide the rest.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.ndimage import gaussian_filter1d
+
+    R = results
+    z = np.load(os.path.join(R, "timecourses.npz"))
+    t_ms, tr = z["t_ms"], z["traces"]
+    fs = 1000.0 / (t_ms[1] - t_ms[0])
+    ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
+    ix["is_real"] = ix.is_real.astype(bool)
+    res = json.load(open(os.path.join(R, "result.json")))["results"]
+    flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
+    CM = 1 / 2.54
+    COND_C = {"reward_explore": "#F15A29", "error_explore": "#6B60AA",
+              "reward_plan": "#D7657F", "reward_execute": "#5C1027",
+              "move_explore": "#8C8C8C", "still_explore": "#C7C6E2"}
+
+    rois = [r for r in rois if (ix.roi == r).any()]
+    fig, axes = plt.subplots(1, len(rois), figsize=(10.0 * len(rois) * CM,
+                                                   8.5 * CM),
+                             constrained_layout=True, sharex=True)
+    axes = np.atleast_1d(axes)
+    for ax, roi in zip(axes, rois):
+        pc = res.get(roi, {}).get("per_condition", {})
+        well_powered = []
+        for c in conds:
+            sel = (ix.roi == roi) & (ix.cond == c)
+            if not sel.any():
+                continue
+            curves = []
+            for _, gi in ix[sel].groupby("session"):
+                rr = gi.index.to_numpy()
+                r = tr[rr[gi.is_real.to_numpy()]]
+                n = tr[rr[~gi.is_real.to_numpy()]]
+                if not len(r) or not len(n):
+                    continue
+                cc = r.mean(0) - n.mean(0)
+                curves.append(cc - cc[flank].mean())
+            if len(curves) < 5:
+                continue
+            A = np.stack(curves)
+            if smooth_ms:
+                A = gaussian_filter1d(A, (smooth_ms / 1000.0 * fs) / 2.355, axis=-1)
+            m, se = A.mean(0), A.std(0, ddof=1) / np.sqrt(len(A))
+            v = pc.get(c, {})
+            star = " *" if v.get("p", 1) < 0.05 else ""
+            thin = len(A) < 20
+            ax.plot(t_ms, m, color=COND_C.get(c, "#888"), lw=1.6,
+                    alpha=0.55 if thin else 1.0, ls=":" if thin else "-",
+                    label=f"{COND_LABEL.get(c, c)} ({len(A)} sess){star}")
+            ax.fill_between(t_ms, m - se, m + se, color=COND_C.get(c, "#888"),
+                            alpha=0.10 if thin else 0.15, lw=0)
+            if not thin:
+                well_powered.append(m)
+        if well_powered:
+            lim = 1.6 * max(float(np.abs(np.stack(well_powered)).max()), 1e-6)
+            ax.set_ylim(-lim, lim)
+        ax.axvline(0, color="0.35", lw=0.8, ls="--")
+        ax.axhline(0, color="0.7", lw=0.6)
+        ax.axvspan(-PERI_S * 1000, PERI_S * 1000, color="#F15A29", alpha=0.06, lw=0)
+        ax.set_xlabel("Time from hippocampal ripple peak (ms)", fontsize=9)
+        ax.set_title(roi, fontsize=11)
+        ax.tick_params(labelsize=8)
+        ax.margins(x=0)
+        ax.legend(fontsize=7, frameon=False, loc="upper left", handlelength=1.4,
+                  labelspacing=0.3)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    axes[0].set_ylabel("HFB, real − shifted null,\nvs non-peri (z)", fontsize=9)
+    fig.suptitle("Peri-ripple frontal HFB by what the ripple follows "
+                 "(session-level, different-shaft)", fontsize=11)
+    stem = out_stem or os.path.join(R, "ripple_hfb_conditions_timecourse")
+    fig.savefig(stem + ".pdf")
+    fig.savefig(stem + ".png", dpi=300)
+    plt.close(fig)
+    print(f"figure -> {stem}.pdf / .png")
+    return None
+
+
 if __name__ == "__main__":
     if fire is not None:
-        fire.Fire({"run": run, "figure": figure})
+        fire.Fire({"run": run, "figure": figure,
+                   "timecourse_figure": timecourse_figure})
     else:
         run()
