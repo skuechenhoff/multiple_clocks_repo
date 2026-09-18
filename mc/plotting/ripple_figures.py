@@ -2106,7 +2106,8 @@ def contacts_3d_views(included, excluded=None, hemispheres=None,
                       cortex_alpha=CORTEX_ALPHA, hpc_alpha=HPC_BODY_ALPHA,
                       hpc_color=HPC_BODY_C, contact_color=CONTACT_C,
                       excluded_color=CONTACT_EXCLUDED_C, distance=430,
-                      hpc_source="atlas", prob_min=HPC_PROB_MIN):
+                      hpc_source="atlas", prob_min=HPC_PROB_MIN,
+                      extra_groups=None):
     """Render hippocampal contacts inside a translucent fsaverage brain.
 
     `included` and `excluded` are (n, 3) arrays of MNI152 coordinates in mm.
@@ -2116,6 +2117,12 @@ def contacts_3d_views(included, excluded=None, hemispheres=None,
     contacts 60 mm behind the left hippocampus and lets the reader believe they
     missed it. The axial views need no split -- the two sides are separated in
     the image already.
+
+    `extra_groups` adds further contact sets beyond included/excluded, each a
+    dict with `coords` (n, 3), optional `hemispheres`, `color`, `scale` and
+    `label`. They are added AFTER the hippocampal foci, which matters only for
+    the legend order -- depth, not draw order, decides what occludes what in a
+    3-D scene. Used to show cortical contacts alongside the hippocampal ones.
 
     `hpc_source` is 'atlas' (Harvard-Oxford at `prob_min`, the criterion that
     selected the contacts -- the default, and the honest one) or 'aseg'
@@ -2170,6 +2177,16 @@ def contacts_3d_views(included, excluded=None, hemispheres=None,
             added.append(brain.add_foci(inc[keep], hemi="vol",
                                         color=contact_color,
                                         scale_factor=contact_scale))
+        for grp in (extra_groups or []):
+            gc = np.asarray(grp["coords"], float).reshape(-1, 3)
+            gh = grp.get("hemispheres")
+            gh = None if gh is None else np.asarray(gh, dtype=object)
+            k = slice(None) if (side is None or gh is None) else (gh == side)
+            if len(gc[k]):
+                added.append(brain.add_foci(
+                    gc[k], hemi="vol", color=grp.get("color", "#444444"),
+                    scale_factor=grp.get("scale", contact_scale),
+                    alpha=grp.get("alpha", 1.0)))
         brain.show_view(distance=distance, **BRAIN_VIEWS[name])
         shots[name] = brain.screenshot()
         if out_stem:
@@ -2216,7 +2233,8 @@ def _trim_white(imgs, pad=10):
 def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
                                views=("left", "right", "dorsal"), width_cm=12.0,
                                view_labels=None, legend=True,
-                               counts=None, save_views=True, **kw):
+                               counts=None, save_views=True,
+                               contact_label=None, **kw):
     """Publication panel: the 3-D views laid out side by side, with a key.
 
     A 3-D render is a raster whatever the container, so the PDF embeds the
@@ -2226,8 +2244,10 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
+    render_kw = {k: v for k, v in kw.items() if k != "extra_groups"}
     shots = contacts_3d_views(included, excluded=excluded, views=views,
-                              out_stem=out_stem if save_views else None, **kw)
+                              out_stem=out_stem if save_views else None,
+                              extra_groups=kw.get("extra_groups"), **render_kw)
     imgs = _trim_white([shots[v] for v in views])
     aspects = [im.shape[1] / im.shape[0] for im in imgs]
 
@@ -2263,13 +2283,20 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
             handles = [Line2D([], [], marker="o", linestyle="none",
                               markersize=3.4, markeredgewidth=0,
                               color=kw.get("contact_color", CONTACT_C),
-                              label=f"analysed ({counts or n_inc})")]
+                              label=(contact_label
+                                     or f"analysed ({counts or n_inc})"))]
             if n_exc:
                 handles.append(Line2D(
                     [], [], marker="o", linestyle="none", markersize=3.0,
                     markeredgewidth=0,
                     color=kw.get("excluded_color", CONTACT_EXCLUDED_C),
                     label=f"not analysed ({n_exc})"))
+            for grp in (kw.get("extra_groups") or []):
+                n_g = len(np.asarray(grp["coords"], float).reshape(-1, 3))
+                handles.append(Line2D(
+                    [], [], marker="o", linestyle="none", markersize=3.4,
+                    markeredgewidth=0, color=grp.get("color", "#444444"),
+                    label=grp.get("label", f"group ({n_g})")))
             handles.append(Line2D([], [], marker="s", linestyle="none",
                                   markersize=3.4, markeredgewidth=0,
                                   color=kw.get("hpc_color", HPC_BODY_C),

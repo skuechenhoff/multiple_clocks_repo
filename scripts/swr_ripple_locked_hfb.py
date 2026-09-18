@@ -342,7 +342,14 @@ def _stats(d, unit="subject"):
             t, p = st.ttest_1samp(v.to_numpy(), 0.0)
             out[lab][roi] = {
                 "unit": unit, "n_units": int(len(v)),
-                "n_derivations": int(g.cx_pair.nunique()),
+                # `pair_id` is an electrode label and recurs across sessions of
+                # the same patient (27 of 51 mPFC labels do), so nunique()
+                # counts SITES, not derivation-instances. Both are reported:
+                # sites is the He-et-al.-comparable "n contacts", instances is
+                # what the average is actually taken over.
+                "n_sites": int(g.cx_pair.nunique()),
+                "n_derivations": int(
+                    len(g[["session", "cx_pair"]].drop_duplicates())),
                 "n_ripple_alignments": int(g[g.is_real].n_ripples.sum()),
                 "effect": float(v.mean()),
                 "sem": float(v.std(ddof=1) / np.sqrt(len(v))),
@@ -460,11 +467,12 @@ def _report(res, pads):
         tag = "PRIMARY" if lvl == "session" else "control"
         print(f"\n  --- {lvl.upper()}-level [{tag}], different shaft "
               f"(volume-conduction free) ---")
-        print(f"    {'ROI':<17s}{'n_cx':>6s}{'n_' + lvl:>9s}{'align':>9s}"
-              f"{'effect':>10s}{'t':>7s}{'p':>9s}")
+        print(f"    {'ROI':<17s}{'sites':>6s}{'deriv':>6s}{'n_' + lvl:>8s}"
+              f"{'align':>9s}{'effect':>10s}{'t':>7s}{'p':>9s}")
         for roi, v in res[lvl].get("different_shaft", {}).items():
             star = "*" if v["p"] < 0.05 else " "
-            print(f"    {roi:<17s}{v['n_derivations']:>6d}{v['n_units']:>9d}"
+            print(f"    {roi:<17s}{v.get('n_sites', 0):>6d}"
+                  f"{v['n_derivations']:>6d}{v['n_units']:>8d}"
                   f"{v['n_ripple_alignments']:>9d}{v['effect']:>10.4f}"
                   f"{v['t']:>7.2f}{v['p']:>9.4f}{star}")
         cs = res.get(f"contrasts_{lvl}", {})
@@ -474,7 +482,8 @@ def _report(res, pads):
 
     print("\n  --- SAME shaft (volume conduction; not for anatomical claims) ---")
     for roi, v in res["subject"].get("same_shaft", {}).items():
-        print(f"    {roi:<17s}{v['n_derivations']:>6d}{v['n_units']:>9d}"
+        print(f"    {roi:<17s}{v.get('n_sites', 0):>6d}"
+              f"{v['n_derivations']:>6d}{v['n_units']:>8d}"
               f"{'':>9s}{v['effect']:>10.4f}{v['t']:>7.2f}{v['p']:>9.4f}")
 
     zg = res.get("z_gradient") or {}
