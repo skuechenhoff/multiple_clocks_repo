@@ -73,6 +73,17 @@ CONDITIONS = [TARGET, "error_explore", "reward_plan", "reward_execute",
 FRONTAL = {"mPFC": ["mPFC"], "mOFC": ["mOFC"], "Frontal": ["mPFC", "mOFC"]}
 SMOOTH_MS = 50.0
 
+# Feedback-valence colours. This is a new categorical variable -- CLAUDE.md
+# fixes colours for states, phases, locations and ROIs, but not for feedback --
+# so these are taken from the documented families: the two greens are grid
+# positions 7 and 5 (also the project's "observed value" dark green), the pink
+# is the lOFC magenta. Change them here, nowhere else.
+VALENCE_C = {
+    "reward_explore": "#0e3d3a",    # dark green  -- positive feedback, explore
+    "reward_execute": "#5b9b8d",    # bright green -- positive feedback, execute
+    "error_explore":  "#a30d6c",    # dark pink   -- negative feedback, explore
+}
+
 # Display names. The internal keys stay machine-readable; these are what a
 # reader sees, and they say what the event actually is rather than what the
 # code calls it.
@@ -616,9 +627,147 @@ def timecourse_figure(results=None, out_stem=None, rois=("mPFC", "mOFC"),
     return None
 
 
+def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
+                   seed=42, width_cm=3.0, height_cm=3.0,
+                   conds=("reward_explore", "reward_execute", "error_explore")):
+    """One small panel: peri-ripple HFB in COLLAPSED frontal (mPFC + mOFC).
+
+    Significance is a cluster-based permutation over time bins
+    (`swr_sakon.cluster_perm_time`, sign-flipping across sessions) -- the same
+    function the hippocampal branch uses, so the correction is identical. The
+    test runs on the SAME smoothed traces that are drawn: sign-flipping
+    preserves the smoothing, so the null carries the same autocorrelation and
+    the correction stays valid.
+
+    Two files are written: the bare panel at `width_cm` x `height_cm` for
+    dropping into a figure, and a `_labelled` version with legend, stats and
+    axis titles, because at 3 cm nothing but the traces fits.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.ndimage import gaussian_filter1d
+    import mc.analyse.swr_sakon as sk
+
+    R = results
+    z = np.load(os.path.join(R, "timecourses.npz"))
+    t_ms, tr = z["t_ms"], z["traces"]
+    fs = 1000.0 / (t_ms[1] - t_ms[0])
+    ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
+    ix["is_real"] = ix.is_real.astype(bool)
+    flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
+    CM = 1 / 2.54
+
+    # collapsed frontal: average a session's mPFC and mOFC derivations together
+    curves, stats_out = {}, {}
+    for c in conds:
+        sel = (ix.roi.isin(["mPFC", "mOFC"])) & (ix.cond == c)
+        if not sel.any():
+            continue
+        rows = []
+        for _, gi in ix[sel].groupby("session"):
+            rr = gi.index.to_numpy()
+            r = tr[rr[gi.is_real.to_numpy()]]
+            n = tr[rr[~gi.is_real.to_numpy()]]
+            if not len(r) or not len(n):
+                continue
+            cc = r.mean(0) - n.mean(0)
+            rows.append(cc - cc[flank].mean())
+        if len(rows) < 5:
+            continue
+        A = np.stack(rows)
+        if smooth_ms:
+            A = gaussian_filter1d(A, (smooth_ms / 1000.0 * fs) / 2.355, axis=-1)
+        curves[c] = A
+        t_obs, cl, pv, _ = sk.cluster_perm_time(A, n_perm=n_perm, seed=seed)
+        sig = [(float(t_ms[a]), float(t_ms[b - 1]), float(pp))
+               for (a, b), pp in zip(cl, pv) if pp < 0.05]
+        stats_out[c] = {"n_sessions": int(len(A)), "clusters": sig,
+                        "peak_z": float(A.mean(0).max()),
+                        "peak_at_ms": float(t_ms[int(np.argmax(A.mean(0)))])}
+        lab = COND_LABEL.get(c, c)
+        print(f"  {lab:<34s} n={len(A):>3d} sessions  peak {A.mean(0).max():+.4f} z "
+              f"at {t_ms[int(np.argmax(A.mean(0)))]:+.0f} ms")
+        for a, b, pp in sig:
+            print(f"      significant cluster {a:+.0f} to {b:+.0f} ms, p = {pp:.4f}")
+        if not sig:
+            print(f"      no cluster survives correction")
+
+    if not curves:
+        raise RuntimeError("no condition had enough sessions")
+
+    lo = min(float((A.mean(0) - A.std(0, ddof=1) / np.sqrt(len(A))).min())
+             for A in curves.values())
+    hi = max(float((A.mean(0) + A.std(0, ddof=1) / np.sqrt(len(A))).max())
+             for A in curves.values())
+    span = hi - lo
+
+    # Three sizes, because 3 cm and CLAUDE.md's 9 pt minimum are in tension.
+    # An eighth of A4 is ~7.4 x 5.2 cm, which is what 11 pt is calibrated for;
+    # 9 pt on a 3 cm panel is proportionally the same as ~22 pt there, and it
+    # swallows the axes. The 3 cm panel therefore runs at 6.5 pt -- below the
+    # documented floor, deliberately, because the alternative is a panel that is
+    # all label and no data. `panel_9pt` is the smallest size that keeps the
+    # rule, and is the one to use if the floor matters more than the width.
+    VARIANTS = [("", width_cm, height_cm, 6.5, False),
+                ("_9pt", 5.2, 4.6, 9.0, False),
+                ("_labelled", 10.0, 7.0, 9.0, True)]
+    for suffix, wcm, hcm, fpt, labelled in VARIANTS:
+        fig, ax = plt.subplots(figsize=(wcm * CM, hcm * CM),
+                               constrained_layout=True)
+        for i, (c, A) in enumerate(curves.items()):
+            m = A.mean(0)
+            se = A.std(0, ddof=1) / np.sqrt(len(A))
+            col = VALENCE_C.get(c, "#888")
+            ax.plot(t_ms, m, color=col, lw=1.1 if not labelled else 1.4,
+                    solid_capstyle="round",
+                    label=f"{COND_LABEL.get(c, c)} ({len(A)})")
+            ax.fill_between(t_ms, m - se, m + se, color=col, alpha=0.16, lw=0)
+            y = hi + span * (0.10 + 0.085 * i)
+            for a, b, _pp in stats_out[c]["clusters"]:
+                ax.plot([a, b], [y, y], color=col,
+                        lw=2.0 if not labelled else 2.6,
+                        solid_capstyle="butt", clip_on=False)
+        ax.axvline(0, color="0.45", lw=0.7, ls=(0, (2, 2)))
+        ax.axhline(0, color="0.75", lw=0.6)
+        ax.set_xlim(t_ms[0], t_ms[-1])
+        ax.set_ylim(lo - span * 0.10, hi + span * (0.10 + 0.085 * len(curves)))
+        # 0 is already marked by the dashed line, so labelling it too just
+        # collides with +-500 on a 3 cm axis.
+        ax.set_xticks([-500, 0, 500] if wcm >= 5 else [-500, 500])
+        ax.set_yticks([0.0, float(np.round(hi, 2))])
+        ax.tick_params(labelsize=fpt - 0.5, length=2.2, pad=1.2)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+        if labelled:
+            ax.set_xlabel("Time from hippocampal ripple peak (ms)", fontsize=fpt)
+            ax.set_ylabel("HFB, real − shifted null, vs non-peri (z)",
+                          fontsize=fpt)
+            ax.set_title("Frontal (mPFC + mOFC), session-level\n"
+                         "bars = cluster-corrected p < 0.05", fontsize=fpt + 1)
+            ax.legend(fontsize=fpt - 1, frameon=False, loc="upper center",
+                      bbox_to_anchor=(0.5, -0.22), handlelength=1.6)
+        else:
+            ax.set_xlabel("ms from ripple", fontsize=fpt, labelpad=1)
+            ax.set_ylabel("HFB (z)", fontsize=fpt, labelpad=1)
+        stem = (out_stem or os.path.join(R, "frontal_hfb_timecourse")) + suffix
+        fig.savefig(stem + ".pdf")
+        fig.savefig(stem + ".png", dpi=600)
+        plt.close(fig)
+        print(f"figure -> {stem}.pdf / .png   ({wcm:.1f} x {hcm:.1f} cm, {fpt} pt)")
+
+    with open(os.path.join(R, "frontal_timecourse_clusters.json"), "w") as f:
+        json.dump({"smooth_ms": smooth_ms, "n_perm": n_perm, "seed": seed,
+                   "roi": "Frontal = mPFC + mOFC, different-shaft",
+                   "unit": "session", "colours": VALENCE_C,
+                   "stats": stats_out}, f, indent=2)
+    return None
+
+
 if __name__ == "__main__":
     if fire is not None:
         fire.Fire({"run": run, "figure": figure,
-                   "timecourse_figure": timecourse_figure})
+                   "timecourse_figure": timecourse_figure,
+                   "frontal_figure": frontal_figure})
     else:
         run()
