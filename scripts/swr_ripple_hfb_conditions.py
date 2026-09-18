@@ -87,9 +87,14 @@ SMOOTH_MS = 50.0
 # positions 7 and 5 (also the project's "observed value" dark green), the pink
 # is the lOFC magenta. Change them here, nowhere else.
 VALENCE_C = {
-    "reward_explore": "#0e3d3a",    # dark green  -- positive feedback, explore
-    "reward_execute": "#5b9b8d",    # bright green -- positive feedback, execute
-    "error_explore":  "#a30d6c",    # dark pink   -- negative feedback, explore
+    "reward_explore": "#0e3d3a",    # dark green   -- reward, first traversal
+    "reward_execute": "#5b9b8d",    # bright green -- reward, route known
+    "error_explore":  "#a30d6c",    # dark pink    -- error, first traversal
+    # Movement presses are a CONTROL, not a feedback valence, so they take the
+    # neutral grey this project uses for controls rather than a third hue that
+    # would imply they sit on the same scale as the two reward conditions.
+    "move_explore":   "#6E6E6E",
+    "still_explore":  "#B9B9B9",
 }
 
 # Display names. The internal keys stay machine-readable; these are what a
@@ -97,7 +102,7 @@ VALENCE_C = {
 # code calls it.
 COND_LABEL = {
     "reward_explore": "first reward uncovers",
-    "reward_execute": "reward uncovers during execution",
+    "reward_execute": "later reward uncovers",
     "reward_plan": "reward uncovers during planning",
     "error_explore": "error, explore",
     "move_explore": "movement press, explore",
