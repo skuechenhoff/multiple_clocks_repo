@@ -41,8 +41,7 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
-from scripts.swr_ripple_content_roles import (run_history, design, fit_all,
+from mc.analyse.swr_explore.ripple_content_roles import (run_history, design, fit_all,
                                               TERMS, FLANK_GAP_S, MAX_FLANKS,
                                               MIN_WINDOWS, N_PERM, SEED)
 
@@ -81,7 +80,7 @@ def main():
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or not len(t_rip):
             continue
         (rew, known, err, vis, last, first, route, goal, nxt,
@@ -112,17 +111,17 @@ def main():
         if len(cells) < 2:
             continue
         grids = np.unique(occ.cv_group.to_numpy())
-        loo_t = spt.weighted_loo(spk[s], cells, occ, grids, "all")
+        loo_t = swc.weighted_loo(spk[s], cells, occ, grids, "all")
         t_fl, owner = swc.matched_flanks(t_rip, half, occ, other_t=t_rip,
                                          gap_s=FLANK_GAP_S, max_per=MAX_FLANKS)
         if not len(t_fl):
             continue
         w_fl = half[owner]
         C_rip, C_fl = swc.zscore_cells([
-            spt.window_counts(spk[s], cells, t_rip - half, t_rip + half),
-            spt.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
-        E_rip = spt.score_windows(C_rip, t_rip, grid, loo_t)
-        E_fl = spt.score_windows(C_fl, t_fl, grid[owner], loo_t)
+            swc.window_counts(spk[s], cells, t_rip - half, t_rip + half),
+            swc.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
+        E_rip = swc.score_windows(C_rip, t_rip, grid, loo_t)
+        E_fl = swc.score_windows(C_fl, t_fl, grid[owner], loo_t)
         mf = m[owner]
         if mf.sum() < MIN_WINDOWS:
             continue

@@ -74,7 +74,6 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
 
 SEED = 42
 N_PERM = 100
@@ -119,7 +118,7 @@ def collect(sessions, spk, roi, steps, rip, keys):
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or not len(t_rip):
             continue
         st = steps[steps.session == s].sort_values("t_s").reset_index(drop=True)
@@ -151,10 +150,10 @@ def collect(sessions, spk, roi, steps, rip, keys):
             cells = [c for c in cells if c < len(spk[s]["spikes"])]
             if not cells:
                 continue
-            _, loo = spt.build_templates(spk[s], cells, occ, grids)
+            _, loo = swc.build_templates(spk[s], cells, occ, grids)
             C_rip, C_fl = swc.zscore_cells([
-                spt.window_counts(spk[s], cells, t_rip - half, t_rip + half),
-                spt.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
+                swc.window_counts(spk[s], cells, t_rip - half, t_rip + half),
+                swc.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
             # each ripple's flanks averaged, so ripple and flank are PAIRED and
             # a draw picks the same event in both
             F = np.full_like(C_rip, np.nan)

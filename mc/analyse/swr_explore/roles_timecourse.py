@@ -43,8 +43,7 @@ import pandas as pd
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
-from scripts.swr_ripple_content_roles import run_history, ADJ
+from mc.analyse.swr_explore.ripple_content_roles import run_history, ADJ
 
 WIN_S = 0.100
 OFFSETS = np.round(np.arange(-0.75, 0.7501, 0.05), 4)
@@ -68,7 +67,7 @@ def main():
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, _ = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, _ = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or len(t_rip) < MIN_RIPPLES:
             continue
         (rew, known, err, vis, last, first, route, goal, nxt,
@@ -107,8 +106,8 @@ def main():
                      if c < len(spk[s]["spikes"])]
             if len(cells) < 2:
                 continue
-            _, loo = spt.build_templates(spk[s], cells, occ, grids)
-            C = np.stack([spt.window_counts(spk[s], cells,
+            _, loo = swc.build_templates(spk[s], cells, occ, grids)
+            C = np.stack([swc.window_counts(spk[s], cells,
                                             t_rip + off - WIN_S / 2,
                                             t_rip + off + WIN_S / 2)
                           for off in OFFSETS])
@@ -119,7 +118,7 @@ def main():
             C = (C - mu) / np.where(sd > 0, sd, np.nan)
 
             for oi, off in enumerate(OFFSETS):
-                E = spt.score_windows(C[oi], t_rip, grid, loo)
+                E = swc.score_windows(C[oi], t_rip, grid, loo)
                 ok = np.isfinite(E).all(axis=1)
                 if ok.sum() < MIN_RIPPLES:
                     continue

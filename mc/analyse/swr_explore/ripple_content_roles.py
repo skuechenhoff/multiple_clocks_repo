@@ -73,7 +73,6 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
 
 SEED = 42
 N_PERM = 100
@@ -89,7 +88,7 @@ MIN_WINDOWS = 50
 # cannot manufacture a difference between them -- it only lifts the signal any
 # role effect would have to stand out from. At rel >= 0.2 the ambient
 # current-location signal roughly doubles (CHANGELOG 2026-09-17 m).
-# See `spt.weighted_loo`. An earlier version selected cells on a reliability
+# See `swc.weighted_loo`. An earlier version selected cells on a reliability
 # computed over ALL configurations, including the one being scored, and dropped
 # sessions whose cells fell below the cut. Both inflated the result
 # (CHANGELOG 2026-09-17 o). Weights are now estimated with the scored
@@ -314,7 +313,7 @@ def main():
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or not len(t_rip):
             continue
         subj = rip[rip.session == s].subject_key.iloc[0]
@@ -352,14 +351,14 @@ def main():
                 continue
             cells = all_cells
             for scheme in SCHEMES:
-                loo = spt.weighted_loo(spk[s], cells, occ, grids, scheme)
+                loo = swc.weighted_loo(spk[s], cells, occ, grids, scheme)
                 if not any(np.nansum(np.abs(T)) > 0 for T in loo.values()):
                     continue
                 C_rip, C_fl = swc.zscore_cells([
-                    spt.window_counts(spk[s], cells, t_rip - half, t_rip + half),
-                    spt.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
-                E_rip = spt.score_windows(C_rip, t_rip, grid, loo)
-                E_fl = spt.score_windows(C_fl, t_fl, grid[owner], loo)
+                    swc.window_counts(spk[s], cells, t_rip - half, t_rip + half),
+                    swc.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
+                E_rip = swc.score_windows(C_rip, t_rip, grid, loo)
+                E_fl = swc.score_windows(C_fl, t_fl, grid[owner], loo)
 
                 for phase in ("explore", "known"):
                   ph_m = first_i[k] if phase == "explore" else ~first_i[k]

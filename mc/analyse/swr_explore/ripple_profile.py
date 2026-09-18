@@ -38,7 +38,6 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
 
 SEED = 42
 ROI_SETS = {"HC_all": ["HC_anterior", "HC_mid"],
@@ -83,7 +82,7 @@ def main():
 
     rows = []
     for s in sessions:
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or len(t_rip) < MIN_RIPPLES:
             continue
         subj = rip[rip.session == s].subject_key.iloc[0]
@@ -111,12 +110,12 @@ def main():
             cells = [c for c in cells if c < len(spk[s]["spikes"])]
             if len(cells) < 2:
                 continue
-            _, loo = spt.build_templates(spk[s], cells, occ, grids)
+            _, loo = swc.build_templates(spk[s], cells, occ, grids)
             C_rip, C_fl = swc.zscore_cells([
-                spt.window_counts(spk[s], cells, t_rip - half, t_rip + half),
-                spt.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
-            Zr = zprofile(spt.score_windows(C_rip, t_rip, grid, loo))
-            Zf = zprofile(spt.score_windows(C_fl, t_fl, grid[owner], loo))
+                swc.window_counts(spk[s], cells, t_rip - half, t_rip + half),
+                swc.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
+            Zr = zprofile(swc.score_windows(C_rip, t_rip, grid, loo))
+            Zf = zprofile(swc.score_windows(C_fl, t_fl, grid[owner], loo))
 
             dr = D9[loc - 1]                 # (n_rip, 9) distance from current
             df = D9[loc[owner] - 1]

@@ -41,8 +41,7 @@ from sklearn.metrics import balanced_accuracy_score
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
-from scripts.swr_ieeg_location_decoder import (bundle, session_features,
+from mc.analyse.swr_explore.ieeg_location_decoder import (bundle, session_features,
                                                positive_control, decode,
                                                MIN_VISITS)
 
@@ -116,7 +115,7 @@ def main():
                  .to_numpy() if c < len(spk[s]["spikes"])]
         if len(cells) < 2:
             continue
-        C = spt.window_counts(spk[s], cells, occ.start_s.to_numpy(),
+        C = swc.window_counts(spk[s], cells, occ.start_s.to_numpy(),
                               occ.stop_s.to_numpy())
         dur = (occ.stop_s - occ.start_s).to_numpy()
         F = (C / np.where(dur > 0, dur, np.nan)).T          # firing rate

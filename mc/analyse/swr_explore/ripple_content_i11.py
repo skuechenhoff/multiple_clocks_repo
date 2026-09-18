@@ -92,7 +92,6 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
 
 SEED = int(os.environ.get("I11_SEED", 42))
 N_PERM = int(os.environ.get("I11_NPERM", 100))
@@ -109,7 +108,7 @@ MAX_FLANKS = 2
 CALIPER_S = 0.15          # same caliper as swr_matched_control_presses.py
 REL_CALIPER = 0.10
 # Cells weighted by how well their place map generalises across configurations
-# (`spt.weighted_loo`), so Figure 6 can be read for location-encoding cells only.
+# (`swc.weighted_loo`), so Figure 6 can be read for location-encoding cells only.
 SCHEMES = ["all", "thresh_0.2"]
 MIN_MATCHES = 10          # inclusion, set low so sensitivity can run BOTH ways
 PRIMARY_MIN = 20          # the threshold declared before the first run
@@ -251,7 +250,7 @@ def main():
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or not len(t_rip):
             continue
         subj = rip[rip.session == s].subject_key.iloc[0]
@@ -340,14 +339,14 @@ def main():
               continue
           for si, scheme in enumerate(SCHEMES):
             rng_p = np.random.default_rng([SEED, s, ri, si])
-            loo = spt.weighted_loo(spk[s], cells, occ, grids, scheme)
+            loo = swc.weighted_loo(spk[s], cells, occ, grids, scheme)
             if not any(np.nansum(np.abs(T)) > 0 for T in loo.values()):
                 continue
             C_rip, C_fl = swc.zscore_cells([
-                spt.window_counts(spk[s], cells, t_rip - half, t_rip + half),
-                spt.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
-            E_rip = spt.score_windows(C_rip, t_rip, grid, loo)
-            E_fl = spt.score_windows(C_fl, t_fl, grid[owner], loo)
+                swc.window_counts(spk[s], cells, t_rip - half, t_rip + half),
+                swc.window_counts(spk[s], cells, t_fl - w_fl, t_fl + w_fl)])
+            E_rip = swc.score_windows(C_rip, t_rip, grid, loo)
+            E_fl = swc.score_windows(C_fl, t_fl, grid[owner], loo)
 
             ok_f = np.isfinite(E_fl).all(axis=1)
             good = np.isfinite(E_rip).all(axis=1)

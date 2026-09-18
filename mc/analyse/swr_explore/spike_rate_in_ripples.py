@@ -28,7 +28,6 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
 
 ROIS = ["HC_anterior", "HC_mid", "mPFC", "mOFC", "PCC"]
 
@@ -47,7 +46,7 @@ def main():
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or not len(t_rip):
             continue
         half = d_rip / 2.0

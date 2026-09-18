@@ -72,8 +72,7 @@ from scipy import stats
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
-from scripts.swr_pseudo_population import config_key
+from mc.analyse.swr_explore.pseudo_population import config_key
 
 SEED = 42
 N_PERM = 200
@@ -98,7 +97,7 @@ def collect(sessions, spk, roi, steps, rip, keys):
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, d_rip = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, d_rip = swc.session_data(s, spk, roi, steps, rip)
         if not len(occ) or not len(r) or not len(t_rip):
             continue
         st = steps[steps.session == s].sort_values("t_s").reset_index(drop=True)
@@ -125,11 +124,11 @@ def collect(sessions, spk, roi, steps, rip, keys):
             cells = [c for c in cells if c < len(spk[s]["spikes"])]
             if not cells:
                 continue
-            _, loo = spt.build_templates(spk[s], cells, occ, grids)
+            _, loo = swc.build_templates(spk[s], cells, occ, grids)
             # every offset z-scored on ONE pooled scale per cell, so a
             # difference between offsets is a real difference and not a
             # by-product of normalising each offset separately
-            C = np.stack([spt.window_counts(spk[s], cells,
+            C = np.stack([swc.window_counts(spk[s], cells,
                                             t_rip + off - WIN_S / 2,
                                             t_rip + off + WIN_S / 2)
                           for off in OFFSETS])              # (n_off, n_c, n_rip)

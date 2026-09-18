@@ -33,7 +33,6 @@ import pandas as pd
 import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
-import scripts.swr_place_templates as spt
 
 ROIS = ["HC_anterior", "HC_mid", "mPFC", "mOFC"]
 # roles a location can play at an arrival event. They are NOT mutually
@@ -98,7 +97,7 @@ def main():
     for s in sessions:
         if s not in spk:
             continue
-        occ, r, t_rip, _ = spt.session_data(s, spk, roi, steps, rip)
+        occ, r, t_rip, _ = swc.session_data(s, spk, roi, steps, rip)
         if len(occ) < MIN_EVENTS or not len(r):
             continue
         occ = occ.sort_values("start_s").reset_index(drop=True)
@@ -121,16 +120,16 @@ def main():
             cells = [c for c in cells if c < len(spk[s]["spikes"])]
             if not cells:
                 continue
-            _, loo = spt.build_templates(spk[s], cells, occ, grids)
+            _, loo = swc.build_templates(spk[s], cells, occ, grids)
             # counts for every offset first, z-scored per cell with statistics
             # POOLED across offsets -- raw counts let loud cells carry the
             # pattern, which is why HC_anterior looked flat here while its
             # Stage 2 control was strong (CHANGELOG 2026-09-17 i)
             C_all = swc.zscore_cells(
-                [spt.window_counts(spk[s], cells, t0 + off, t0 + off + WIN_S)
+                [swc.window_counts(spk[s], cells, t0 + off, t0 + off + WIN_S)
                  for off in OFFSETS])
             for off, C in zip(OFFSETS, C_all):
-                E = spt.score_windows(C, t0, grid, loo)
+                E = swc.score_windows(C, t0, grid, loo)
                 # scale-free within-window z: raw scores carry each session's
                 # firing rate and cell count and must not be averaged across
                 # sessions (CHANGELOG 2026-09-17 c, rule 2)

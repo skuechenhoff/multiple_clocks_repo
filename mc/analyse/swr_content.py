@@ -326,3 +326,138 @@ def random_windows(occ, width_s, n, rng, avoid=None, avoid_pad_s=1.0):
             near |= np.abs(a[v] - t0) < (avoid_pad_s + width_s)
         t0, loc = t0[~near], loc[~near]
     return t0, loc
+
+
+# ---------------------------------------------------------------------------
+# Template machinery.
+#
+# This lived in `scripts/swr_place_templates.py` and was imported by every other
+# script as `import scripts.swr_place_templates as spt`, which made a script a
+# library. It is shared machinery, so it belongs here.
+# ---------------------------------------------------------------------------
+
+import datetime
+
+import mc.analyse.ripple_rsa as rrsa
+
+
+def _derivatives():
+    return rrsa._derivatives()
+
+
+def out_dir():
+    d = os.path.join(_derivatives(), "group", "swr",
+                     f"ripple_content_templates_{datetime.date.today()}")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def session_data(s, spk, roi, steps, rip):
+    occ = occupancy(steps, s)
+    r = roi[roi.session == s]
+    r = r[r.cell < len(spk[s]["spikes"])]
+    g = rip[rip.session == s]
+    t = np.sort(g.t_peak_s.to_numpy(float))
+    d = g.duration_s.to_numpy(float)[np.argsort(g.t_peak_s.to_numpy(float))]
+    keep = np.concatenate([[True], np.diff(t) > 0.05]) if len(t) else np.zeros(0, bool)
+    return occ, r, t[keep], d[keep]
+
+
+def build_templates(spk_s, cells, occ, grids):
+    """(n_cells, 9) full template, and {grid: (n_cells, 9)} leave-one-out."""
+    full = np.array([zscore_map(place_map(spk_s["spikes"][c], occ))
+                     for c in cells])
+    loo = {}
+    for gr in grids:
+        loo[gr] = np.array([
+            zscore_map(place_map(spk_s["spikes"][c], occ, exclude_grid=gr))
+            for c in cells])
+    return full, loo
+
+
+def reliability(spk_s, cells, occ, exclude_grid=None):
+    """Split-half correlation of the raw place map, split by CONFIGURATION.
+
+    Splitting on grid_num would put different runs of the same configuration in
+    opposite halves, which inflates the correlation -- the two halves would
+    share reward locations and trajectories.
+
+    `exclude_grid` drops one configuration first, so that a reliability used to
+    WEIGHT cells when scoring that configuration never saw it. For the
+    ripple-minus-flank contrast the weights cancel either way, but C0 is scored
+    against a permutation null and would otherwise be mildly optimistic.
+    """
+    if exclude_grid is not None:
+        occ = occ[occ.cv_group != exclude_grid]
+    gr = occ.cv_group.to_numpy()
+    out = []
+    for c in cells:
+        a = place_map(spk_s["spikes"][c], occ[gr % 2 == 0])
+        b = place_map(spk_s["spikes"][c], occ[gr % 2 == 1])
+        ok = np.isfinite(a) & np.isfinite(b)
+        if ok.sum() < 6 or np.std(a[ok]) == 0 or np.std(b[ok]) == 0:
+            out.append(np.nan)
+        else:
+            out.append(np.corrcoef(a[ok], b[ok])[0, 1])
+    return np.array(out)
+
+
+# How a cell's location tuning becomes its say in the read-out. `thresh_*` is
+# the sweep from CHANGELOG 2026-09-17 (m) expressed as a 0/1 weight, so that
+# thresholding and weighting run through one code path and are comparable.
+WEIGHTS = {
+    "all": lambda rel: np.ones_like(rel),
+    "thresh_0.1": lambda rel: (rel >= 0.1).astype(float),
+    "thresh_0.2": lambda rel: (rel >= 0.2).astype(float),
+    "linear": lambda rel: np.clip(rel, 0, None),
+    "square": lambda rel: np.clip(rel, 0, None) ** 2,
+}
+
+
+def weighted_loo(spk_s, cells, occ, grids, scheme):
+    """{grid: (n_cells, 9) template}, each cell scaled by its location tuning.
+
+    Scaling a cell's TEMPLATE is exactly weighting that cell in
+    `E(L) = sum_c n_c z_c(L)`, so no other part of the estimator changes and
+    `scheme = "all"` reproduces the unweighted analysis bit for bit.
+
+    A cell with a negative split-half correlation is given weight zero, not a
+    negative weight: an unreliable map is no evidence, not evidence against.
+    Reliability is recomputed for every held-out configuration.
+    """
+    f = WEIGHTS[scheme]
+    out = {}
+    for gr in grids:
+        T = np.array([zscore_map(place_map(spk_s["spikes"][c], occ,
+                                                   exclude_grid=gr))
+                      for c in cells])
+        if scheme == "all":
+            out[gr] = T
+            continue
+        rel = reliability(spk_s, cells, occ, exclude_grid=gr)
+        w = f(np.nan_to_num(rel, nan=0.0))
+        out[gr] = T * w[:, None]
+    return out
+
+
+def window_counts(spk_s, cells, t0, t1):
+    """(n_cells, n_windows) spike counts -- invariant to label permutations, so
+    computed ONCE and reused by every null draw."""
+    return np.array([count_in(spk_s["spikes"][c], t0, t1) for c in cells],
+                    float)
+
+
+def score_windows(C, t0, win_grid, loo, perm=None):
+    """E per window, from precomputed counts."""
+    E = np.full((len(t0), 9), np.nan)
+    for gr in np.unique(win_grid):
+        m = win_grid == gr
+        T = loo.get(gr)
+        if T is None:
+            continue
+        if perm is not None:
+            T = T[:, perm]
+        E[m] = evidence_matrix(C[:, m], T)
+    return E
+
+
