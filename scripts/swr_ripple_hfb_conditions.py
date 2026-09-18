@@ -669,7 +669,7 @@ def timecourse_figure(results=None, out_stem=None, rois=("mPFC", "mOFC"),
 
 
 def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
-                   seed=42, width_cm=3.0, height_cm=3.0,
+                   seed=42, width_cm=3.0, height_cm=3.0, roi=MEDIAL_NAME,
                    conds=("reward_explore", "reward_execute", "error_explore")):
     """One small panel: peri-ripple HFB in COLLAPSED frontal (mPFC + mOFC).
 
@@ -704,7 +704,7 @@ def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
     # collapsed frontal: average a session's mPFC and mOFC derivations together
     curves, stats_out = {}, {}
     for c in conds:
-        sel = (ix.roi.isin(["mPFC", "mOFC"])) & (ix.cond == c)
+        sel = (ix.roi == roi) & (ix.cond == c)
         if not sel.any():
             continue
         rows = []
@@ -786,8 +786,8 @@ def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
             ax.set_xlabel("Time from hippocampal ripple peak (ms)", fontsize=fpt)
             ax.set_ylabel("HFB, real − shifted null, vs non-peri (z)",
                           fontsize=fpt)
-            ax.set_title("Frontal (mPFC + mOFC), session-level\n"
-                         "bars = cluster-corrected p < 0.05", fontsize=fpt + 1)
+            ax.set_title(f"{roi}, session-level\n"
+                         f"bars = cluster-corrected p < 0.05", fontsize=fpt + 1)
             ax.legend(fontsize=fpt - 1, frameon=False, loc="upper center",
                       bbox_to_anchor=(0.5, -0.22), handlelength=1.6)
         else:
@@ -801,7 +801,7 @@ def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
 
     with open(os.path.join(R, "frontal_timecourse_clusters.json"), "w") as f:
         json.dump({"smooth_ms": smooth_ms, "n_perm": n_perm, "seed": seed,
-                   "roi": "Frontal = mPFC + mOFC, different-shaft",
+                   "roi": f"{roi}, different-shaft",
                    "unit": "session", "colours": VALENCE_C,
                    "stats": stats_out}, f, indent=2)
     return None
