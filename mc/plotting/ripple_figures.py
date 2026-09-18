@@ -2234,7 +2234,7 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
                                views=("left", "right", "dorsal"), width_cm=12.0,
                                view_labels=None, legend=True,
                                counts=None, save_views=True,
-                               contact_label=None, **kw):
+                               contact_label=None, font_pt=None, **kw):
     """Publication panel: the 3-D views laid out side by side, with a key.
 
     A 3-D render is a raster whatever the container, so the PDF embeds the
@@ -2257,12 +2257,21 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
     # no reason. Panel height follows from the width, since _trim_white has
     # already given every view the same pixel height.
     w_in = width_cm * CM
-    title_in = 0.20 if view_labels else 0.0
-    legend_in = 0.22 if legend else 0.0
+    scale = 1.0 if font_pt is None else font_pt / FS_TICK
+    title_in = (0.20 * scale) if view_labels else 0.0
+    legend_in = (0.22 * scale) if legend else 0.0
     panel_h_in = w_in / sum(aspects)
     h_in = panel_h_in + title_in + legend_in
 
-    rc = dict(_rc()); rc["savefig.bbox"] = "tight"
+    # `font_pt` means the caller is sizing the panel exactly. A tight bbox then
+    # works against that: at 4 cm the 9 pt legend is wider than the figure, and
+    # tight expands the canvas to fit it -- a 4 cm request came back 12.7 cm
+    # with the brains stranded in the middle. Fixed bbox keeps the page.
+    rc = dict(_rc())
+    rc["savefig.bbox"] = "tight" if font_pt is None else None
+    if font_pt is not None:
+        rc.update({"font.size": font_pt, "axes.titlesize": font_pt,
+                   "legend.fontsize": font_pt})
     with plt.rc_context(rc):
         fig, axes = plt.subplots(
             1, len(imgs), figsize=(w_in, h_in),
@@ -2275,13 +2284,14 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
             ax.imshow(im)
             ax.set_axis_off()
             if view_labels:
-                ax.set_title(view_labels.get(v, v), fontsize=FS_TICK, pad=2)
+                ax.set_title(view_labels.get(v, v),
+                             fontsize=font_pt or FS_TICK, pad=1.5)
 
         if legend:
             n_inc = len(included)
             n_exc = 0 if excluded is None else len(excluded)
             handles = [Line2D([], [], marker="o", linestyle="none",
-                              markersize=3.4, markeredgewidth=0,
+                              markersize=3.4 * scale, markeredgewidth=0,
                               color=kw.get("contact_color", CONTACT_C),
                               label=(contact_label
                                      or f"analysed ({counts or n_inc})"))]
@@ -2294,17 +2304,17 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
             for grp in (kw.get("extra_groups") or []):
                 n_g = len(np.asarray(grp["coords"], float).reshape(-1, 3))
                 handles.append(Line2D(
-                    [], [], marker="o", linestyle="none", markersize=3.4,
+                    [], [], marker="o", linestyle="none", markersize=3.4 * scale,
                     markeredgewidth=0, color=grp.get("color", "#444444"),
                     label=grp.get("label", f"group ({n_g})")))
             handles.append(Line2D([], [], marker="s", linestyle="none",
-                                  markersize=3.4, markeredgewidth=0,
+                                  markersize=3.4 * scale, markeredgewidth=0,
                                   color=kw.get("hpc_color", HPC_BODY_C),
                                   label="hippocampus"))
             fig.legend(handles=handles, loc="lower center", frameon=False,
-                       ncol=len(handles), fontsize=FS_TICK,
-                       handletextpad=0.35, columnspacing=1.4,
-                       borderaxespad=0.1)
+                       ncol=len(handles), fontsize=font_pt or FS_TICK,
+                       handletextpad=0.3, columnspacing=0.9,
+                       borderaxespad=0.05)
 
         if out_stem:
             fig.savefig(out_stem + ".pdf", dpi=600)
