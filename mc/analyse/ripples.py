@@ -78,6 +78,12 @@ def load_bundle(bundle_dir):
                  'pairs'):
         path = os.path.join(bundle_dir, f'{name}.csv')
         out[name] = pd.read_csv(path) if os.path.isfile(path) else pd.DataFrame()
+    # Optional, swr_v2 and later: the UNPADDED artifact intervals, which let the
+    # pad be re-imposed at home (`swr_bundle.repad_bundle`). Absent in older
+    # bundles, so its absence is not an error -- only re-padding one is.
+    extra = os.path.join(bundle_dir, 'artifact_intervals.csv')
+    if os.path.isfile(extra):
+        out['artifact_intervals'] = pd.read_csv(extra)
     return out
 
 
@@ -566,13 +572,14 @@ def condition_colour(label, index=0, scheme=None):
 
 
 # ── Figure geometry ───────────────────────────────────────────────────
-# One row is 16 cm x 4 cm on the page, which is the width of a two-column
-# manuscript figure and a height that stacks without becoming a full page.
+# One row is 14 cm x 3.2 cm on the page. Narrower and shorter than the first
+# pass (16 x 4), which stacked to a full page at six rows; 8 pt keeps the same
+# apparent text size at the reduced width.
 # Everything is set in points at that size: no post-hoc scaling, so the font
 # that comes out is the font asked for.
-ROW_W_CM, ROW_H_CM = 16.0, 4.0
+ROW_W_CM, ROW_H_CM = 14.0, 3.2
 CM = 1 / 2.54
-FS = 9                                        # Arial 9 pt, per the house style
+FS = 8                                        # Arial 8 pt at 14 cm wide
 LW_RATE = 1.2                                 # peri-event traces: thin enough
 LW = 2.0                                      # that the SEM band stays visible
 
@@ -580,7 +587,7 @@ LW = 2.0                                      # that the SEM band stays visible
 # The data rows are 4 cm each. The legend and the title get their own strips
 # on top of that rather than eating into the panels -- at 4 cm there is not
 # enough height to share.
-LEGEND_CM, TITLE_CM = 1.2, 0.6
+LEGEND_ROW_CM, FOOTER_CM, TITLE_CM = 0.40, 0.40, 0.5
 
 
 def _row_axes(n_rows, extra_cm=0.0):
@@ -681,8 +688,15 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
     # (a control press is neither), which would otherwise fall through to a
     # tab10 hue and collide with a reserved one.
     colours = colours or {}
-    legend_cm = LEGEND_CM if legend_cm is None else legend_cm
-    extra = legend_cm + (TITLE_CM if suptitle else 0.0)
+    # Reserve legend and footer in CENTIMETRES, sized to the number of legend
+    # ROWS. Sizing them as a fraction of the figure broke as soon as the row
+    # count changed: a three-row legend under a three-row figure landed on the
+    # bottom panel's x-label.
+    n_lab_est = len({l for r in rows for l in r[1]})
+    ncol_est = min(n_lab_est, 3 if n_lab_est > 4 else 4)
+    legend_rows = int(np.ceil(n_lab_est / max(ncol_est, 1)))
+    legend_cm = (LEGEND_ROW_CM * legend_rows if legend_cm is None else legend_cm)
+    extra = legend_cm + FOOTER_CM + (TITLE_CM if suptitle else 0.0)
     fig, axes = _row_axes(len(rows), extra_cm=extra)
     legend_labels = {}
     for r, (row_title, profiles_by_condition, sliding_by_condition) in enumerate(rows):
@@ -715,7 +729,9 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
         # stay on the top row only. A single-row figure has nothing to
         # distinguish, and the suptitle already says what it is.
         if len(rows) > 1:
-            ax.annotate(row_title, xy=(-0.34, 0.5), xycoords='axes fraction',
+            # -0.34 sat on top of the y-label once the panels narrowed to
+            # 14 cm; the label needs to clear the tick labels AND the ylabel.
+            ax.annotate(row_title, xy=(-0.52, 0.5), xycoords='axes fraction',
                         rotation=90, va='center', ha='center', fontsize=FS,
                         fontweight='bold')
 
@@ -814,12 +830,13 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
 
     total_cm = ROW_H_CM * len(rows) + extra
     fig.tight_layout(pad=0.4, h_pad=1.4, w_pad=1.3,
-                     rect=[0, legend_cm / total_cm,
+                     rect=[0, (legend_cm + FOOTER_CM) / total_cm,
                            1, 1 - (TITLE_CM / total_cm if suptitle else 0)])
     if legend_labels:
         ncol = min(len(legend_labels), 3 if len(legend_labels) > 4 else 4)
         fig.legend(legend_labels.values(), legend_labels.keys(),
-                   loc='lower center', bbox_to_anchor=(0.5, 0.055),
+                   loc='lower center',
+                   bbox_to_anchor=(0.5, FOOTER_CM / total_cm),
                    ncol=ncol, fontsize=FS - 2, frameon=False,
                    handlelength=1.3, handletextpad=0.4, columnspacing=1.4,
                    borderaxespad=0.0)
@@ -829,7 +846,7 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
         # One line naming all three levels, so the legend can stay short while
         # the sample is still stated on the figure.
         c0 = next(iter(counts.values()))
-        fig.text(0.5, 0.005,
+        fig.text(0.5, 0.10 * FOOTER_CM / total_cm,
                  f"test unit: {c0.get('unit', '?')}   |   "
                  f"{c0.get('n_sessions', '?')} sessions, "
                  f"{c0.get('n_subjects', '?')} subjects, "

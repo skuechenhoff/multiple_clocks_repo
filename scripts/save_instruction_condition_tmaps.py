@@ -33,10 +33,15 @@ import numpy as np
 
 PROJECT = "/Users/xpsy1114/Documents/projects/multiple_clocks"
 DEFAULT_ROOT = os.path.join(PROJECT, "data/derivatives/group/per_TR")
-DEFAULT_PATTERN = "group_RSA_instr_cumrew_glmbase_instr_{condition}_cropped"
+# DEFAULT_PATTERN = "group_RSA_instr_cumrew_glmbase_instr_{condition}_cropped"
+# DEFAULT_OUT = os.path.join(
+#     PROJECT, "data/derivatives/group",
+#     f"instruction_cumulative_eventlocked_group_tmaps_{date.today().isoformat()}")
+DEFAULT_PATTERN = "group_RSA_instr_dir_unord_glmbase_instr_{condition}_cropped"
 DEFAULT_OUT = os.path.join(
     PROJECT, "data/derivatives/group",
-    f"instruction_cumulative_eventlocked_group_tmaps_{date.today().isoformat()}")
+    f"instruction_dir_unord_eventlocked_group_tmaps_{date.today().isoformat()}")
+
 
 RESOLVED = [
     "see-A-first", "see-B-first", "see-C-first", "see-D-first",
@@ -85,6 +90,40 @@ def beta_path(args, condition, model):
         f"cropped_masked_smooth_fwhm5_{model}_beta_std.nii"))
 
 
+def beta_path_or_none(args, condition, model):
+    """`beta_path` without the exception, for inventorying what is present."""
+    try:
+        return beta_path(args, condition, model)
+    except FileNotFoundError:
+        return None
+
+
+def find_missing_betas(args, models):
+    """{model: set(conditions whose beta map is absent)}.
+
+    A run that died on one epoch leaves that epoch's beta maps missing while
+    every other epoch is complete. Those inputs are skipped rather than fatal,
+    but only the VIEWS that actually need them are dropped: `collapsed-second-
+    instruction` feeds the collapsed view only, so the resolved view is
+    unaffected and still written.
+    """
+    missing = {}
+    for model in models:
+        absent = {c for c in ALL_CONDITIONS
+                  if beta_path_or_none(args, c, model) is None}
+        if absent:
+            missing[model] = absent
+    return missing
+
+
+def views_available(model, missing):
+    """Which of the two views can still be built for this model."""
+    absent = missing.get(model, set())
+    return [view for view, conditions in
+            (("resolved", RESOLVED), ("collapsed", COLLAPSED))
+            if not (absent & set(conditions))]
+
+
 def discover_models(args):
     names = []
     for path in glob.glob(os.path.join(
@@ -101,9 +140,6 @@ def discover_models(args):
         models = list(args.models)
     if not models:
         raise RuntimeError("no input beta maps found")
-    for condition in ALL_CONDITIONS:
-        for model in models:
-            beta_path(args, condition, model)
     return models
 
 
@@ -233,14 +269,15 @@ def output_paths(args, preprocessing, family, model):
 
 
 def save_condition_views(args, preprocessing, family, model, full_series,
-                         reference, n_subjects, source_models, index_rows):
+                         reference, n_subjects, source_models, index_rows,
+                         views=("resolved", "collapsed")):
     paths = output_paths(args, preprocessing, family, model)
     selections = {
         "resolved": [ALL_CONDITIONS.index(c) for c in RESOLVED],
         "collapsed": [ALL_CONDITIONS.index(c) for c in COLLAPSED],
     }
     labels = {"resolved": RESOLVED, "collapsed": COLLAPSED}
-    for view in ("resolved", "collapsed"):
+    for view in views:
         description = (
             f"uncorrected group t({n_subjects - 1}); {preprocessing}; {view}")
         save_series(
@@ -269,8 +306,14 @@ def compute_single_model(args, model, preprocessings, reference, brain,
         for prep in preprocessings}
     n_subjects = expected_subjects
     for condition_index, condition in enumerate(ALL_CONDITIONS):
-        data = load_subject_map(
-            beta_path(args, condition, model), reference, n_subjects)
+        path = beta_path_or_none(args, condition, model)
+        if path is None:
+            # NaN, not 0: a zero t-value would read as a real null result.
+            # Any view needing this condition is dropped before it is written.
+            for preprocessing in preprocessings:
+                output[preprocessing][..., condition_index] = np.nan
+            continue
+        data = load_subject_map(path, reference, n_subjects)
         if n_subjects is None:
             n_subjects = data.shape[-1]
         for preprocessing in preprocessings:
@@ -312,13 +355,33 @@ def main():
     args = parse_args()
     np.random.seed(42)
     models = discover_models(args)
+    missing = find_missing_betas(args, models)
     reference, brain, group_masks = common_reference_and_mask(args)
     preprocessings = ([args.preprocessing] if args.preprocessing != "both"
                       else ["raw", "demeaned"])
-    pairs = plan_pairs(models)
+    # A model with no buildable view is dropped entirely; a plan pair is dropped
+    # if EITHER half is incomplete, because the 1:1 average needs both.
+    unbuildable = [m for m in models if not views_available(m, missing)]
+    models = [m for m in models if m not in unbuildable]
+    pairs = [pair for pair in plan_pairs(models)
+             if not (missing.get(pair[0]) or missing.get(pair[1]))]
+    dropped_pairs = [pair for pair in plan_pairs(models)
+                     if missing.get(pair[0]) or missing.get(pair[1])]
     paired_models = {name for within, across, _ in pairs
                      for name in (within, across)}
     unpaired = [model for model in models if model not in paired_models]
+
+    if missing:
+        print("\n*** MISSING INPUT BETA MAPS -- these results are INCOMPLETE ***",
+              flush=True)
+        for model in sorted(missing):
+            views = views_available(model, missing)
+            print(f"  {model}: no beta for {sorted(missing[model])} "
+                  f"-> writing {views or 'NOTHING (model dropped)'}", flush=True)
+        if dropped_pairs:
+            print(f"  plan pairs dropped (need both halves complete): "
+                  f"{[p[2] for p in dropped_pairs]}", flush=True)
+        print("*** see missing_inputs.csv in the output directory ***\n", flush=True)
 
     os.makedirs(args.out_dir, exist_ok=True)
     nib.save(nib.Nifti1Image(
@@ -341,11 +404,12 @@ def main():
                 save_condition_views(
                     args, preprocessing, "stored_models", model,
                     series[model][preprocessing], reference, n_subjects,
-                    [model], index_rows)
+                    [model], index_rows, views_available(model, missing))
             save_condition_views(
                 args, preprocessing, "plan_within-plus-across_1to1", combined,
                 series["combined"][preprocessing], reference, n_subjects,
-                [within, across], index_rows)
+                [within, across], index_rows,
+                views_available(within, missing))
         del series
 
     for job_index, model in enumerate(unpaired, 1):
@@ -356,10 +420,19 @@ def main():
             save_condition_views(
                 args, preprocessing, "stored_models", model,
                 series[preprocessing], reference, n_subjects,
-                [model], index_rows)
+                [model], index_rows, views_available(model, missing))
         del series
 
     write_csv(os.path.join(args.out_dir, "map_index.csv"), index_rows)
+    missing_rows = [
+        {"model": model, "missing_condition": condition,
+         "views_still_written": " | ".join(views_available(model, missing)) or "none",
+         "expected_path": os.path.join(
+             condition_dir(args, condition),
+             f"cropped_masked_smooth_fwhm5_{model}_beta_std.nii[.gz]")}
+        for model in sorted(missing) for condition in sorted(missing[model])]
+    if missing_rows:
+        write_csv(os.path.join(args.out_dir, "missing_inputs.csv"), missing_rows)
     settings = {
         "analysis": "event-locked instruction RSA group t-map export",
         "date": date.today().isoformat(),
@@ -369,6 +442,11 @@ def main():
             "cropped_masked_smooth_fwhm5_{model}_beta_std.nii[.gz]"),
         "n_subjects": n_subjects,
         "degrees_of_freedom": n_subjects - 1,
+        "incomplete_inputs": {m: sorted(c) for m, c in missing.items()},
+        "models_dropped_entirely": sorted(unbuildable),
+        "views_not_written": {
+            m: sorted(set(("resolved", "collapsed")) - set(views_available(m, missing)))
+            for m in sorted(missing)},
         "n_stored_models": len(models),
         "stored_models": models,
         "n_plan_within_across_pairs": len(pairs),

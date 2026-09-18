@@ -140,6 +140,65 @@ def load_figure_data(bundle_dir, out_name="swr_bundle"):
     return arrays, idx
 
 
+def repad_bundle(bundle, pad_s):
+    """Re-impose an artifact pad on a loaded bundle, at home, without the LFP.
+
+    The bundle stores artifact intervals UNPADDED (`artifact_intervals`) and the
+    distance from every ripple to the nearest one (`dist_to_artifact_s`), so the
+    pad is a laptop-side decision rather than something fixed on the cluster.
+
+    BOTH halves are required and this does both:
+
+      numerator    events are filtered on `dist_to_artifact_s >= pad_s`
+      denominator  exposure is rebuilt with `clean_intervals_at_pad`
+
+    Filtering events alone inflates the rate, because a rate is events per
+    artifact-free second and the denominator has to shrink with the numerator.
+    Verified: at pad_s = 1.0 this reproduces the cluster-side run to 0.2%
+    (64,895 vs 64,760 ripples, 91.4 vs 91.2 h).
+
+    `channel_qc.excluded` is deliberately NOT recomputed. It is decided at a
+    fixed reference pad (`contaminated_frac_at_exclusion_pad`) so that the set
+    of derivations stays constant as the analysis pad changes; otherwise a pad
+    sweep would confound the pad with the sample.
+    """
+    import mc.analyse.swr_artifact as swr_artifact
+
+    need = {'artifact_intervals', 'ripples', 'channel_qc'}
+    missing = need - set(bundle)
+    if missing:
+        raise KeyError(f"bundle cannot be re-padded, missing {sorted(missing)}. "
+                       f"This needs a swr_v2 bundle or later.")
+    rips = bundle['ripples']
+    if 'dist_to_artifact_s' not in rips:
+        raise KeyError("ripples has no `dist_to_artifact_s`; re-export the bundle")
+
+    qc = bundle['channel_qc']
+    duration = {}
+    for _, q in qc.iterrows():
+        frac = float(q.contaminated_frac)
+        duration[(int(q.session), str(q.pair_id))] = (
+            float(q.clean_s) / max(1e-9, 1.0 - frac))
+
+    rows = []
+    for (sess, pair), g in bundle['artifact_intervals'].groupby(['session', 'pair_id']):
+        dur = duration.get((int(sess), str(pair)))
+        if dur is None:
+            continue
+        iv = swr_artifact.clean_intervals_at_pad(
+            g[['start_s', 'stop_s']].to_numpy(float), dur, 1000.0, pad_s=pad_s)
+        for a, b in iv:
+            rows.append((int(sess), str(pair), float(a), float(b)))
+
+    out = dict(bundle)
+    out['ripples'] = rips[rips.dist_to_artifact_s >= pad_s].copy()
+    out['intervals'] = pd.DataFrame(rows, columns=['session', 'pair_id',
+                                                   'start_s', 'stop_s'])
+    out['meta'] = dict(bundle.get('meta', {}))
+    out['meta']['repadded_to_s'] = float(pad_s)
+    return out
+
+
 def collect_figure_data(sessions, analysis_name=ANALYSIS_NAME):
     """Per-session waveform arrays for METHODS FIGURES, small enough to travel.
 

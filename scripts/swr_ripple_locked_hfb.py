@@ -96,8 +96,26 @@ SHIFT_RANGE_S = (5.0, 120.0)   # shifted-null offsets, either sign
 # and RSA analyses, which have no epoch requirement.
 PAD_SWEEP = (0.25, 0.50, 1.00, 1.50, 2.00, 3.00)
 PAD_INERT_BELOW = HALF_S
-ROI_ORDER = ["A24_z-10_to_5", "mPFC", "mOFC", "TemporalLateral", "Auditory",
-             "Visual"]
+ROI_ORDER = ["MedialFrontal", "A24_z-10_to_5", "mPFC", "mOFC",
+             "TemporalLateral", "Auditory", "Visual"]
+
+# MEDIAL frontal, by coordinate rather than by label. The `mOFC` label is not
+# reliably medial: only 36 of 225 contacts carrying it were assigned by the
+# Brainnetome medial-OFC rule (A11m/A13/A14m, |x| median 9.7 mm, max 13.1);
+# the other 189 came from a 1-3 mm neighbourhood rescue and reach |x| = 52.8 mm,
+# which is lateral orbitofrontal cortex. 40% of "mOFC" sits beyond |x| = 25 mm.
+# mPFC is clean by comparison (|x| median 10.4, max 17.0).
+#
+# This group therefore takes mPFC and mOFC derivations within MEDIAL_MAX_ABS_X
+# of the midline and reports them as one medial frontal region. The threshold
+# is anatomical, not chosen for effect: the estimate is flat across it --
+# +0.0068 at 12 mm, +0.0071 at 15, +0.0073 at 20, +0.0068 at 25, +0.0067 with
+# no cut -- so the cut buys an honest label, not a bigger number.
+#
+# ⚠ |x| here is the pair MIDPOINT, a median 2.2 mm lateral of the source
+# contact, so the effective anchor threshold is ~18 mm.
+MEDIAL_MAX_ABS_X = 20.0
+MEDIAL_NAME = "MedialFrontal"
 
 # A z-defined medial-frontal group cutting across the mPFC/mOFC label boundary.
 # Area 24 is a principal hippocampal input to prefrontal cortex and straddles
@@ -226,28 +244,67 @@ def run(bundle=None, n_shifts=8, seed=42, out_dir=None, save=True,
 
     # Duplicate the medial-frontal rows that fall in the A24 band under the new
     # label. The traces are indexed, not copied, so the figure gets it too.
-    zmap = hp.drop_duplicates("pair_id").set_index("pair_id")["mni_z"]
-    d["mni_z"] = d.cx_pair.map(zmap)
-    in_band = (d.roi.isin(["mPFC", "mOFC"])
-               & d.mni_z.between(A24_BAND[0], A24_BAND[1]))
-    if in_band.any():
-        extra = d[in_band].copy()
-        extra["roi"] = A24_NAME
-        d = pd.concat([d, extra], ignore_index=True)
-        ti = pd.DataFrame(tc_ix)
-        ti["mni_z"] = ti.cx_pair.map(zmap)
-        tb = (ti.roi.isin(["mPFC", "mOFC"])
-              & ti.mni_z.between(A24_BAND[0], A24_BAND[1]))
-        ex = ti[tb].copy()
-        ex["roi"] = A24_NAME
-        ex["trace_row"] = ti.index[tb]           # point at the same trace
-        ti["trace_row"] = ti.index
-        tc_ix = pd.concat([ti, ex], ignore_index=True).to_dict("records")
-        print(f"  {A24_NAME}: {int(extra.cx_pair.nunique())} derivations "
-              f"(z {A24_BAND[0]:.0f} to {A24_BAND[1]:.0f} mm), overlapping "
-              f"mPFC/mOFC -- do not sum")
-    print(f"\n\n{len(d)} rows, {d.cx_pair.nunique()} cortical derivations, "
-          f"{d.session.nunique()} sessions, {d.subject.nunique()} subjects")
+    # Derived, OVERLAPPING ROI groups: MedialFrontal (by |x|) and A24 (by z).
+    # Both are built from the ORIGINAL rows and appended in one step. Building
+    # them sequentially meant the second mask was computed against a frame the
+    # first had already grown, and pandas refused the misaligned indexer.
+    #
+    # Keyed on (session, pair_id), never pair_id alone: a pair label recurs
+    # across sessions of one patient, so a label-only index is non-unique --
+    # the same trap that produced the sites-vs-derivations miscount.
+    mx = (pairs.drop_duplicates(["session", "pair_id"])
+               .set_index(["session", "pair_id"])["mni_x"])
+    mz = (pairs.drop_duplicates(["session", "pair_id"])
+               .set_index(["session", "pair_id"])["mni_z"])
+
+    def _key(frame):
+        return pd.MultiIndex.from_arrays([frame.session, frame.cx_pair])
+
+    def _masks(frame):
+        ax = np.abs(pd.to_numeric(_key(frame).map(mx), errors="coerce"))
+        z = pd.to_numeric(_key(frame).map(mz), errors="coerce")
+        front = frame.roi.isin(["mPFC", "mOFC"]).to_numpy()
+        return (pd.Series(front & (ax <= MEDIAL_MAX_ABS_X), index=frame.index),
+                pd.Series(front & (z >= A24_BAND[0]) & (z <= A24_BAND[1]),
+                          index=frame.index))
+
+    med, band = _masks(d)
+    extras = []
+    for mask, name in ((med, MEDIAL_NAME), (band, A24_NAME)):
+        if mask.any():
+            e = d[mask].copy()
+            e["roi"] = name
+            extras.append(e)
+            print(f"  {name}: {int(e.cx_pair.nunique())} sites / "
+                  f"{len(e[['session', 'cx_pair']].drop_duplicates())} "
+                  f"derivations -- OVERLAPS mPFC/mOFC, never sum them")
+    if extras:
+        d = pd.concat([d] + extras, ignore_index=True)
+
+    ti = pd.DataFrame(tc_ix)
+    ti["trace_row"] = ti.index
+    tmed, tband = _masks(ti)
+    t_extras = []
+    for mask, name in ((tmed, MEDIAL_NAME), (tband, A24_NAME)):
+        if mask.any():
+            e = ti[mask].copy()
+            e["roi"] = name          # trace_row already points at the real trace
+            t_extras.append(e)
+    tc_ix = pd.concat([ti] + t_extras, ignore_index=True).to_dict("records")
+
+    # `subject_label` is the site's label and is not unique per patient -- one
+    # Utah patient carries both 'UT1-202314' and 'UT202314', so counting labels
+    # says 42 where the manuscript says 41. Patients are counted on the
+    # manifest's subject_key, which merges them.
+    try:
+        sk = rip[["session", "subject_key"]].drop_duplicates()
+        n_pat = d[["session"]].drop_duplicates().merge(
+            sk, on="session", how="left").subject_key.nunique()
+    except Exception:
+        n_pat = d.subject.nunique()
+    print(f"\n\n{len(d)} rows, {d.cx_pair.nunique()} cortical sites, "
+          f"{len(d[['session', 'cx_pair']].drop_duplicates())} derivations, "
+          f"{d.session.nunique()} sessions, {n_pat} patients")
 
     native = min(p for p in pad_sweep if p >= PAD_INERT_BELOW)
     dn = d[d.pad_s == native]
@@ -364,7 +421,9 @@ def _contrasts(d, unit="subject"):
            - g0[~g0.is_real].groupby([unit, "roi"])["diff"].mean()).reset_index()
     piv = eff.pivot(index=unit, columns="roi", values="diff")
     out = {}
-    for a, b in [("mOFC", "Visual"), ("mPFC", "Visual"),
+    for a, b in [(MEDIAL_NAME, "Visual"), (MEDIAL_NAME, "TemporalLateral"),
+                 (MEDIAL_NAME, "Auditory"),
+                 ("mOFC", "Visual"), ("mPFC", "Visual"),
                  ("mOFC", "TemporalLateral"), ("mPFC", "TemporalLateral"),
                  ("mOFC", "mPFC")]:
         if a not in piv or b not in piv:

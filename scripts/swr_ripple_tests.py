@@ -581,7 +581,7 @@ def descriptive_rates(data, out_dir, unit='session', win_s=0.5):
 # ── Main ──────────────────────────────────────────────────────────────
 
 def run(bundle=None, tests=None, out_dir=None, n_perm=rip.N_SIGN_FLIPS,
-        unit='subject', min_events=rip.MIN_EVENTS,
+        unit='subject', min_events=rip.MIN_EVENTS, pad_s=None,
         correct_over='time'):
     """correct_over: 'time' (per condition) or 'time_and_conditions' (family)."""
     if bundle is None:
@@ -596,6 +596,11 @@ def run(bundle=None, tests=None, out_dir=None, n_perm=rip.N_SIGN_FLIPS,
                                                      else list(ALL_TESTS))
 
     data = rip.load_bundle(bundle)
+    if pad_s is not None:
+        import mc.analyse.swr_bundle as swb
+        n0 = len(data['ripples'])
+        data = swb.repad_bundle(data, float(pad_s))
+        print(f"  re-padded to {pad_s} s: {n0} -> {len(data['ripples'])} ripples")
     ripples = data['ripples']
     qc = data['channel_qc']
     qc = qc[~qc.excluded.fillna(False)] if 'excluded' in qc else qc

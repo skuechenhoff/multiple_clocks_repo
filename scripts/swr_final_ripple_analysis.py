@@ -774,7 +774,7 @@ def figure_methods(out_png, res, still_labels, still_dists):
 
 def run(bundle=None, out_dir=None, presses_csv=None, rebuild=False,
         unit=UNIT, min_events=MIN_EVENTS, n_perm=rip.N_SIGN_FLIPS,
-        caliper_s=CALIPER_S, rel_caliper=REL_CALIPER):
+        caliper_s=CALIPER_S, rel_caliper=REL_CALIPER, pad_s=None):
     root = swr_io.get_data_root()
     group = os.path.join(swr_io.derivatives_dir(root), 'group', 'swr')
     bundle = bundle or os.path.join(group, 'bundle')
@@ -791,6 +791,13 @@ def run(bundle=None, out_dir=None, presses_csv=None, rebuild=False,
           f"seed {SEED}")
 
     data = rip.load_bundle(bundle)
+    if pad_s is not None:
+        # Re-impose the artifact pad at analysis time (methods SS3.4c). Both
+        # halves: events filtered on dist_to_artifact_s AND exposure rebuilt.
+        import mc.analyse.swr_bundle as swb
+        n0 = len(data['ripples'])
+        data = swb.repad_bundle(data, float(pad_s))
+        print(f"  re-padded to {pad_s} s: {n0} -> {len(data['ripples'])} ripples")
     presses = press_table(data, bundle, presses_csv, rebuild=rebuild)
 
     res, table = analyse(data, presses, n_perm, caliper_s, rel_caliper, unit,

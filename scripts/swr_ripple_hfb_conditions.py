@@ -70,7 +70,15 @@ SHIFT_RANGE_S = (5.0, 120.0)
 TARGET = "reward_explore"
 CONDITIONS = [TARGET, "error_explore", "reward_plan", "reward_execute",
               "move_explore", "still_explore"]
-FRONTAL = {"mPFC": ["mPFC"], "mOFC": ["mOFC"], "Frontal": ["mPFC", "mOFC"]}
+# `mOFC` is not reliably medial -- 40% of the contacts carrying that label sit
+# beyond |MNI x| = 25 mm, i.e. in lateral orbitofrontal cortex, because they
+# were assigned by a 1-3 mm neighbourhood rescue rather than by the Brainnetome
+# medial-OFC rule. MedialFrontal takes mPFC + mOFC within MEDIAL_MAX_ABS_X of
+# the midline and is the honestly-labelled medial frontal region.
+MEDIAL_MAX_ABS_X = 20.0
+MEDIAL_NAME = "MedialFrontal"
+FRONTAL = {MEDIAL_NAME: [MEDIAL_NAME], "mPFC": ["mPFC"], "mOFC": ["mOFC"],
+           "Frontal": ["mPFC", "mOFC"]}
 SMOOTH_MS = 50.0
 
 # Feedback-valence colours. This is a new categorical variable -- CLAUDE.md
@@ -307,6 +315,30 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
     d = pd.DataFrame(rows)
     cnt = pd.DataFrame(counts)
     db = pd.DataFrame(bal_rows)
+
+    # Add the coordinate-defined medial group, as duplicated rows so the
+    # existing per-ROI statistics are untouched. Keyed on (session, pair_id):
+    # a pair label recurs across sessions of one patient, so a label-only index
+    # is non-unique.
+    mx = (pairs.drop_duplicates(["session", "pair_id"])
+               .set_index(["session", "pair_id"])["mni_x"])
+    for frame in (d, db):
+        if not len(frame):
+            continue
+        ax = np.abs(pd.to_numeric(pd.MultiIndex.from_arrays(
+            [frame.session, frame.cx_pair]).map(mx), errors="coerce"))
+        frame["_absx"] = pd.Series(ax, index=frame.index)
+    if len(d):
+        sel = d.roi.isin(["mPFC", "mOFC"]) & d["_absx"].le(MEDIAL_MAX_ABS_X)
+        ex = d[sel].copy(); ex["roi"] = MEDIAL_NAME
+        d = pd.concat([d, ex], ignore_index=True)
+        print(f"  {MEDIAL_NAME}: {int(ex.cx_pair.nunique())} sites / "
+              f"{len(ex[['session','cx_pair']].drop_duplicates())} derivations "
+              f"within |x| <= {MEDIAL_MAX_ABS_X:.0f} mm")
+    if len(db):
+        sel = db.roi.isin(["mPFC", "mOFC"]) & db["_absx"].le(MEDIAL_MAX_ABS_X)
+        ex = db[sel].copy(); ex["roi"] = MEDIAL_NAME
+        db = pd.concat([db, ex], ignore_index=True)
     if not len(d):
         raise RuntimeError("no (session, condition, derivation) cell had enough ripples")
     print(f"\n\n{len(d)} rows | {d.session.nunique()} sessions | "
@@ -326,9 +358,16 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
         if len(db):
             db.to_csv(os.path.join(out_dir, "per_cell_balanced.csv"),
                       index=False)
+        ti = pd.DataFrame(tc_ix)
+        ti["trace_row"] = ti.index
+        ax = np.abs(pd.to_numeric(pd.MultiIndex.from_arrays(
+            [ti.session, ti.cx_pair]).map(mx), errors="coerce"))
+        sel = ti.roi.isin(["mPFC", "mOFC"]) & pd.Series(ax, index=ti.index).le(
+            MEDIAL_MAX_ABS_X)
+        ex = ti[sel].copy(); ex["roi"] = MEDIAL_NAME
         np.savez_compressed(os.path.join(out_dir, "timecourses.npz"),
                             t_ms=off / fs * 1000.0, traces=np.stack(tc))
-        pd.DataFrame(tc_ix).to_csv(
+        pd.concat([ti, ex], ignore_index=True).to_csv(
             os.path.join(out_dir, "timecourse_index.csv"), index=False)
         cnt.to_csv(os.path.join(out_dir, "ripple_counts.csv"), index=False)
         with open(os.path.join(out_dir, "result.json"), "w") as f:
@@ -558,6 +597,8 @@ def timecourse_figure(results=None, out_stem=None, rois=("mPFC", "mOFC"),
     fs = 1000.0 / (t_ms[1] - t_ms[0])
     ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
     ix["is_real"] = ix.is_real.astype(bool)
+    if "trace_row" not in ix.columns:
+        ix["trace_row"] = np.arange(len(ix))
     res = json.load(open(os.path.join(R, "result.json")))["results"]
     flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
     CM = 1 / 2.54
@@ -579,7 +620,7 @@ def timecourse_figure(results=None, out_stem=None, rois=("mPFC", "mOFC"),
                 continue
             curves = []
             for _, gi in ix[sel].groupby("session"):
-                rr = gi.index.to_numpy()
+                rr = gi.trace_row.to_numpy()
                 r = tr[rr[gi.is_real.to_numpy()]]
                 n = tr[rr[~gi.is_real.to_numpy()]]
                 if not len(r) or not len(n):
@@ -655,6 +696,8 @@ def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
     fs = 1000.0 / (t_ms[1] - t_ms[0])
     ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
     ix["is_real"] = ix.is_real.astype(bool)
+    if "trace_row" not in ix.columns:
+        ix["trace_row"] = np.arange(len(ix))
     flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
     CM = 1 / 2.54
 
@@ -666,7 +709,7 @@ def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
             continue
         rows = []
         for _, gi in ix[sel].groupby("session"):
-            rr = gi.index.to_numpy()
+            rr = gi.trace_row.to_numpy()
             r = tr[rr[gi.is_real.to_numpy()]]
             n = tr[rr[~gi.is_real.to_numpy()]]
             if not len(r) or not len(n):

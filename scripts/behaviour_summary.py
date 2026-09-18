@@ -1621,10 +1621,13 @@ def _plot_compact_loop_panel(actual_values, x_values, x_tick_values,
             marker='o', ms=1.8, zorder=3)
 
     if floor_values is not None:
-        floor_mean, _ = _mean_and_sem(floor_values)
-        # The floor is a second time reference, not a second scale.
-        ax.plot(x_values, floor_mean, color=_FLOOR_COLOR, lw=1.25,
-                ls='--', marker=None, zorder=2)
+        # Show the average enforced delay as one flat reference line.  The
+        # per-repeat floor varies slightly because of the jittered timing,
+        # but connecting those values makes it look like an intentional
+        # decrease in the delay across repeats.
+        floor_mean = float(np.nanmean(floor_values))
+        ax.axhline(floor_mean, color=_FLOOR_COLOR, lw=1.25,
+                   ls='--', zorder=2)
 
     # Keep every compact panel on exactly the same y-range.  Centre the span
     # on its group-level references (mean ± SEM and, for fMRI, floor), rather
@@ -1632,7 +1635,7 @@ def _plot_compact_loop_panel(actual_values, x_values, x_tick_values,
     # not determine the publication-panel scale.
     reference = [actual_mean - actual_sem, actual_mean + actual_sem]
     if floor_values is not None:
-        reference.append(floor_mean)
+        reference.append(np.asarray([floor_mean]))
     reference = np.concatenate(reference)
     reference = reference[np.isfinite(reference)]
     if reference.size:

@@ -154,7 +154,9 @@ N_CONDS_PER_CONFIG   = 12      # timepoints per task config; 360/12 = 30 bins (3
 # GLM makes them cannibalise each other's β. `dsr_fmri` survives the 4
 # control stack on its own (see diagnostic drop-in trace) — this combo is
 # the clean "dsr_fmri + controls" report.
-MODEL_ORDER_DSR      = ['dsr_fmri', 'stat', 'loc', 'phas']
+
+#MODEL_ORDER_DSR      = ['dsr_fmri', 'stat', 'loc', 'phas']
+MODEL_ORDER_DSR      = ['dsr_fmri', 'stat', 'loc']
 # The schematic figures (fig 1 top-panel DSR display, fig 2 model row) show
 # every model in MODEL_ORDER_DSR — dsr_fmri included, now that its display
 # activation + Hamming RDM are built alongside the cosine-space models.

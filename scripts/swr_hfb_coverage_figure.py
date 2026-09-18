@@ -56,7 +56,8 @@ GROUP_C = {"mPFC": rfig.PAL[1], "mOFC": rfig.PAL[4]}
 
 def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
         views=("left", "right", "dorsal"), contact_scale=0.20,
-        frontal_scale=0.22, font_pt=None, legend=True, view_labels=True):
+        frontal_scale=0.22, font_pt=None, legend=True, view_labels=True,
+        medial_max_abs_x=None):
     R = results or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
                                 "group", "swr", "ripple_locked_hfb_2026-09-16")
     b_dir = bundle or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
@@ -77,6 +78,23 @@ def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
 
     d = pd.read_csv(os.path.join(R, "per_pair.csv"))
     d = d[~d.same_shaft]
+    if medial_max_abs_x is not None:
+        # Restrict the cortical sets to genuinely medial contacts. The `mOFC`
+        # label is not reliably medial: 40% of the contacts carrying it sit
+        # beyond |x| = 25 mm, in lateral orbitofrontal cortex, because they were
+        # assigned by a neighbourhood rescue rather than by the Brainnetome
+        # medial-OFC rule. Keyed on (session, pair_id) -- a pair label recurs
+        # across sessions of one patient.
+        mx = (pairs.drop_duplicates(["session", "pair_id"])
+                   .set_index(["session", "pair_id"])["mni_x"])
+        ax = np.abs(pd.to_numeric(pd.MultiIndex.from_arrays(
+            [d.session, d.cx_pair]).map(mx), errors="coerce"))
+        keep = pd.Series(ax, index=d.index).le(float(medial_max_abs_x))
+        n0 = len(d[["session", "cx_pair"]].drop_duplicates())
+        d = d[keep | ~d.roi.isin(["mPFC", "mOFC"])]
+        print(f"medial restriction |x| <= {medial_max_abs_x} mm: "
+              f"{len(d[['session','cx_pair']].drop_duplicates())} of {n0} "
+              f"cortical derivations kept")
     if "pad_s" in d.columns:                      # the native pad only
         d = d[d.pad_s == d.pad_s.min()]
 

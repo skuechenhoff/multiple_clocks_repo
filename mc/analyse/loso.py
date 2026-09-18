@@ -29,6 +29,7 @@ the sample SD with ddof=1 and multiplies by sqrt(n).
 """
 import csv
 import json
+import glob
 import os
 import re
 import sys
@@ -38,7 +39,20 @@ import nibabel as nib
 
 FILE_RE = re.compile(r"^cropped_masked_smooth_fwhm5_(.+)_beta_std\.nii(\.gz)?$")
 BETA_STEM = "cropped_masked_smooth_fwhm5_{model}_beta_std.nii"
-GROUP_MASK_NAME = "mask_all_32_subjects.nii"
+# The group mask carries the subject count in its name, so it changes whenever
+# the cohort does (it was mask_all_32_subjects.nii, it is now 33). Matched by
+# glob rather than hardcoded, and an ambiguous match is an error rather than an
+# arbitrary pick -- silently taking the wrong one would change the search volume.
+GROUP_MASK_GLOB = "mask_all_*_subjects.nii*"
+
+
+def find_group_mask(directory):
+    """The single mask_all_<n>_subjects NIfTI in `directory`."""
+    matches = sorted(glob.glob(os.path.join(directory, GROUP_MASK_GLOB)))
+    if len(matches) != 1:
+        raise FileNotFoundError(
+            f"expected exactly one {GROUP_MASK_GLOB} in {directory}, got {matches}")
+    return matches[0]
 
 # ------------------------------------------------------- the third axis ----
 # Beta maps are stacked along one extra axis whose levels are either the TRs of
@@ -104,8 +118,7 @@ def load_ref(root, dir_pattern, trs):
     ref, brain, used = None, None, []
     for tr in trs:
         try:
-            p = resolve_nii(os.path.join(root, fmt_level(dir_pattern, tr),
-                                         GROUP_MASK_NAME))
+            p = find_group_mask(os.path.join(root, fmt_level(dir_pattern, tr)))
         except FileNotFoundError:
             continue
         img = nib.load(p)
@@ -114,7 +127,7 @@ def load_ref(root, dir_pattern, trs):
         used.append(tr)
     if ref is None:
         raise FileNotFoundError(
-            f"no {GROUP_MASK_NAME} found in any of {list(trs)} under "
+            f"no {GROUP_MASK_GLOB} found in any of {list(trs)} under "
             f"{os.path.join(root, dir_pattern)}")
     if len(used) < len(trs):
         print(f"[warn] group mask present for only {len(used)}/{len(trs)} level(s) "

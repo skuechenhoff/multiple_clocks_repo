@@ -1,5 +1,654 @@
 # CHANGELOG
 
+## 2026-09-17 (i) — Stage 3, definitive: location content is NOT ripple-specific
+
+Supersedes (e), (f), (h). Two changes, both from SK:
+
+1. **Flanks matched by CONSTRUCTION** (`swc.matched_flanks`) — each flank sits
+   inside the ripple's OWN occupancy interval, so it shares location, dwell,
+   task phase and width, and never overlaps another ripple. This replaces the
+   fixed +-500 ms offsets, which were location-matched only ~53.7% of the time.
+   It also keeps far more ripples than the post-hoc matched SUBSET used in (h),
+   because it needs the interval to hold ripple+flank, not +-500 ms of stillness.
+2. **Per-cell z-scoring of spike counts** (`swc.zscore_cells`) — `E = sum_c n_c *
+   z_c(L)` weighted each cell by its raw rate, so a few loud cells carried the
+   pattern. Matches the project's single-spike RSA practice.
+
+### Result
+
+| ROI | sess | ripples | flanks | C0 z_ripple | p | z_flank | **C1 z_diff** | p |
+|---|---|---|---|---|---|---|---|---|
+| HC_mid | 35 | 39,832 | 57,476 | +0.304 | 0.078 | **+0.406** | -0.050 | 0.762 |
+| **HC_anterior** | 51 | 58,050 | 82,608 | **+0.391** | **0.0035** | +0.240 | +0.119 | 0.389 |
+| mOFC | 26 | 27,216 | 39,272 | -0.474 | 0.083 | +0.199 | -0.476 | 0.037 |
+| mPFC | 32 | 36,224 | 52,247 | +0.291 | 0.124 | +0.212 | -0.036 | 0.87 |
+
+**Location content IS present inside ripple windows** (HC_anterior p = 0.0035)
+**but it is NOT ripple-specific.** Matched windows in the same dwell at the same
+location carry as much or more — for HC_mid the flank EXCEEDS the ripple
+(+0.406 vs +0.304). Hippocampus represents where you are continuously; a ripple
+is not a moment when that representation is enhanced.
+
+Every earlier positive C1 was the unmatched-flank artefact.
+
+### The cell z-scoring also changed WHICH region leads
+
+Stage 2 positive control at 60 ms, raw counts vs per-cell z:
+
+| ROI | raw | cell-z |
+|---|---|---|
+| HC_mid | +0.513 (p = 0.008) | +0.678 (p = 0.0057) |
+| **HC_anterior** | +0.108 (**p = 0.48**) | **+0.517 (p = 0.0011)** |
+
+HC_anterior was never location-blind — loud cells were swamping it. **Earlier
+statements that HC_anterior "fails the current-location control" were an
+artefact of the estimator, not a fact about the region**, and the claim that
+HC_mid is uniquely the location region is weakened accordingly.
+
+⚠ mOFC C1 is significantly NEGATIVE (-0.476, p = 0.037, subject p = 0.048). One
+of eight tests, in a region with no location tuning, and a negative
+ripple-specific effect has no interpretation. Treated as an unexplained
+systematic artefact, NOT a result. Worth finding.
+
+### Error tally for this analysis line — four now
+
+All four inflated the headline in the favourable direction; none was caught by
+the analysis's own controls; three of four were caught by SK asking a pointed
+question:
+1. (e) estimator/inclusion mismatch between Stage 3 and its Stage 2 control;
+2. (g) CV leak — configurations repeat across blocks (SK);
+3. (h) flank not location-matched;
+4. (i) raw spike counts let loud cells dominate the population read-out (SK).
+
+**What stands:** hippocampus (both subregions) carries current-location
+information readable from 60 ms windows. **What does not:** any claim that
+ripples carry location information beyond ambient coding.
+
+## 2026-09-17 (h) — ⚠ RETRACTION: the Stage 3 ripple-content effect does not survive a location-matched flank
+
+**Found by the audit SK asked for.** The +-500 ms flank was described throughout
+entries (e)-(g) as sharing "trial, current location, phase and stillness" with
+the ripple. **The location part is false.** Measured: a flank sits at the SAME
+location as the ripple only **53.7%** of the time.
+
+When it does not, the flank window is scored for the location the subject
+occupied AT THE RIPPLE — the wrong one — so its evidence is systematically
+depressed and ripple-minus-flank comes out positive for a reason that has
+nothing to do with ripples. That is a mechanism which manufactures precisely the
+C1 effect that was reported.
+
+### Restricting to ripples whose flanks ARE at the same location
+
+`FLANK_MODES = ("all", "matched")` in `scripts/swr_ripple_content.py`.
+
+| HC_mid | all ripples (45,303) | **matched (12,770)** |
+|---|---|---|
+| **C0** z_ripple | +0.386 (p = 0.044) | **-0.013 (p = 0.941)** |
+| **C1** z_diff | +0.316 (p = 0.069) | **-0.055 (p = 0.756)** |
+| C1 subject-level | p = 0.161 | p = 0.919 |
+
+**Both collapse to zero.** C0 does not involve the flank at all — it changes
+because the matched subset is a DIFFERENT population of ripples: those where the
+subject held one location for +-500 ms, i.e. long dwells.
+
+### What this means
+
+**In the ripples where a controlled comparison is possible, there is no location
+content at all.** The apparent effect came from ripples where the subject was
+moving, and there the flank is at a different location by construction.
+
+⚠ The matched subset is a narrower question, not a pure control: it restricts to
+still periods. Ripples cluster in still periods (F1), so it is the right
+population to ask about, but it does not exclude location content in ripples
+during movement. It does exclude the claim that was made.
+
+Other ROIs, matched: HC_anterior +0.276 (p = 0.109) in-ripple, C1 null;
+**mOFC -0.562 (p = 0.008) in-ripple**, significantly NEGATIVE, unexplained and
+probably a systematic bias worth understanding; mPFC null.
+
+### The proper fix, not yet built
+
+Stop using fixed +-500 ms offsets. Place each flank INSIDE the ripple's own
+occupancy interval, at whatever offset that interval allows — location-matched
+by construction, without discarding moving ripples. Until that exists, C1 as
+specified cannot be run on the full ripple set.
+
+### Running tally of errors in this analysis line
+
+Three now, all inflating the headline in the favourable direction, none caught
+by the analysis's own controls:
+1. (e) estimator/inclusion mismatch between Stage 3 and its Stage 2 control;
+2. (g) cross-validation leak — configurations repeat across blocks (SK);
+3. (h) the flank control was not location-matched.
+
+The Stage 2 positive control (HC_mid reads current location from 60 ms non-ripple
+windows, +0.562, p = 0.0056) is unaffected by all three and still stands. Nothing
+about ripple CONTENT does.
+
+## 2026-09-17 (g) — ⚠ CROSS-VALIDATION LEAK: configurations repeat across blocks. All of (c)-(f) re-run.
+
+**Found by SK.** Every prior result in entries (c), (d), (e) and (f) used
+leave-one-GRID-out where the unit was `grid_num` (the block index). But a
+configuration is run in several blocks: **median 24 grid_num vs 8 grid_id per
+session, ~3 runs per configuration (up to 5), in 63/63 sessions.** Holding out
+one block therefore left 2-4 other runs of the SAME configuration in the
+training set, so the template already encoded that configuration's reward
+locations and trajectories.
+
+**Fix:** `mc/analyse/swr_content.occupancy` now emits `cv_group = grid_id` and
+`place_map` filters on it; every call site and the split-half reliability split
+were updated. The numbers below SUPERSEDE entries (c)-(f).
+
+### Effect on each result
+
+| quantity | leaky (grid_num) | corrected (grid_id) |
+|---|---|---|
+| Stage 2, HC_mid 60 ms | +0.780 (p = 0.00026) | **+0.562 (p = 0.0056)** |
+| Stage 2, HC_anterior 60 ms | +0.167 (n.s.) | +0.077 (n.s.) |
+| **Stage 3 C0**, HC_mid | +0.459 (p = 0.022) | **+0.386 (p = 0.044)** |
+| **Stage 3 C1**, HC_mid | **+0.411 (p = 0.012)** | **+0.316 (p = 0.069)** |
+| Stage 3 C1, subject-level | p = 0.040 | **p = 0.161** |
+| C2 `known_rew` (target) | +0.033 (n.s.) | -0.070 (n.s.) |
+| C2 `unknown_rew` (control) | +0.320 (p = 0.066) | +0.218 (p = 0.217) |
+
+**The headline claim is walked back.** "Ripples carry location information AND it
+is ripple-specific" becomes: C0 marginal (p = 0.044), **C1 a trend only
+(p = 0.069)**, subject-level not significant. The ripple-SPECIFICITY — the half
+that distinguishes real content from ambient hippocampal coding — is
+**unresolved**, not established.
+
+### The leak explains part of the `unknown_rew` anomaly, not all of it
+
+A template trained on other runs of the same configuration knows that
+configuration's reward locations, including ones not yet discovered at ripple
+time — exactly the spurious positive seen in (f). Correcting it cut the
+coefficient from +0.320 to +0.218 (p 0.066 -> 0.217), so it is no longer a red
+flag firing, but it did not go to zero. **Roughly a third explained; the
+remainder is unaccounted for.** I11/I12/I13 all rest on reward-location
+regressors, so this should be understood before any of them is built.
+
+### Reliability moved in OPPOSITE directions by region — informative, not just a fix
+
+Split-half now splits by configuration, so the two halves contain DIFFERENT
+configurations:
+
+| ROI | leaky | corrected |
+|---|---|---|
+| **HC_mid** | +0.0886 | **+0.1127 (p = 5.7e-6)** — UP |
+| HC_anterior | +0.0812 | +0.0626 (p = 0.0032) — down |
+| mOFC | +0.0539 | +0.0390 (n.s.) |
+| PCC | +0.1114 | +0.0899 (n.s.) |
+| mPFC | -0.0272 | +0.0315 (n.s.) |
+
+HC_mid gets STRONGER when the halves are forced to hold different
+configurations: its location code generalises across configurations, i.e. it is
+genuinely spatial. HC_anterior gets weaker, so part of its apparent tuning was
+configuration-specific. A real dissociation, exposed by the fix.
+
+### ⚠ Pattern worth noting
+
+Two independent methodological errors have now been found in this analysis line
+— the estimator/inclusion mismatch in (e) and this CV leak — and **both inflated
+the headline in the favourable direction before being caught**. Neither was
+found by the analysis's own controls. An audit pass for the same class of error
+is warranted before any new analysis is layered on top.
+
+## 2026-09-17 (f) — C2: no evidence for REMOTE reward locations in ripples (underpowered null); plus the raw spike-rate check
+
+**New:** `scripts/swr_ripple_content_c2.py`, `scripts/swr_spike_rate_in_ripples.py`.
+**Results:** `.../group/swr/ripple_content_c2_2026-09-17/`,
+`.../group/swr/ripple_spike_rate_2026-09-17/`.
+
+### Firing IS higher inside ripples — by about 4%
+
+Rate inside the ripple extent vs all other in-task time, per cell:
+
+| ROI | in-ripple Hz | outside Hz | ratio | % cells up | p (session) |
+|---|---|---|---|---|---|
+| HC_anterior | 2.835 | 2.650 | 1.04 | 61.1% | 0.00012 |
+| HC_mid | 3.378 | 3.228 | 1.04 | 63.0% | 0.025 |
+| mOFC | 3.312 | 3.238 | 1.01 | 58.2% | 0.127 |
+| mPFC | 2.268 | 2.246 | 1.00 | 50.7% | 0.111 |
+| PCC | 3.134 | 2.856 | **1.13** | 80.3% | 0.041 |
+
+**The 0.2 spikes-per-ripple figure is the 60 ms WINDOW, not silent cells** —
+3 Hz x 0.06 s = 0.18. But the ripple modulation is only ~4% in hippocampus,
+reliable yet far below the severalfold increases the rodent literature assumes.
+Consistent with the weak peri-ripple modulation in Fig 1f. Plausible cause:
+ripples are detected on MACRO bipolar derivations while units come from
+microwires, so a detected ripple need not coincide with local ripple activity at
+the wire. Worth stating in methods — the content effects are extracted from a
+much weaker ripple-locked firing regime than rodent work.
+
+⚠ **PCC shows the LARGEST modulation (1.13, 80% of cells)** — stronger than
+hippocampus, which makes no mechanistic sense. 61 cells in 10 sessions. Do not
+report PCC without understanding this.
+
+### C2 — the target is null, and the knowledge control misbehaves
+
+All nine locations enter ONE regression per window, because the roles are
+correlated by construction (a known reward is necessarily a recently-visited
+place): `E(L) ~ is_current + is_known_reward + is_unknown_reward + recently_visited`.
+
+HC_mid, 35 sessions, 41,624 ripples, ripple minus matched +-500 ms flanks:
+
+| term | mean z | 95% CI | p |
+|---|---|---|---|
+| current | **+0.466** | [+0.111, +0.822] | **0.012** |
+| **known_rew** (target) | **+0.033** | **[-0.353, +0.419]** | 0.863 |
+| unknown_rew (knowledge control) | +0.320 | [-0.022, +0.662] | 0.066 |
+| recent (recency control) | +0.112 | [-0.245, +0.469] | 0.527 |
+
+**`current` reproduces Stage 3** (+0.466 vs +0.411) inside a completely
+different estimator, which is a good internal-consistency check: the null is not
+a broken pipeline.
+
+⚠ **This is an UNDERPOWERED null, not an absence.** The known-reward CI excludes
+only effects above +0.419 — **90% of the current-location effect**. It rules out
+"remote rewards are represented about as strongly as where you are standing" and
+essentially nothing weaker.
+
+⚠ **The knowledge control is trending positive and is LARGER than the target**
+(+0.320 vs +0.033). The subject CANNOT know the undiscovered reward locations,
+so that coefficient should be zero. Templates are leave-one-grid-out and
+neighbouring grids carry different configurations, so reward locations should not
+be systematically distinctive — no explanation yet. It may be noise (p = 0.066,
+one of 32 tests in this table), but **until it is understood, no reward-location
+claim should rest on this design**, including a positive one.
+
+Other ROIs: all null for the target. mPFC `known_rew` is NEGATIVE in-ripple
+(-0.477, p = 0.025) but mPFC fails the Stage 2 control and the direction is not
+predicted; treated as noise.
+
+### What this does and does not say
+
+C2 pools ripples across exploration AND execution. It does not test SK's
+sharper questions — rewarded vs non-rewarded locations during exploration
+(I11), whole-trajectory replay once the route is known (I12), or blocking at
+error locations (I13), all now queued in `POTENTIAL_IDEAS.md`. A pooled null is
+weak evidence against any of them.
+
+## 2026-09-17 (e) — STAGE 3: hippocampal ripples carry location information (HC_mid), exploratory
+
+**New:** `scripts/swr_ripple_content.py`; `figure5` in `swr_content_figures.py`.
+**Results:** `.../group/swr/ripple_content_stage3_2026-09-17/`.
+First test of ripple CONTENT in this project. Everything before was foundations.
+
+### Result — session level, the project's ephys convention
+
+| ROI | sess | ripples | **C0** z_ripple | p | z_flank | **C1** z_diff | p | subj p |
+|---|---|---|---|---|---|---|---|---|
+| **HC_mid** | 35 | 45,303 | **+0.459** | **0.022** | +0.166 | **+0.411** | **0.012** | 0.040 |
+| HC_anterior | 51 | 67,414 | +0.131 | 0.341 | +0.097 | +0.005 | 0.971 | 0.81 |
+| mOFC | 26 | 30,868 | -0.177 | 0.533 | +0.005 | -0.175 | 0.408 | 0.95 |
+| mPFC | 32 | 41,752 | -0.164 | 0.426 | -0.151 | -0.055 | 0.777 | 0.56 |
+
+C0 = location signal inside the ripple (t_peak +- duration/2) against the
+label-permutation null. C1 = the same minus equal-width flanks at +-500 ms,
+which share trial, current location, phase and stillness. **The effect is
+ripple-SPECIFIC and confined to HC_mid**, the only ROI that passed the Stage 2
+current-location control.
+
+### ⚠ EXPLORATORY, and the reason must be recorded
+
+The first Stage 3 run gave C0 p = 0.10 and C1 p = 0.12. Two flaws were then
+found and fixed, and the fixed analysis is significant. **The analysis was
+changed after seeing a null.** Both fixes are defensible independently, but this
+is exploratory and must not be written up as confirmatory.
+
+1. **The estimator did not match its own control.** Stage 2 used
+   `target_minus_others`; Stage 3 used `target_z`. C0's stated purpose is to be
+   comparable to the Stage 2 number, which is impossible if they are computed
+   differently. Primary is now `target_minus_others`, identical to Stage 2;
+   `target_z` is kept as a secondary in the `*_sf` columns.
+2. **The inclusion rule was biased AGAINST the effect.** `target_z` needs
+   sd > 0, discarding ripples where few cells fired, and MIN_RIPPLES = 100 then
+   dropped whole sessions: HC_mid fell 35 -> 20. The dropped sessions had a
+   HIGHER mean Stage-2 z (**+0.920**) than those kept (**+0.675**) — verified
+   numerically before the fix was run. `target_minus_others` needs no such
+   guard (an empty window scores 0, which is unbiased), so all 35 return.
+
+⚠ A subject-level p = 0.019 reported from the biased-inclusion run was an
+artefact of that inclusion and is p = 0.21 under it. Superseded by the p = 0.040
+above, which comes from the corrected run.
+
+### An unexplained comparison, stated rather than smoothed over
+
+With estimators now matched: ordinary navigation windows **+0.780** (Stage 2),
+ripple flanks **+0.166**, ripple windows **+0.459**. So the NEIGHBOURHOOD of a
+ripple carries much weaker location information than navigation generally, and
+the ripple partially restores it. Consistent with F1 (ripples occur during
+stillness, when ongoing location coding should be weakest), but equally
+consistent with a sampling difference between tiled and ripple-centred windows.
+Not resolved. C1 is unaffected either way, being internally matched.
+
+### Vectorisation: the null is free
+
+`E = C.T @ T`, so `C.T @ T[:, perm] == E[:, perm]` — a permuted template is a
+column reordering of evidence already computed, and `sum_L E(L)` (and the row
+mean/SD) are permutation-invariant. Every null draw is therefore one fancy-index
+into a precomputed array: no spike counting, no matmul, no per-permutation loop.
+**Whole analysis runs in 37 s** for 61 sessions x 4 ROIs x 100 permutations.
+N_PERM reduced 200 -> 100 at SK's request; memory stays at a few (n_ripples x 9)
+arrays per session.
+
+### Not yet done
+
+C2 (the OTHER reward locations, beyond the current one) — the first genuinely
+non-trivial content question. Memory-vs-plan and sequential order remain
+exploratory. The pseudo-population decoder is still to be built as the
+complementary pattern-level read-out.
+
+## 2026-09-17 (d) — Stage 2 PASSES for HC_mid; the "inverted U" was a sampling artefact
+
+**Supersedes the Stage 2 and width-sweep results in entry (c).**
+`scripts/swr_place_width_sweep.py` now tiles every eligible window;
+`tiled_windows` added to `mc/analyse/swr_content.py`.
+**New:** `scripts/swr_content_descriptives.py`, `scripts/swr_content_figures.py`,
+`scripts/swr_location_timecourse.py`.
+**Results:** `.../group/swr/ripple_content_descriptives_2026-09-17/`,
+`.../ripple_content_figures_2026-09-17/`, `.../ripple_content_timecourse_2026-09-17/`.
+
+### ⚠ The sampled window draw was unstable and must not be used
+
+Entry (c) sampled 1,500 random windows per session. That estimate moves with the
+seed: **HC_mid at 60 ms came out +0.30, +0.44 and +0.53** across three runs
+differing only in the draw. The apparent rise from 60 -> 125 ms, read in (c) as
+a spike-budget effect, was that noise. Every width-profile conclusion in (c) is
+withdrawn.
+
+### Stage 2, deterministic: every eligible window, tiled
+
+Per-session z vs own 200-draw label-permutation null, t across sessions.
+
+| ROI | 60 ms | 125 ms | 250 ms |
+|---|---|---|---|
+| **HC_mid** | **+0.753 (t=3.94, p=0.00038)** | **+0.716 (t=4.00, p=0.00032)** | **+0.687 (t=3.76, p=0.00065)** |
+| HC_anterior | +0.183 (0.252) | +0.165 (0.282) | +0.195 (0.206) |
+| mOFC | +0.237 (0.34) | +0.224 (0.375) | +0.153 (0.504) |
+| mPFC | -0.097 (0.636) | -0.071 (0.741) | -0.099 (0.65) |
+
+624,309 windows at 60 ms for HC_mid, against 1,500 sampled. Removing the
+subsample both RAISES the estimate and FLATTENS the width profile.
+
+**HC_mid carries the current location in a 60 ms window — the width of a
+ripple.** The Stage 2 gate passes, and passes decisively rather than marginally.
+HC_mid being the current-location region agrees with `per_lag_encoding` (HC_mid
+peaks at lag 0); mPFC being null under a lag-INVARIANT place template agrees
+with it too.
+
+### Reliability-weighting: equivocal, not adopted
+
+Within-run (identical sessions and windows) it helped HC_mid at 125 ms
+(+0.432 -> +0.650) and HC_anterior at 60 ms (-0.003 -> +0.194), and slightly hurt
+HC_mid at 60 ms (+0.527 -> +0.493). Deterministic windowing mattered far more.
+⚠ The reliability used was full-data split-half, i.e. mildly circular; if it is
+ever adopted it must be recomputed leave-one-grid-out.
+
+### Descriptives and figures (`swr_content_figures.py`)
+
+Fig 1 data and budget; Fig 2 location tuning; Fig 2b example place maps (best
+cells, r up to 0.94); Fig 3 the width profile; Fig 4 location evidence aligned
+to arriving at a new location. Every panel's numbers are written as CSV beside
+the figure.
+
+⚠ **Peri-ripple firing (Fig 1f) must be per-CELL normalised.** The first version
+summed raw spike counts across cells, so the highest-rate cells dominated a
+panel whose entire purpose is checking spike-ripple alignment. Now each cell is
+expressed as % change against its own -500:-250 ms baseline before averaging.
+
+### Location evidence over time (Fig 4)
+
+Aligned to arriving at a new location, sliding 125 ms windows. Peak evidence for
+the location just entered: HC_mid +0.125 s (+0.032), mOFC +0.062 s (+0.093),
+mPFC +0.062 s (+0.018); HC_anterior shows no clear peak (max at -0.125 s).
+
+### Full deterministic width profile: plateau then decline, no rise
+
+| ROI | 60 ms | 125 ms | 250 ms | 500 ms |
+|---|---|---|---|---|
+| **HC_mid** | **+0.780 (0.00026)** | **+0.741 (0.00030)** | **+0.699 (0.00059)** | +0.374 (0.047) |
+| HC_anterior | +0.167 | +0.173 | +0.192 | +0.051 |
+| mOFC | +0.192 | +0.234 | +0.150 | +0.137 |
+| mPFC | -0.093 | -0.050 | -0.048 | -0.068 |
+
+At 1 s only 8-11 sessions retain >=200 eligible windows and 2 s drops out, so
+those columns are not interpretable. **The decline beyond 500 ms is real and
+survives tiling (windows straddle locations, median dwell ~0.7 s); the RISE at
+the short end did not.** Per-window decoding accuracy is 0.10-0.12 against
+1/9 = 0.111 at every width -- only the pooled score carries signal, as the
+spikes-per-ripple arithmetic predicts.
+
+### ⚠ Figure 4 broke rule 2 and was rebuilt
+
+The first location-timecourse figure averaged RAW scores across sessions. The
+tell was constant offsets with no dynamics (HC_anterior ~-0.04 throughout, mOFC
+~+0.07) -- per-session scale leaking into the group mean. Rebuilt with
+`swc.target_z`, a within-window z across the 9 location scores, which removes
+the scale at source rather than per session.
+
+Rebuilt: **HC_mid shows a clean crossover** -- evidence for the location just
+left decays through arrival while evidence for the location just entered rises,
+peaking at +0.19 s (z = +0.063), crossing at ~t = 0. HC_anterior flat; mOFC weak
+(peak +0.31 s); mPFC consistently NEGATIVE (~-0.02), which is what a
+future-coding region would do under a current-location template.
+
+### Where this leaves Stage 3
+
+The Stage 2 gate is passed for HC_mid at ripple width, so the ripple-vs-flank
+test is worth running -- against the earlier read in (c), which was based on the
+unstable sampled estimate. HC_anterior, mOFC and mPFC do not pass the
+current-location control and any ripple result in them would be uninterpretable
+under a plain place template.
+
+## 2026-09-17 (c) — Stage 1a/2 of the ripple-content analysis: templates work, the location signal is small, and it peaks at 125-250 ms
+
+**New:** `mc/analyse/swr_content.py`, `scripts/swr_place_templates.py`,
+`scripts/swr_place_width_sweep.py`.
+**Results:** `.../group/swr/ripple_content_templates_2026-09-17/`,
+`.../group/swr/ripple_content_widthsweep_2026-09-17/`.
+
+THE ESTIMATOR. Each cell gets a location template `z_c(L)`, its mean rate at
+each of the 9 locations, z-scored across locations so `sum_L z_c(L) = 0`. A
+window of spiking scores every location as `E(L) = sum_c n_c * z_c(L)`. Because
+every template sums to zero, location-INDEPENDENT firing contributes exactly
+zero in expectation, so a session with four cells still gives an unbiased score.
+Templates are leave-one-grid-out. The statistic is `E(target) - mean(E(others))`.
+
+### Stage 1a — real-time templates are 2.5x more reliable than the warped ones
+
+Split-half (odd vs even grids) on place maps built from the Stage 0 timeline and
+raw spikes:
+
+| ROI | n | mean r | p |
+|---|---|---|---|
+| HC_anterior | 293 | **+0.0812** | 0.00017 |
+| HC_mid | 227 | **+0.0886** | 0.0011 |
+| PCC | 61 | +0.1114 | 0.029 |
+| mOFC | 141 | +0.0539 | 0.104 |
+| mPFC | 148 | -0.0272 | 0.406 |
+
+Against +0.034 (HC) from the warped `all_location_snippets.csv`. Building maps in
+real time, on the correct clock, roughly doubles the reliability. mPFC is flat,
+as expected if its code is lag-tagged rather than a plain place code.
+
+### ⚠ The raw across-session t-test is invalid — use per-session z
+
+`E` scales with firing rate and cell count, so per-session scores are not
+commensurable (|score| vs n_cells: **r = 0.49**; per-session score ranges
+-0.75 to +0.61). The first Stage 2 run averaged raw scores across sessions and
+returned null everywhere (HC_anterior t = +0.86, HC_mid t = +0.07). Re-scoring
+each session against its OWN 200-draw label-permutation null and then testing
+across sessions:
+
+| ROI | sessions | mean z | t | p | frac z>0 |
+|---|---|---|---|---|---|
+| **HC_mid** | 35 | **+0.436** | +2.36 | **0.024** | 0.69 |
+| HC_anterior | 51 | +0.219 | +1.49 | 0.142 | 0.65 |
+| mPFC | 32 | -0.106 | -0.50 | 0.622 | 0.41 |
+| mOFC | 26 | +0.048 | +0.23 | 0.816 | 0.46 |
+| PCC | 10 | -0.043 | -0.15 | 0.886 | 0.60 |
+
+⚠ HC_mid is one test in an uncorrected family of five and would not survive
+correction across ROIs. ⚠ The z-normalisation was chosen AFTER the raw version
+failed. Scale-invariance is not negotiable and the reasoning is sound, but it
+was not pre-declared and should be reported as such.
+
+### The width sweep: an inverted U, peaking at 125-250 ms
+
+Same non-ripple navigation windows, widened. Per-session z vs own null:
+
+| width | spk/cell (HC_mid) | HC_mid z (p) | HC_ant z | mPFC z (p) |
+|---|---|---|---|---|
+| 0.060 s | 0.196 | +0.303 (0.063) | -0.056 | -0.100 |
+| **0.125 s** | 0.399 | **+0.468 (0.012)** | +0.210 | +0.004 |
+| 0.250 s | 0.806 | +0.398 (0.020) | +0.218 | +0.067 |
+| 0.500 s | 1.643 | +0.243 | +0.103 | +0.241 |
+| 1.000 s | 3.385 | +0.113 | +0.127 | +0.271 |
+| 2.000 s | 7.127 | +0.064 | +0.007 | **+0.410 (0.046)** |
+
+**The signal does NOT grow with spike count.** The rise 60 -> 125 ms is the
+spike budget; the fall after ~250 ms is windows STRADDLING LOCATIONS -- the
+median dwell is ~0.7 s, so a 1-2 s window spans several locations and "the
+current location" stops being well defined. (At 2 s only long dwells are even
+eligible, so the sample also thins to 25-34 sessions and skews to reward
+dwells.) The inverted U is the signature of a working estimator with a genuine
+short-end spike limit, not of a broken one.
+
+**mPFC runs the opposite way** — monotonically increasing, significant only at
+2 s. Consistent with mPFC coding task-level rather than instantaneous location.
+
+### Full deterministic width profile: plateau then decline, no rise
+
+| ROI | 60 ms | 125 ms | 250 ms | 500 ms |
+|---|---|---|---|---|
+| **HC_mid** | **+0.780 (0.00026)** | **+0.741 (0.00030)** | **+0.699 (0.00059)** | +0.374 (0.047) |
+| HC_anterior | +0.167 | +0.173 | +0.192 | +0.051 |
+| mOFC | +0.192 | +0.234 | +0.150 | +0.137 |
+| mPFC | -0.093 | -0.050 | -0.048 | -0.068 |
+
+At 1 s only 8-11 sessions retain >=200 eligible windows and 2 s drops out, so
+those columns are not interpretable. **The decline beyond 500 ms is real and
+survives tiling (windows straddle locations, median dwell ~0.7 s); the RISE at
+the short end did not.** Per-window decoding accuracy is 0.10-0.12 against
+1/9 = 0.111 at every width -- only the pooled score carries signal, as the
+spikes-per-ripple arithmetic predicts.
+
+### ⚠ Figure 4 broke rule 2 and was rebuilt
+
+The first location-timecourse figure averaged RAW scores across sessions. The
+tell was constant offsets with no dynamics (HC_anterior ~-0.04 throughout, mOFC
+~+0.07) -- per-session scale leaking into the group mean. Rebuilt with
+`swc.target_z`, a within-window z across the 9 location scores, which removes
+the scale at source rather than per session.
+
+Rebuilt: **HC_mid shows a clean crossover** -- evidence for the location just
+left decays through arrival while evidence for the location just entered rises,
+peaking at +0.19 s (z = +0.063), crossing at ~t = 0. HC_anterior flat; mOFC weak
+(peak +0.31 s); mPFC consistently NEGATIVE (~-0.02), which is what a
+future-coding region would do under a current-location template.
+
+### Where this leaves Stage 3
+
+Per-window decoding accuracy is at chance (0.10-0.12 against 1/9 = 0.111) at
+EVERY width and in every ROI, as the spikes-per-ripple arithmetic predicts.
+Only the pooled score carries signal, and its peak is z ~= 0.47 per session.
+Stage 3 asks for a ripple-minus-flank DIFFERENCE, which must be smaller than
+that absolute signal. **On these numbers Stage 3 is underpowered as designed.**
+Reliability-weighting the cells is being tested before that is accepted.
+
+## 2026-09-17 (b) — Stage 0 of the ripple-CONTENT analysis: real-time location timeline, full spike cache, ROI alignment
+
+Foundations for asking what hippocampal ripples CONTAIN (as opposed to when they
+happen, `SWR_SUMMARY.md`, or whether cortex responds, `ripple_locked_HFB.md`).
+No hypothesis is tested here. Three gates, all passed.
+
+**New:** `mc/analyse/swr_location.py`, `scripts/swr_build_location_timeline.py`,
+`scripts/swr_verify_cell_roi_alignment.py`.
+**Results:** `.../group/swr/location_timeline/` (63 step tables + settings +
+`cell_roi_alignment.csv`).
+
+### Gate 1 — the location timeline is exact
+
+`abcd_data.trial_vars` carries `start_location` / `end_location` per move with
+`grid_onset_timestamp` giving each move's time on the TRIGGER clock, i.e. the
+same clock as spikes and ripples. Extracted for all 63 sessions: **303,413
+steps**.
+
+Validation against the bundle's 97,643 uncover events, whose location is known
+independently: **97,641 reproduced = 99.998%**, every session >= 99%.
+
+⚠ **Two sources that look right and are not — do not retry either:**
+
+1. **`all_location_snippets.csv` cannot be aligned to ripples.** It is built on
+   a 360-bin NORMALISED trial averaged across correct repeats, i.e. time-warped.
+   Mapping ripples onto it puts only **7.2%** inside a snippet. It remains a
+   good source of location TEMPLATES and a useless source of timing.
+2. **Integrating arrow presses from `press_categories.csv` gives 62.9%.** The
+   grid is column-major (RightArrow +3, LeftArrow -3, UpArrow -1, DownArrow +1;
+   learned from uncover pairs separated by one press, not assumed), and even
+   re-anchoring at every uncover the error rate is 22.9% after a single move.
+   Drift is not the problem; the movement model is.
+
+⚠ `button_pressed_timestamp` is a Matlab clock and the mat file itself renames
+it `DONOTUSE_button_pressed_timestamp`. Use the trigger-derived fields.
+
+⚠ Session numbering: session = mat index + 1. The `session_num` FIELD is 1 in
+every session and means "which recording file within this session".
+
+### Gate 2 — the spike cache now covers every ripple session
+
+`load_spike_times` defaults to `DSR_SESSIONS` (28); the mat holds all 63.
+Re-run over the 61 ripple sessions: **965 cells, 8,740,798 spikes**, up from
+564 cells / 4.57 M. This removes the 28-session constraint that shaped the
+earlier ripple-RSA work.
+
+### Gate 3 — ROI labels are row-aligned in all 61 sessions
+
+`cell_roi_table` joins positionally, and that was verified for the 28 DSR
+sessions only. Re-checked by matching the mat's `electrodeLabel` against the ROI
+table's `electrode label` per cell: **61/61 PASS**, 965 cells on both sides.
+The positional join is safe for the full set.
+
+### Coverage this buys (inside the ripple extent, ~60 ms, 61 sessions)
+
+| ROI | sessions | cells | ripples | spikes | rip >=2 cells | rip >=3 cells | pair-obs |
+|---|---|---|---|---|---|---|---|
+| HC_anterior | 51 | 293 | 85,918 | 83,308 | 13,733 | 5,929 | 41,307 |
+| HC_mid | 35 | 227 | 59,211 | 78,528 | 13,845 | 5,904 | 38,394 |
+| mPFC | 32 | 148 | 55,699 | 48,813 | 9,515 | 4,437 | 28,012 |
+| mOFC | 26 | 141 | 36,669 | 28,262 | 4,851 | 1,740 | 14,358 |
+| PCC | 10 | 61 | 17,701 | 20,352 | 3,422 | 1,517 | 11,083 |
+
+**92,470 of 96,597 deduped ripples (95.7%) fall inside the task with a known
+location.** HC combined: **79,701 pair-observations** inside the ripple extent
+and **11,833 ripples with >= 3 co-active HC cells** — enough for a pooled
+temporal-bias statistic and a per-ripple rank-order statistic respectively.
+
+EC is 35 cells in 8 sessions under `atlas_roi` and is not analysable as a
+primary ROI. The EC 3-vs-51 disagreement between `atlas_roi` and
+`neurons_MNI_latest.csv` (CHANGELOG 2026-09-15 d) is still unresolved.
+
+### Two preliminary facts that shaped the design
+
+- **Single-cell location tuning is near zero.** Split-half (odd vs even grids)
+  on the 9-location rate map: HC mean r = +0.034 (p = 0.09), reward-phase only
+  +0.043 (p = 0.022); ACC +0.017; OFC path-only +0.081 (p = 0.017). ~53% of
+  cells positive.
+- **The POPULATION nonetheless decodes location.** Correlation decoder, held-out
+  grids, chance 11.1%: all cells 44.6%, HC 26.9%, ACC 21.3%, OFC 24.4%.
+  Generalising to a configuration never trained on: 18.9% overall, HC 18.0%,
+  ACC 21.4%; OFC (12.1%) and EC (9.1%) do not survive. The drop is partly
+  interpretive (much within-config signal is "this location is rewarded in this
+  config") and partly fewer cells — not separated yet.
+- ⚠ **Per-cell lag tags from `per_lag_encoding` are too noisy to use as hard
+  labels.** Across the 12 lags, peak-minus-mean is ~0.34 in EVERY ROI against an
+  across-lag SD of ~0.21 — the peak sits ~1.6 SD above the mean, which is what
+  12 pure noise draws give. mPFC is if anything slightly LESS peaked than HC
+  (0.319 vs 0.343, p = 0.017). The group-level signal is real (mPFC best-lag
+  concentrates 26% at 30-60 deg vs 16.7% expected) but the per-cell label is
+  not. Weight cells continuously by r at every lag; never assign a cell "its" lag.
+
 ## 2026-09-17 — Peri-ripple frontal HFB by what the ripple follows
 
 **New:** `scripts/swr_ripple_hfb_conditions.py`. **Results:**
@@ -7363,3 +8012,1101 @@ Other facts checked against the draft methods while reviewing it:
 - The single excluded s23 attempt is a hand-identified 314.6 s interruption,
   not a 3-SD rule: 357 attempts (82 correct ones) exceed mean + 3 SD and are
   retained.
+
+## 2026-09-17 — ripple RSA in an expanded condition space (spikes + HFB): null result, and why the earlier positive was leverage
+
+Results: `data/ephys_humans/derivatives/group/swr/ripple_rsa_expanded_2026-09-17/`
+and `.../ripple_rsa_conditions_2026-09-17/`.
+Code: `mc/analyse/ripple_rsa.py`, `scripts/swr_ripple_rsa_expanded.py`,
+`scripts/swr_ripple_rsa_conditions.py`.
+
+### (a) Standing decisions moved into code — `rrsa.DECISIONS`
+pad 0.25 s; surrogate window as the PRIMARY null; interval scheme capped at
+1 s after the press; firing/power read inside the ripple (peak ± duration/2);
+positive rho = model encoded. Each entry carries its rationale. Every entry
+point now inherits these rather than re-declaring them per script.
+
+### (b) Three bugs fixed
+1. **HFB lost ~half of every ROI.** `patterns_from_cache` applied `drop_silent`
+   (`rates.sum() > 0`) to HFB. For a cell that means "fired ≥1 spike"; for a
+   robust-z HFB derivation it means "above its own median more often than
+   below" — true for ~half by construction. This is why mPFC (32 derivations,
+   17 sessions) was absent from the HFB table: it fell under
+   MIN_CELLS_PER_PAIR. Now auto-detected from a `kind` tag; mPFC returns with
+   0 dropped.
+2. `ripples_in_intervals` silently ignored its `window` argument; it now caps
+   the lag, still clipped at the next discovery.
+3. The surrogate draw was duplicated in four scheme-specific branches;
+   both selectors now emit `win_lo_s`/`win_hi_s` and one `_surrogate_times`
+   uses them.
+
+### (c) Expanded condition space: 32 = config x uncover
+448 usable pairs (48 same-config-across-state dropped: same grid seconds
+apart, drift mimics `full_abcd`); state |k-k'| partialled out of every fit.
+Chance SD falls 0.192 -> 0.047. Models become separable:
+r(known_set, full_abcd) = 0.41 (was 0.92-1.00), and `current_location` is
+fittable at all (constant within a state by counterbalancing; it lives
+entirely in cross-state pairs). Observed surrogate-null SD 0.038-0.061,
+matching the predicted floor — the estimator is calibrated.
+
+### (d) RESULT: null, in both modalities. 500 surrogate-window draws, 2000 relabels.
+Spikes (n=506 cells, 1185 ripple-condition assignments), family "all":
+mPFC known_set +0.064 (z +1.48, p_surr 0.072) — largest positive, predicted
+direction, not significant. PCC full_abcd +0.077 (p_surr 0.038) but
+p_relabel 0.122; the two nulls disagree, not claimed. mOFC full_abcd -0.183
+(z -2.97) — a NEGATIVE fit, and mOFC has only 17 cells/pair with 18.5 of 31
+pairs estimable, so discounted as a half-empty RDM, not a finding.
+HFB (n=295 derivations, 1209 assignments): **0 of 15 tests significant**.
+mPFC known_set -0.096 (z -2.01), i.e. opposite in sign to spikes.
+Visual (negative control) flat — contrast with the earlier 8-condition
+analysis where Visual lit up as strongly as anything.
+Neither modality survives FDR. The two do not converge.
+
+### (e) Why this supersedes the earlier mPFC/D rho = +0.563 (8 conditions, pad 1.0)
+Leave-one-condition-out (`swr_ripple_rsa_conditions.py`), model known_set:
+
+  space          max leverage of ONE condition      chance SD
+  8 conditions   0.280 - 0.517 (spikes)             0.192
+                 0.332 - 0.506 (HFB)
+  32 conditions  0.045 - 0.063 (spikes)             0.047
+                 0.046 - 0.064 (HFB)
+
+Single conditions moving rho by more than the chance SD of their own space:
+**17 of 113 in the 8-condition space; 0 of 160 in the 32-condition space.**
+In the 8-condition space one config touches 7 of 28 pairs — 25% of the
+evidence — so a single condition can move rho by up to 0.52, MORE than the
+entire mPFC/D effect that motivated this. That space was never conditioned
+well enough to support the claim, independently of its p-value. Quadrupling
+the resolution should have sharpened a real effect; instead mPFC fell to
++0.064. Read the earlier number as leverage, not signal.
+Caveat: not the identical estimator (state partialled, 1 s cap, pad 0.25),
+so this is strong evidence, not a formal refutation.
+Sampling is NOT the explanation: 19-51 ripples per condition, evenly spread,
+no empty conditions in HC/mPFC/PCC.
+
+### (f) Nulls are now stored, and verified
+`packs_surrogate_<modality>.npz` holds the pattern packs, not just the rho.
+Everything downstream of a pack is milliseconds, so a NEW model refits
+against the identical 500-draw null in ~10 s instead of 5 min (spikes) /
+50 min (HFB). 4.3 MB per 500 spike draws. Regeneration is deterministic and
+is checked against the reported null before being written
+(`max |replay - stored| = 0.00e+00`); `load_packs(..., expect=)` refuses a
+null built under a different pad/scheme/window instead of mixing two nulls.
+Reusable for model/family/nuisance changes ONLY — pad/window/scheme/extent
+changes correctly invalidate it.
+
+### (g) Failed / superseded, do not repeat
+- Do not fit the 8-condition space at a single state and treat rho against a
+  0.192-SD null as evidence; check single-condition leverage first.
+- `known_set(k=3)` IS `full_abcd` in the 8-condition space; nothing is
+  distinguishable at D there. Use the 32-condition space to separate them.
+- Do not apply `drop_silent` to any continuous (z-scored) signal.
+
+## 2026-09-17 (later) — the RDM input vectors are NOT scaled, and for spikes that changes the answer
+
+Results: `data/ephys_humans/derivatives/group/swr/ripple_rsa_inputs_2026-09-17/`
+Code: `scripts/swr_ripple_rsa_inputs.py`
+
+### (a) What the estimator actually does
+`build_rdm` / `build_rdm_flat` CENTRE each feature across conditions
+(`C = P - nanmean(P, axis=1)`) and then correlate across the FEATURE axis.
+There is no division by SD. Centring removes a feature's overall level, so a
+constantly-loud cell cannot make all conditions look alike -- but it does not
+equalise how far a feature can MOVE the correlation. Influence is
+proportional to across-condition variance, and firing rates here span two
+orders of magnitude.
+
+### (b) How concentrated the weighting is (participation ratio, (sum v)^2/sum v^2)
+SPIKES -- effective n is 36-43% of the actual feature count:
+  HC_ant 132 cells -> eff 48.5 (37%), top-5 cells = 22% of variance
+  HC_mid 114 -> 41.5 (36%), top-5 = 24%
+  mPFC    53 -> 19.7 (37%), top-5 = 40%
+  mOFC    59 -> 25.3 (43%), top-5 = 33%
+  PCC     46 -> 17.5 (38%), top-5 = 43%
+HFB -- effective n is 82-89%, because `_robust_z` already normalised every
+derivation over the whole session. The problem is spikes-only.
+
+### (c) It changes which region looks best. Refit under both normalisations
+against the IDENTICAL stored surrogate null (z vs surrogate):
+                        centred (shipped)   z-scored
+  HC_ant  known_set          +0.77           +2.27
+  HC_ant  full_abcd          +0.20           +1.88
+  HC_mid  full_abcd          +1.49           +0.24
+  mPFC    known_set          +1.48           +0.54
+  PCC     full_abcd          +1.80           +1.05
+  mOFC    full_abcd          -2.97           -2.30
+Centring favours mPFC/PCC/HC_mid; z-scoring favours HC_anterior. The ranking
+of ROIs is not stable to a normalisation choice that was never justified.
+NOTHING survives multiple-comparison correction under either scheme, so this
+is a statement about fragility, not a new positive result. HFB is stable
+under both (max |dz| ~ 0.8), as expected given it is already robust-z.
+
+DO NOT pick the normalisation by which one gives the nicer answer. The
+principled fix is multivariate noise normalisation (crossnobis): scale by the
+NOISE SD estimated from within-condition variability ACROSS RIPPLES, which we
+have, rather than by across-condition SD (centring over-weights high-rate
+cells; z-scoring over-weights low-rate noisy ones). Not yet implemented.
+
+### (d) mOFC's negative is a coverage artifact, confirmed
+mOFC spikes: median 17 cells per pair and only 18.5 of 31 pairs estimable
+(vs 30-31 in every other ROI); the example condition pair (2, 19) rests on
+n = 9 features, i.e. below MIN_CELLS_PER_PAIR and correctly excluded. Its
+z = -2.97 is a half-empty RDM, not a finding.
+
+## 2026-09-17 (evening) — z-scoring adopted, crossnobis implemented, all-uncover scale-up, and a reliability ceiling that explains everything
+
+Results: `.../ripple_rsa_expanded_zscore_2026-09-17/`,
+`.../ripple_rsa_crossnobis_2026-09-17/`, `.../ripple_rsa_alluncovers_2026-09-17/`
+Code: `mc/analyse/ripple_rsa.py`, `scripts/swr_ripple_rsa_crossnobis.py`,
+`scripts/swr_ripple_rsa_alluncovers.py`
+
+### (a) z-scoring is now the standing normalisation
+`DECISIONS["normalise"] = "zscore"`, matching `_z_score_per_neuron`
+(mc/analyse/rsa_perm_rdms.py) exactly, INCLUDING its sd==0 -> 1.0 handling so
+a constant feature stays an all-zero column. Justified by prior project
+convention (SK uses it for the other RSAs), NOT by which answer it gives --
+it does change the answer and that is logged in the 2026-09-17 inputs entry.
+Refit from stored packs (1 min, not 5/50). Under z-scoring HC_anterior
+replaces mPFC as the strongest spike ROI: known_set +0.091 (z +2.27),
+full_abcd +0.063 (z +1.88). Still FDR-negative.
+
+### (b) Crossnobis implemented, following the project recipe
+`crossnobis_rdm` in ripple_rsa.py: per session, noise covariance from
+within-condition residuals, shrinkage 0.1, leave-one-fold-out, per-session
+RDMs averaged. As scripts/RSA_human_cells_DSR_crossnobis.py, with ONE
+deliberate deviation: per-session RDMs are divided by n_neurons before
+averaging, because ROI cell counts per session run 3 to 40+ here and the
+DSR script's plain mean would let the biggest session dominate.
+Verified unbiased on synthetic data: d^2 = 0.015 when no true difference
+exists, 4.37 when one does.
+FEASIBILITY was the binding constraint on the discovery-only set: 32
+conditions gave a median of 1 ripple per (session, condition) and 0 of 27
+foldable sessions -- NOT ESTIMABLE. It ran only on 8 configs with states
+pooled (28 pairs, chance SD 0.192), where it flipped the sign of HC_mid,
+mPFC and mOFC relative to correlation distance and removed mOFC's negative
+(-0.328 -> +0.115), supporting that negative having been a weighting artifact.
+Nothing significant (best: HC_mid +0.322, z 1.59, p 0.054).
+
+### (c) ALL correct uncovers, not just explore-phase discoveries
+`all_uncover_events` + `ripples_after_uncovers` (intervals clipped at the next
+uncover of the session, so they tile it once). 32688 uncovers, 12629 ripples
+-- 10.9x the discovery-only set. Two spaces from one cache and one null:
+  collapsed32  config x state, phase pooled, 448 pairs, chance SD 0.047
+  phase64      config x state x phase, 1824 pairs, chance SD 0.0234
+`phase64`'s `first_only` family IS the 448-pair discovery analysis, so they
+nest. Phase is partialled out of every fit and never silently pooled: on a
+REPEAT the subject already knows the whole configuration, so `known_set`
+collapses onto `full_abcd` for every repeat condition -- verified in the
+output (repeat_only gives identical values for the two models in all ROIs).
+At this scale crossnobis IS estimable on 32 conditions (97-100% of
+(session, condition) cells foldable, 20 of 24 complete sessions).
+
+### (d) THE KEY RESULT: split-half reliability of the data RDM is ~0
+20 splits, 12629 ripples, collapsed32. Asks nothing about any model -- only
+whether an estimator recovers the same geometry from two independent halves.
+                 corr_zscore        crossnobis
+  HC_anterior    +0.017 (t 1.5)     +0.056 (t 3.8)   <- the only one > 0
+  HC_mid         +0.003             -0.008
+  PCC            -0.010             +0.028
+  mOFC           +0.012             -0.013
+  mPFC           -0.009             -0.010
+Noise ceiling (Spearman-Brown to full length, then sqrt) -- the largest model
+correlation that is even in principle recoverable:
+  HC_anterior 0.33 (crossnobis) / 0.18 (corr);  mPFC, HC_mid, mOFC, PCC: 0.00-0.23,
+  and ZERO for mPFC under both estimators.
+This is with 10.9x more data, so it is not a sample-size problem that more
+ripples from this dataset would fix. It retrospectively explains the pad
+dependence, the normalisation dependence, the 8-condition leverage and the
+mPFC rho=+0.563 evaporating: those were all fits to an RDM with no
+reproducible structure.
+It also settles crossnobis vs correlation: in the ROIs where they disagreed
+(HC_mid, mPFC, mOFC) reliability is 0 for BOTH, so they were fitting models to
+noise and noise has no sign. Crossnobis is better where anything is
+measurable (HC_anterior) and is the better tool in principle, but it cannot
+manufacture structure that is not there.
+
+### (e) Model fits at scale, and a modality contradiction
+SPIKES: only phase64 + corr_zscore survives FDR -- HC_anterior known_set
+rho +0.086 (z +3.16, p<0.005), full_abcd +0.042 (z +2.28). Directionally
+consistent everywhere asked (zscored-32 z +2.27, first_only z +2.42), in the
+predicted direction, in the one ROI with non-zero reliability, and 0.086 sits
+plausibly under its 0.18-0.33 ceiling. BUT crossnobis -- the MORE reliable
+estimator in that exact ROI -- puts it at z +1.14, n.s.
+HFB: 0/15 significant in three of four space x estimator combinations; NOTHING
+survives FDR anywhere. Two findings that count against the spike result:
+  * HC_anterior known_set in HFB is NEGATIVE (z -2.91, phase64 corr_zscore),
+    directly contradicting the positive spike effect in the same region.
+  * Visual, the negative control, is as high as any real ROI under crossnobis
+    (known_set +0.126 phase64, +0.149 first_only z 2.23).
+mPFC HFB, which was z -2.01 on discoveries only, is flat at scale -- i.e. that
+negative was noise too.
+
+### (f) Standing conclusion
+Across 4 condition spaces, 3 normalisations, 2 distance estimators, 2
+modalities and a 10.9x scale-up, there is no ripple-locked representation of
+the reward configuration that survives correction and replicates across
+modality. The binding constraint is the reliability of the ripple-locked
+pattern itself, not the number of ripples, the model, or the estimator.
+HC_anterior known_set is the only candidate worth pursuing and should be
+treated as a hypothesis for an independent dataset, not a result.
+
+### (g) HFB reliability — the negative control is the most reliable ROI
+Same 20-split test, HFB (added after the entry above was written):
+                 corr_zscore        crossnobis
+  Visual         +0.044 (t 4.4)     +0.026 (t 1.5)   <- negative control, MOST reliable
+  HC_mid         +0.027 (t 2.2)     +0.003
+  HC_anterior    +0.001             +0.024 (t 1.5)
+  mOFC           +0.015             +0.004
+  mPFC           -0.013             +0.004
+The only HFB ROI with clearly non-zero reliability is Visual, which is in the
+analysis precisely because it should carry nothing task-representational. So
+the reproducible structure HFB does contain is generic (arousal, or the
+visual response to the uncover itself), not configuration coding. Combined
+with Visual also scoring as high as any real ROI on the model fits, the HFB
+arm should not be used to support a representational claim.
+mPFC reliability is ~0 in BOTH modalities under BOTH estimators -- the ceiling
+on any mPFC ripple effect in this dataset is zero.
+
+## 2026-09-17 (j) — I11: rewarded vs non-rewarded squares during exploration
+
+`scripts/swr_ripple_content_i11.py`, Figure 6. **The primary contrast is null.**
+
+SK's question: during the first traversal, does a ripple carry more about a
+square that is a reward? Run as a THREE-way split rather than the two-way one in
+`POTENTIAL_IDEAS.md`, because a two-way split cannot separate reward from square:
+
+| class | what the square underfoot is | role |
+|---|---|---|
+| `known_rew` | a reward, already uncovered | TARGET |
+| `future_rew` | a reward, not yet uncovered | KNOWLEDGE CONTROL |
+| `nonrew` | not a reward in this grid | BASELINE |
+
+`future_rew` is the same physical square as `known_rew` — same template quality,
+same geometry, same visit frequency across the session — minus the knowledge.
+
+Controls: (1) matched flanks, so template quality cancels; (2) each target ripple
+matched to one ripple of each other class on **dwell and latency from arrival**,
+nearest neighbour without replacement, caliper 0.15 s / 10%; (3) two nulls —
+template-label permutation for "is there content at all", class-label shuffle
+within each matched triplet for the contrasts.
+
+**Results** (n = 41 sessions matched, 1,235 triplets, sessions with ≥ 20):
+
+| ROI | known−nonrew (PRIMARY) | future−nonrew | known−future |
+|---|---|---|---|
+| HC_all | **+0.241, p = 0.29** | −0.264, p = 0.24 | +0.503, p = 0.036 |
+| HC_mid | +0.378, p = 0.34 (n=9) | +0.281, p = 0.42 | +0.092, p = 0.68 |
+| HC_anterior | −0.015, p = 0.95 | −0.397, p = 0.13 | +0.389, p = 0.14 |
+| mOFC / mPFC | null | null | null |
+
+Per-class content (ripple minus flank, template-label null), HC_all:
+`known_rew` **+0.580, p = 0.0094**; `future_rew` −0.164, p = 0.50;
+`nonrew` +0.144, p = 0.48.
+
+**Reading.** The per-class pattern looks like the hypothesis — content at known
+rewards only — but the direct contrast that licenses that claim is not
+significant, and "significant vs non-significant" is not itself a difference.
+The one nominal hit (known−future, HC_all, p = 0.036) is 1 of ~50 tests in this
+table and its sibling contrast is null, which it should not be if reward
+knowledge were the driver. **I11 is not supported at this power.**
+
+### Three things this run established that are worth keeping
+
+1. **69% of known-reward ripples cannot be stillness-matched.** They sit in the
+   post-reward pause (median dwell 2.31 s unmatched vs 0.75 s matched) and no
+   other class ever pauses that long. I11 as posed is only answerable for the
+   short-dwell subset. Any future reward-vs-non-reward ripple comparison
+   inherits this ceiling.
+2. **Ripple rate is flat across the three classes** — 0.491 / 0.506 / 0.484 Hz —
+   despite the dwell difference. The stillness confound is real for dwell and
+   not, here, for rate.
+3. **Matching-order variance was large enough to change conclusions.** Over five
+   seeds the HC_all known−nonrew contrast ranged +0.06 to +0.39 and known−future
+   ranged p = 0.014 to p = 0.17. Fixed by repeating the matching 20× and
+   averaging the per-session statistic; reporting a single draw would have been
+   reporting the seed.
+
+### Two bugs found and fixed on the way
+
+- `scripts/swr_ripple_content_c2.py` called `swc.zscore_cells` without importing
+  `mc.analyse.swr_content`. The C2 results on disk are from a run that had the
+  import; the file as committed would `NameError`. Import restored, results
+  unchanged.
+- A single shared RNG across the ROI loop meant that ADDING an ROI changed the
+  matching, and therefore the results, of every other ROI. Replaced with
+  independent per-session and per-ROI streams (`default_rng([SEED, s, roi_i])`),
+  so loop structure can no longer move a number. Same failure class as the
+  random-window instability that forced `tiled_windows` in Stage 2.
+- `mc.analyse.swr_content.occupancy` now carries `step_idx`, the row of the
+  time-sorted step table each interval came from, so per-step fields survive the
+  interval filtering.
+- Figure 5's caption had hard-coded p-values from before matched flanks and
+  per-cell z-scoring, and still called the flanks "±500 ms". It now computes its
+  own caption from the run it is plotting.
+
+### (h) Discovery-only crossnobis, HFB arm (completes the 2026-09-17 crossnobis entry)
+8 configs, states pooled, model full_abcd, 500 surrogate draws.
+**0 of 15 significant.** Best: Visual (the NEGATIVE CONTROL) crossnobis
++0.279 (z 1.36, p 0.090) and HC_anterior crossnobis +0.253 (z 1.47, p 0.072)
+-- the control is second only to HC_anterior and ahead of every other real
+ROI, the same pattern the reliability test later explained.
+The estimators again disagree on SIGN for the same ROI: HC_anterior is -0.252
+(corr_centre) / -0.153 (corr_zscore) / +0.253 (crossnobis); mPFC is +0.376
+(corr_centre) / -0.001 (corr_zscore) / -0.017 (crossnobis). With a chance SD
+of 0.192 and reliability ~0, these are three noisy readouts of nothing, which
+is what entry (d) established.
+
+## 2026-09-17 (k) — Pseudo-populations across sessions that ran the same task
+
+`scripts/swr_pseudo_population.py`, Figure 7.
+
+**`grid_id` is not a shared task identifier.** The same `grid_id` carries seven
+different reward sets across sessions — it indexes configurations *within* a
+session. That is exactly right for leave-one-configuration-out CV (so nothing
+earlier is affected) and exactly wrong for pooling across subjects. Pooling here
+matches on the reward tuple A-B-C-D itself: 94 distinct configurations, of which
+**8 are run by 28 sessions each** and 14 by ≥ 10; 376 of 450 session-configurations
+are shared with at least four others. That gives **316 hippocampal cells on one
+configuration** where a single session has ~5.
+
+Pseudo-trials: for a configuration and a square, draw one ripple independently
+per cell from that cell's own session and stack the per-cell z-scored counts.
+Templates are leave-this-configuration-out per cell. Two axes are swept — cells
+pooled (2 … 316) and ripples averaged per cell (1, 4, 16) — with 10 cell
+subsamples per point and a template-label permutation null.
+
+### The read-out had to change, and that is itself a result
+
+Nine-way argmax decoding stays near chance at every population size
+(0.153 vs 0.109 null at 316 cells). This is not a failure of pooling. With every
+cell's FULL mean profile — the best this design can do — argmax still gets 2 of
+9, while the true square's evidence sits +0.42 SD above the other eight.
+**Templates for neighbouring squares are correlated, so clearly elevated
+evidence still peaks one square away.** Primary is therefore the continuous
+statistic used everywhere else in this line (`target_minus_others`, plus the
+scale-free `target_z`); accuracy is reported as a descriptive only.
+
+### Results
+
+**Pooling works, and the signal is distributed.** `target_z` in ripple windows,
+hippocampus pooled, 16 ripples averaged: +0.037 (2 cells) → +0.063 (16) →
++0.103 (64) → +0.188 (316). It does not saturate. Averaging more ripples helps
+on the same monotone pattern (+0.113 / +0.163 / +0.188 at 316 cells for 1 / 4 /
+16). Evidence matrix, HC_all ripples: diagonal **+0.144** vs off-diagonal −0.018.
+
+**Still not ripple-specific.** At each configuration's full population,
+16 averaged:
+
+| ROI | cells | configs | ripple z | target_z ripple | flank | difference | p |
+|---|---|---|---|---|---|---|---|
+| HC_all | 316 | 14 | +0.52 (p = 0.074) | +0.144 | +0.069 | +0.075 | 0.381 |
+| HC_anterior | 171 | 14 | +0.60 (p = 0.032) | +0.160 | +0.060 | +0.099 | 0.165 |
+| HC_mid | 145 | 8 | +0.39 (p = 0.306) | +0.100 | +0.080 | +0.020 | 0.806 |
+| mOFC | 74 | 8 | −0.12 | −0.098 | +0.074 | −0.172 | 0.256 |
+| mPFC | 65 | 8 | +0.31 | +0.036 | +0.065 | −0.029 | 0.842 |
+
+Consistently positive, never significant. **The pseudo-population does not
+rescue ripple-specificity** — it agrees with Stage 3 C1 and the 9-location
+profile.
+
+### NEW: the location signal fades across the traversal
+
+Split by which reward is being sought, at the full population (target_z, ripple):
+
+| ROI | A | B | C | D | slope/state | p | sign |
+|---|---|---|---|---|---|---|---|
+| HC_all | +0.234 | +0.221 | +0.171 | −0.076 | −0.098 | 0.017 | 11/14 neg |
+| HC_anterior | +0.313 | +0.152 | +0.071 | −0.043 | −0.115 | **0.00017** | **14/14 neg** |
+| HC_mid | +0.015 | +0.071 | +0.208 | +0.001 | +0.009 | 0.894 | — |
+
+Flanks show a weaker version (HC_all p = 0.039, HC_anterior p = 0.103) and the
+ripple-minus-flank slope difference is not significant, so this is a property of
+hippocampal location coding in general, not of ripples.
+
+**It is not the obvious confound.** Dwell is 0.417 s while seeking A and 0.350 s
+for B, C and D alike — a step down after A, then flat, whereas the signal
+declines monotonically all the way to D. Occupancy does not have the shape of
+the effect.
+
+⚠ Configurations share sessions, so the t across configurations is
+anticonservative; 14/14 negative slopes in HC_anterior is the more honest
+summary. ⚠ Independent per-cell sampling removes noise correlations and inflates
+absolute levels — only the comparisons are interpretable. Not corrected across
+ROIs. **Exploratory.**
+
+## 2026-09-17 (l) — I12, I13, and the roles regression (square dummies added)
+
+`scripts/swr_ripple_content_roles.py`, Figure 8c. One regression per window over
+all nine squares, in ripples and in matched flanks:
+
+    explore: E(L) ~ current + goal + next_step + known_rew + unknown_rew
+                    + errors_here + visits_here + recent + SQUARE
+    known:   E(L) ~ current + goal + next_step + reward + on_route
+                    + errors_here + visits_here + recent + SQUARE
+
+**SQUARE = eight location dummies, and adding them fixed C2.** Occupancy runs
+from 8.9% at square 1 to 14.8% at square 5, so evidence carries a
+square-identity baseline unrelated to any role. C2's unexplained knowledge
+control `unknown_rew` = +0.218 (which must be zero) falls to **+0.033, p = 0.80**
+once the dummies are in. The residual was square identity, not knowledge.
+
+`on_route` is measured, not assumed: the squares actually walked on the correct
+repeats of that grid run. Per run: 4 rewards, 3.51 on-route non-reward, 1.49
+off-route squares.
+
+**I12 (on_route, known phase): null.** HC_all +0.169 in ripple (p = 0.26),
+ripple−flank +0.177 (p = 0.18); HC_anterior ripple−flank +0.266 (p = 0.082).
+`reward` is flat (−0.042). No evidence for "sends the goals" OR "sends the route".
+
+**I13 (errors_here, explore phase): null.** HC_all −0.118 (p = 0.37),
+ripple−flank −0.152 (p = 0.17). Negative as SK predicted, not significant. Run
+as a graded count and restricted to exploration because by the end of a first
+traversal a median of 6 squares already carry an error history, so a binary
+contrast has almost nothing to compare.
+
+## 2026-09-17 (m) — The nulls were underpowered, and cell selection fixes half of it
+
+**Every ripple-vs-flank null in this line could only have detected an effect of
+60-173% of the ambient location signal** (80% power, session-level):
+
+| test | n | effect | 95% CI | MDE | as % of ambient |
+|---|---|---|---|---|---|
+| Stage 3 C1, HC_anterior | 51 | +0.119 | [−0.156, +0.395] | 0.392 | 100% |
+| Stage 3 C1, HC_mid | 35 | −0.050 | [−0.387, +0.286] | 0.477 | 157% |
+| roles known/on_route, HC_all | 51 | +0.177 | [−0.087, +0.440] | 0.374 | 126% |
+| roles explore/errors_here, HC_all | 51 | −0.152 | [−0.372, +0.069] | 0.314 | 60% |
+| I11 known−nonrew, HC_all | 20 | +0.241 | [−0.220, +0.702] | 0.651 | 112% |
+| pseudo-population, HC_all | 14 | +0.075 | [−0.103, +0.252] | 0.249 | 173% |
+
+So "not ripple-specific" means "no effect that would roughly DOUBLE location
+coding". It does NOT mean no effect.
+
+### Cell selection: drop cells whose place map is not reliable
+
+Added as a sweep inside `swr_ripple_content.py` and `swr_ripple_content_roles.py`
+(`rel_min` = −inf, 0, 0.1, 0.2, 0.3 on the split-half, split-by-configuration
+place-map correlation). Selection uses all task time, so it is shared by ripple
+and flank alike and cannot manufacture a difference between them.
+
+**It roughly doubles the location signal.** C0, in ripples:
+
+| ROI | all cells | rel ≥ 0.2 | cells kept |
+|---|---|---|---|
+| HC_all | +0.457 (p = 0.0028) | **+0.864 (p = 1.1e-07)** | 10.1 → 5.0 |
+| HC_mid | +0.339 (p = 0.093) | **+0.836 (p = 1.3e-04)** | 7.6 → 4.4 |
+| HC_anterior | +0.387 (p = 0.0089) | +0.650 (p = 1.9e-04) | 6.5 → 3.3 |
+
+**C1 rises but stays a trend:** HC_all +0.069 → +0.116 → +0.184 → +0.221
+(p = 0.10) → +0.153 across the sweep; HC_anterior reaches +0.256 (p = 0.12).
+Positive at 24 of 25 hippocampal cells of the sweep, never significant. In the
+roles model, `current` ripple−flank reaches +0.301 (p = 0.057, HC_all, known).
+
+**The mOFC negative artefact is a selection artefact.** mOFC C0 −0.633
+(p = 0.016) with all cells, −0.142 (p = 0.59) at rel ≥ 0, +0.282 at rel ≥ 0.3.
+It was driven by cells with no place map. Closes a known unknown.
+
+### Two prospective-looking effects, both explained by approach
+
+With tuned cells, two terms looked like planning:
+- `next_step` (explore): HC_all **+0.346, p = 0.021**; HC_mid +0.538, p = 0.037
+- `goal` (known, = `looking_for_loc`): HC_anterior **+0.505, p = 0.0041**
+
+An occupancy interval runs from one move onset to the next, so a ripple late in
+it happens while the subject is already moving. Splitting at the session median
+latency:
+
+| term | all | early half | late half |
+|---|---|---|---|
+| next_step, explore, HC_all | +0.346 (p = 0.021) | **−0.008 (p = 0.97)** | +0.314 (p = 0.047) |
+| goal, known, HC_anterior | +0.505 (p = 0.0041) | +0.264 (p = 0.20) | +0.461 (p = 0.0057) |
+| current, known, HC_all (reference) | +0.838 | +0.546 (p = 0.0041) | +0.680 |
+
+`next_step` is **entirely** in the late half — an arrival artefact, not
+prospection. `goal` loses significance early while the reference term survives,
+so it is not clean evidence of goal coding either. **Neither is reported as a
+prospective signal.**
+
+## 2026-09-17 (n) — Peri-ripple pseudo-population time course
+
+`scripts/swr_pseudo_timecourse.py`. Location signal in 50 ms windows from −500 to
++500 ms around the ripple peak, pooled across the sessions that ran the same
+configuration, grouped by current / goal / next square.
+
+HC_all current-square signal peaks at **+25 ms (+0.306)** against a baseline of
++0.086 at |t| ≥ 300 ms, but peak-vs-baseline is **p = 0.16** (10/14
+configurations up). `goal` and `next_step` are flat. So there is a numerical
+rise locked to the ripple that the data cannot resolve.
+
+⚠ Each cell's window comes from a different ripple, so only ripple-LOCKED
+structure survives the averaging. Classical random-start replay would average
+away, and a null here does not exclude one. That remains untested in this
+dataset and is the main thing this analysis line has not looked at.
+
+### Inclusion change logged with (m)
+
+Adding `ROI_SETS` to `swr_ripple_content.py` also changed the cell requirement
+from "at least one cell" to **at least two**, because a one-cell "population"
+cannot carry a population code and `zscore_cells` leaves it as a single
+z-profile. This is not neutral and is logged rather than absorbed: HC_mid falls
+35 → 29 sessions and the all-cells Stage 3 numbers move from C0 +0.304 / C1
+−0.050 to **C0 +0.339 (p = 0.093) / C1 −0.169 (p = 0.34)**; HC_anterior is
+51 → 44 sessions, C0 +0.391 → +0.387, C1 +0.119 → +0.126. The conclusion is
+unchanged in both. Figure 5 now filters to the all-cells rows explicitly — the
+sweep would otherwise have been averaged into it silently.
+
+## 2026-09-17 (o) — CORRECTION to (m): the cell-selection gain was selection bias
+
+**Entry (m) is wrong and is retracted here.** It reported that selecting
+location-tuned cells "roughly doubles the location signal" (HC_all C0
++0.457 → +0.864). It does not. Two biases produced that number:
+
+1. **The reliability peeked.** `spt.reliability` was computed over ALL
+   configurations, including the one being scored. Cells were therefore chosen
+   partly because their place map fitted the held-out data.
+2. **Sessions were dropped.** A session whose cells all fell below the cut
+   left the analysis entirely (HC_mid 35 → 21), so the surviving set was
+   selected too.
+
+`spt.reliability` now takes `exclude_grid` and `spt.weighted_loo` re-estimates it
+for every held-out configuration. Decisive test, same estimator, same 41
+sessions:
+
+| | C0, HC_all |
+|---|---|
+| reported in (m) (peeking + session loss) | +0.864 |
+| honest reliability, same 41 sessions | **+0.537** |
+| honest reliability, all 51 sessions | **+0.444** |
+| no weighting at all | **+0.457** |
+
+**Weighting cells by location tuning buys nothing.** Across
+`all / thresh_0.1 / thresh_0.2 / linear / square`, HC_all C0 = +0.457, +0.418,
++0.444, +0.424, +0.418 and C1 = +0.069, +0.089, +0.119, +0.041, +0.013. The MDE
+moves 0.423 → 0.412. **I15's first lever does not work**; the power problem is
+not untuned cells.
+
+Also retracted from (m): "the mOFC negative artefact is a selection artefact".
+With honest weights mOFC C0 goes −0.633 → −0.279 (thresh_0.2) → −0.182 (square)
+— it softens but does not reverse, and the "+0.282" figure came from the biased
+version. The mOFC negative is still an open problem.
+
+The roles regression was re-run on the honest weighting. **`goal` collapses**:
+HC_anterior known-phase was +0.505 (p = 0.0041) under the biased selection and
+is **+0.149 (p = 0.36)** honestly. There is no goal coding. That finding existed
+only because of the bias.
+
+## 2026-09-17 (p) — Adjacency control, and why Figure 4 decodes the NEXT square
+
+SK: *"what I find very suspicious is that you seem to be able to decode the next
+location rather than the current one from the regression you ran in Fig 4."*
+Right, and it has two causes, both now controlled.
+
+**1. `next_loc` is always ADJACENT to the current square, and templates are
+spatially smooth.** The pseudo-population evidence matrix already showed
+neighbours sharing the diagonal's elevation. An `adjacent` term (4-connected
+neighbours, column-major grid) is now in the roles model, and it is itself
+positive: HC_all +0.255 (p = 0.057), HC_anterior +0.323 (p = 0.034). Some of
+what looked like "coding where I go next" was the map being blurry.
+
+`next_step` **survives** the adjacency control — HC_all explore +0.266
+(p = 0.042) with all cells, +0.457 (p = 0.0012) with tuned weights, the largest
+non-current term in the analysis — but it is NOT ripple-specific (ripple−flank
++0.183, p = 0.18), and the latency control that would say whether it is
+prospection or approach **flips sign with the weighting scheme** (early/late =
+−0.02/+0.28 unweighted, +0.32/+0.13 weighted). Unresolved, and the most
+promising lead left.
+
+**2. Figure 4's labels expire.** Measured, pooled over 61 sessions: at lag 0 the
+subject is on the arrival square by definition; at **+0.44 s they are more often
+on the NEXT square (median dwell 0.367 s)**; at +0.5 s it is 71% next vs 54%
+current.
+
+| lag | on arrival square | on previous | on next |
+|---|---|---|---|
+| −0.25 s | 0.29 | **0.85** | 0.03 |
+| 0 s | **1.00** | 0.35 | 0.35 |
+| +0.50 s | 0.54 | 0.18 | **0.71** |
+| +1.00 s | 0.24 | 0.11 | **0.43** |
+
+So HC_mid's `b_next` peaking at +0.4 s while `b_current` sits negative is the
+subject having walked there — not prospection. `occupancy_by_lag.csv` is now
+written beside the time course and plotted as row 3 of Figure 4, and the caption
+states that only |t| < 0.25 s is interpretable.
+
+**This also resolves the Figure 4 / Stage 2 discrepancy** flagged since
+2026-09-17 (e): the three role regressors are a chain of mutually adjacent
+squares whose labels drift out of date within one dwell, so the regression
+splits one blurred bump between them. Figure 4 is no longer "unresolved" — it is
+explained, and correspondingly narrowed.
+
+### Figures 5 and 6 for location-encoding cells (SK's request)
+Both now take a `scheme` argument and are written twice, `_tuned` using cells
+whose place map generalises across configurations. Conclusions are unchanged:
+Fig 5 tuned — HC_mid C0 +0.353 (p = 0.093), C1 −0.067; HC_anterior C0 +0.399
+(p = 0.012), C1 +0.165 (p = 0.29). Fig 6 tuned — I11 known−nonrew −0.279
+(p = 0.23). The tuned and untuned versions agree, which is the point of (o).
+
+## 2026-09-17 (q) — Window audit, future goals, correct trials, phase-split errors
+
+**Window audit (SK asked).** Confirmed: every content analysis uses each
+ripple's OWN detected duration, `t_peak ± duration/2`. Durations are median
+**60 ms**, IQR 46–80, range 38–441 (n = 100,737) — the "60 ms" in the write-ups
+is the median, not a setting. Each flank inherits its own ripple's half-duration
+(`w_fl = half[owner]`), so widths match exactly, and sits inside that ripple's
+occupancy interval. `±500 ms` was never a width — it was the old flank
+*position*, abandoned because it was location-matched only 53.7% of the time.
+Fixed widths survive only in the Stage 2 positive-control sweep
+(60/125/250/500/1000 ms), which is never compared with ripples.
+
+**`scripts/swr_ripple_content_c2.py` deleted.** It was the last script still
+placing flanks at ±500 ms, and it is superseded by the roles regression, which
+does the same job with square dummies and matched flanks.
+
+### New terms and splits in the roles regression
+- `goal_1`, `goal_2` — the rewards sought AFTER the current one (the sequence
+  loops). During exploration these are unknowable, so they double as a
+  knowledge control.
+- `subset` = all / correct trials.
+
+**All three goal horizons are null** (ripple−flank, HC_all): `goal` +0.053
+(p = 0.74), `goal_1` +0.022 (p = 0.88), `goal_2` −0.013 (p = 0.93) in the known
+phase; same in exploration and in every ROI. **No prospective goal coding at any
+horizon.**
+
+### `on_route` in HC_mid — the strongest candidate, and it fails robustness
+| variant | n | ripple−flank | p |
+|---|---|---|---|
+| all cells, all trials | 29 | **+0.530** | **0.0087** (subject-level 0.041) |
+| all cells, correct traversals only | 29 | +0.424 | 0.032 |
+| **location-tuned cells only** | 28 | **−0.172** | 0.44 |
+| HC_all / HC_anterior | 51 / 44 | +0.150 / −0.044 | 0.35 / 0.80 |
+
+Specific to HC_mid, phase-specific by construction, survives a correct-trials
+restriction — but **reverses sign** under cell weighting, and is one cell of a
+~200-test family (Bonferroni would need p < 0.0003). Not established. Deserves
+one pre-specified replication, not more exploration.
+
+### `errors_here` by phase — right direction, not significant
+HC_all ripple−flank: explore −0.138 (p = 0.29), known +0.146 (p = 0.33),
+interaction −0.284 (p = 0.19). More suppression during exploration and less once
+everything is known, exactly as SK predicted, but underpowered.
+
+### Presentation fixes
+- **Figure 8c now plots in-ripple AND ripple-minus-flank side by side.** Showing
+  only the in-ripple bar invited the misreading SK caught: the figure looked
+  significant where the summary table was null, because they were different
+  quantities. `current` is the clearest case — +0.526 (p < 0.0001) in ripple,
+  +0.024 (p = 0.83) against its own flank.
+- **Figure 9 added**: the peri-ripple pseudo-population time course, which had
+  numbers but no plot. HC_all current-square signal peaks +0.306 at +25 ms
+  against a +0.086 baseline; not significant (p = 0.16).
+- The summary table in `SUMMARY_ripple_content.md` now carries ROI, phase, n and
+  measure per row. Row 8 was **mislabelled** as "anything" — the
+  pseudo-population tested the current square only, i.e. it is a better-powered
+  row 1, not a test of rows 2–7.
+
+## 2026-09-17 (r) — Route and error squares: controls, phase, and descriptives
+
+### `on_route` (I12) in HC_mid — new controls, all passed but one
+
+Added a **template-occupancy covariate**: for each square, log dwell at that
+square across the OTHER configurations, i.e. the data its leave-one-out template
+is built from. This was the suspected artefact — off-route squares are by
+definition rarely visited, so their template entries are the worst estimated,
+and `on_route` is scored against exactly them.
+
+**The effect is unchanged**: HC_mid ripple−flank +0.530 (p = 0.0088), and the
+covariate itself is null everywhere (HC_all +0.060, p = 0.67). Artefact ruled out.
+
+**Phase dependence (SK asked):** split the known phase at the median
+`trial_num_in_grid`:
+
+| subset | HC_mid ripple−flank | p |
+|---|---|---|
+| all trials | +0.530 | 0.0088 |
+| correct traversals only | +0.403 | 0.045 |
+| **early repeats** | **+0.578** | **0.0043** |
+| late repeats | +0.125 | 0.53 |
+| location-tuned cells only | −0.156 | 0.49 |
+
+The route is represented in ripples **when it has just been learned and not
+later** — the same shape as He et al.'s 'stable→' replay decaying with
+familiarity.
+
+⚠ The cell-weighting failure is **systematic, not noise**: paired across the same
+28 sessions, all-cells minus tuned-cells = +0.728, p = 0.00033, r = +0.64. The
+effect is carried by cells whose place map does NOT generalise across
+configurations. SK's reading is that non-local trajectory content need not live
+in the most current-location-tuned cells, which is reasonable; the difficulty is
+that in this estimator a cell's template is its only channel to contribute
+location evidence, so an unreliable template should contribute noise, not
+structure. **Unexplained. This is the thing to resolve before believing row 5.**
+
+### ⚠ The raw templates carry an occupancy bias (Figure 10d)
+Unadjusted within-window z by role, HC_mid, known phase: **off_route +0.039**,
+current +0.014, reward +0.004, adjacent −0.003, **on_route −0.013**. The
+rarely-visited squares score HIGHEST. This does not invalidate the
+ripple-minus-flank contrasts, which compare the same square with itself, but it
+does mean **no raw across-square comparison in this dataset is interpretable**,
+and it is why the model needs square dummies and the occupancy covariate.
+
+### `errors_here` (I13) by ROI and phase
+Ripple−flank, all cells: HC_all explore −0.118 (p = 0.37) / known +0.132
+(p = 0.38); HC_mid −0.084 / +0.036; HC_anterior −0.054 / +0.098. In-ripple
+HC_anterior known +0.284 (p = 0.061). Interaction p = 0.19. The predicted
+direction — suppression while exploring, elevation once known — is present in
+all three ROIs and significant in none.
+
+### New: `scripts/swr_roles_timecourse.py` and Figures 10, 11
+Descriptive only: within-window z by square role in 100 ms windows from −750 to
++750 ms around the ripple peak, no null, no model. Both role contrasts are flat
+across the peri-ripple second (on_route−off_route, HC_mid known: peri −0.053 vs
+non-peri −0.049; error−no_error: −0.005 vs −0.007). **The regression effects are
+partial coefficients and do not appear in the unadjusted data** — stated on the
+figures so nobody reads c/d as the result.
+
+Figure 10 = the walked route with every control; Figure 11 = error squares by
+ROI and phase, time-resolved. Both mark the He et al. peri-ripple band (±250 ms).
+
+## 2026-09-17 (s) — RESULT: a ripple-specific route signal in HC_mid
+
+**Logged as a result at SK's request.** First and only ripple-specific effect in
+this analysis line.
+
+**Claim.** Once all four rewards are known, mid-hippocampal ripples carry more
+information about the squares the subject actually walks through — over and
+above the current square, its neighbours, the rewards, recency, visit count,
+square identity and template occupancy — than matched flank windows in the same
+occupancy interval do. The effect is present in the early repeats after learning
+and absent in the later ones.
+
+| | HC_mid, ripple − matched flank | p |
+|---|---|---|
+| **known phase, all trials** | **+0.530** | **0.0087** (subject-level 0.041) |
+| correct traversals only | +0.403 | 0.045 |
+| **early repeats** | **+0.578** | **0.0043** |
+| late repeats | +0.125 | 0.53 |
+| exploration phase | n/a — no route exists yet | — |
+| HC_anterior / HC_all / mOFC / mPFC | −0.046 / +0.137 / −0.27 / −0.05 | all n.s. |
+
+n = 29 sessions. `on_route` = squares walked on the correct repeats of that grid
+run, excluding rewards, the current square, its 4-connected neighbours, the
+goals and anything visited in the last 10 s. Reference = off-route non-reward
+squares. Estimator, CV, flank matching and null as everywhere else in this line.
+
+**Controls passed:** template-occupancy covariate (the suspected artefact — off-
+route squares are the rarely visited ones; covariate itself null, effect
+unchanged); correct-trials restriction; subject-level inference; square dummies;
+adjacency term.
+
+**Control failed:** weighting cells by cross-configuration place-map reliability
+(−0.156, p = 0.49), and the disagreement is systematic (paired +0.728,
+p = 0.00033). The effect lives in cells whose place maps do not generalise.
+Unexplained.
+
+**Statistical standing:** one cell of a ~200-test family; Bonferroni would
+require p < 0.0003. **Exploratory. Needs a pre-specified replication.** The
+honest one-line version: *"in mid-hippocampus, ripples recruit the newly-learned
+route more than surrounding time does — exploratory, p = 0.0087 uncorrected,
+and not robust to one of five controls."*
+
+### Figure 10 rebuilt after SK asked why panel c looked flat
+The old panel c plotted an unadjusted descriptive time course, which is NOT the
+tested quantity, and read as though the result were absent. The figure now
+shows: (a) per ROI, (b) every control, (c) **the test itself** — each session's
+route coefficient in its ripple against its own matched flank, paired — (d) the
+raw role means carrying the occupancy warning, (e) the descriptive time course
+labelled as not-the-test, and (f) four reasons c and e differ: partial vs raw
+coefficient, flank inside the occupancy interval (~100 ms) vs a ±250 ms band
+that mostly sits on a different square, ripple-duration vs fixed 100 ms windows,
+and z-vs-null vs raw across-session means.
+
+## 2026-09-17 (t) — Do ripples cluster, and should the window be ±250 ms?
+
+SK asked whether the He et al. ±250 ms peri-ripple window would give more signal
+than the ripple's own ~60 ms. Measured, all 61 sessions:
+
+**Ripples barely cluster.** Inter-ripple interval median 1.064 s (10th
+percentile 0.146 s). 30.4% of ripples have another within 250 ms. A ±250 ms
+window contains on average **1.39** ripples against a Poisson expectation of
+1.27 at the observed 0.535 Hz — a clustering factor of **1.10×**. So widening the
+window buys almost no extra ripples.
+
+**Width does help a little, up to a point, and only in HC_mid** (Stage 2 sweep,
+z vs permutation null): HC_mid +0.640 / +0.647 / **+0.684** / +0.267 / −0.013 at
+60 / 125 / 250 / 500 / 1000 ms; HC_anterior declines monotonically +0.488 /
++0.439 / +0.315 / +0.168. The collapse at 500 ms is not mysterious: the median
+dwell is 0.367 s, so a 500 ms window spans two squares and the label is wrong
+for part of it.
+
+**The binding constraint is the dwell, not the choice of window.** A ±250 ms
+window stays inside the ripple's own occupancy interval only **29.9%** of the
+time, against **88.7%** for ±30 ms. Since every ripple-specific claim in this
+line rests on a flank matched on the same square, inside the same interval, a
+500 ms-wide window makes that control impossible for 70% of ripples.
+
+**Conclusion.** Keep the ripple's own duration for anything needing a
+same-square flank — the current design is at the ceiling the behaviour allows.
+Use ±250 ms where the window does not have to sit on one square: cortical
+responses to ripples (what He et al. use it for, and what this project's HFB
+branch already does) and the TDLM sequence analysis, where the peri-ripple
+window is a period to search for order within, not a single feature window.
+
+### (i) Consolidation — 12 scripts archived, summary written
+The ripple-RSA work collapsed to two scripts plus the library:
+  mc/analyse/ripple_rsa.py            the library, incl. `DECISIONS`
+  scripts/swr_ripple_rsa_alluncovers.py   `run` + `reliability`
+  scripts/swr_ripple_rsa_diagnostics.py   `leverage` + `weighting`
+    (fused from the former conditions.py and inputs.py, same numbers)
+Twelve superseded scripts moved to
+`derivatives/group/swr/archived_scripts/ripple_rsa_2026-09-17/` with a README
+giving, for each, why it was written and why it was archived. EIGHT OF THEM
+WERE NEVER COMMITTED, so that folder is their only copy -- do not delete it
+expecting git history to have them.
+`swr_ripple_rsa_alluncovers.py run` now takes `--estimators`, so the
+centre-vs-zscore-vs-crossnobis comparison is reproducible without the archived
+crossnobis script.
+Full write-up: `derivatives/group/swr/ripple_rsa_SUMMARY_2026-09-17.md`
+(what was tested, what broke, the reliability ceiling, reproduction commands).
+
+### (j) Diagnosis of the null — spike sparsity, not sample size
+`scripts/swr_ripple_rsa_diagnostics.py power` (third subcommand).
+Ripples are 60 ms; **87.0% of (cell, ripple) observations contain zero
+spikes**; the median cell contributes **1 spike per condition** across all its
+ripples. Observed across-condition CV barely exceeds the Poisson floor
+(per-cell SNR 0.46-0.66 in every ROI).
+Split-half reliability is FLAT from 1.5k to 12.6k ripples (8x, no trend) but
+rises MONOTONICALLY with integration half-width in all five ROIs
+(±10 ms ~0.02 -> ±500 ms 0.09-0.16, a 4-10x gain).
+=> The binding constraint is spikes per observation, not number of
+observations. More sessions cannot fix this. Caveat: ±500 ms is a 1 s window
+and no longer ripple-specific, so that gain measures sustained firing, not
+ripple coding.
+Written up in the ADDENDUM of ripple_rsa_SUMMARY_2026-09-17.md.
+
+## 2026-09-18 (u) — I14 gate: location is NOT decodable from iEEG band power
+
+`scripts/swr_ieeg_location_decoder.py`. The prerequisite for any within-ripple
+sequence analysis: TDLM needs a reactivation probability per state per timepoint,
+so before running one, can a 9-way location decoder beat chance at all?
+
+**Answer: no**, in every region and at both cross-validation levels. Per visit
+(one occupancy interval, median 0.367 s — the same unit the spike analyses use,
+where location IS decodable at z = +0.64):
+
+| feature set | CV | bal. acc | null | p | above null |
+|---|---|---|---|---|---|
+| all contacts | configuration | 0.0994 | 0.1111 | 8.5e-07 | 5/61 |
+| **all contacts** | **run** | **0.1082** | **0.1111** | **0.166** | 17/61 |
+| HPC | configuration | 0.0944 | 0.1111 | 1.5e-14 | 3/61 |
+| HPC | run | 0.1067 | 0.1111 | 6.2e-08 | 12/61 |
+| mPFC | configuration / run | 0.0942 / 0.1056 | 0.1110 | 9.3e-10 / 3.3e-06 | 1/41, 7/41 |
+| mOFC | configuration / run | 0.0931 / 0.1059 | 0.1111 | 1.1e-12 / 2.6e-09 | 0/47, 5/47 |
+| Visual | configuration / run | 0.0955 / 0.1067 | 0.1112 | 2.3e-08 / 0.0039 | 2/36, 9/36 |
+
+(All contacts, 61 sessions, 292,308 visits. Numbers are the canonical script
+run; earlier quotes in conversation differed in the third decimal because the
+RNG stream changed when the script was rewritten.)
+
+The null lands at exactly 1/9, as balanced accuracy should. **SK's proposal did
+what she predicted** — holding the configuration constant lifts every ROI
+(0.093–0.099 → 0.106–0.108) and removes the below-chance artefact in the
+best-powered set, confirming that a cross-configuration decoder learns each
+configuration's occupancy and route and is then handed a different one. But it
+reaches chance and stops there: the closest any cell of the table comes is
+all-contacts/run at p = 0.166, and every focal ROI stays significantly BELOW
+chance even with the leak. Band power carries no
+location information at the unit where spikes carry plenty.
+
+This is the same lesson as Figure 10d, where rarely-visited off-route squares
+carried the HIGHEST raw evidence: **occupancy structure is the dominant signal
+in this task, and any decoder trained across configurations finds it first.**
+
+### ⚠ Three results were reported from this branch before it was validated, and
+### all three were wrong. They are retracted here.
+
+A first version reported a confident "clean negative, definitive" from a decoder
+that could not decode **anything** — not location, not the 4-way state
+(0.245 vs 0.240 chance), not even an uncover press against a window 1.5 s later
+(0.487 vs 0.500, 0/14 sessions above 0.55, with ~1,000 events per session). A
+recommendation to stop I14 was made on that null. All of it is withdrawn:
+the below-chance config result, the run-level comparison, and a
+regularisation × smoothing sweep.
+
+**The fault was posing, not code.** The ripple-locked HFB response is about one
+sample wide (+0.197 at 0 ms, +0.017 at ±100 ms). Averaging features over a
+400 ms window diluted it ~40×, and sampling every 10 ms produced 24,000 rows
+whose effective n was far smaller — band power is 0.94 autocorrelated at lag 1.
+Both decoders asked band power to work at a timescale where its signal is
+smeared or drowned.
+
+**The loader was never the problem** and is now verified rather than assumed:
+it reproduces this project's own established peri-ripple effect — HPC HFB peak
+**+0.197 at exactly 0.00 s** (z = +7.3), frontal **+0.012 at −0.02 s**
+(z = +3.2) — which also confirms sample 0 = session time 0 to within one sample.
+
+**Process change, baked into the script.** `positive_control()` runs FIRST and
+`main()` refuses to report a decoding null unless the HFB peak is clearly
+positive and lands within one sample of zero. A null from an unvalidated
+instrument says nothing about the brain, and this branch cost three retractions
+to learn it.
+
+### What this does and does not mean
+It does **not** say replay is absent — nothing here tests replay. It says this
+dataset cannot supply the decoder that a sequence analysis needs, on these
+features. Remaining options are in `POTENTIAL_IDEAS.md` under I14.
+
+## 2026-09-18 (v) — Every signal, one decoding design: argmax fails for all of them
+
+`scripts/swr_decoder_comparison.py`, Figure 12. Built for SK's talk: the I14
+gate tested band power, but the obvious question is whether spikes do better.
+Same design throughout — one row per visit, 9-way multinomial, leave-one-
+configuration-out, balanced accuracy against a label-permutation null.
+
+| signal | sessions | features | bal. acc | null | p |
+|---|---|---|---|---|---|
+| HFB (high gamma) | 61 | 24.3 | 0.0958 | 0.1110 | 7.7e-11 |
+| theta | 61 | 24.3 | 0.0948 | 0.1112 | 8.7e-17 |
+| beta | 61 | 24.3 | 0.0938 | 0.1111 | 3.0e-16 |
+| ripple band | 61 | 24.3 | 0.0953 | 0.1112 | 9.8e-14 |
+| all bands | 61 | 73.0 | 0.0994 | 0.1111 | 9.7e-07 |
+| **spikes (HC)** | **51** | **10.1** | **0.0955** | **0.1111** | **7.7e-12** |
+
+**Spikes fail too.** That matters more than the band-power null, because the
+continuous estimator finds location in exactly those spikes: HC_mid **+0.640**
+(p = 0.0075), HC_anterior **+0.488** (p = 0.0015) in 60 ms windows.
+
+**So the conclusion is not "there is no location signal" — it is that 9-way
+argmax is the wrong read-out.** The evidence matrix shows why: diagonal +0.144
+against off-diagonal −0.018, but neighbouring squares share the elevation, so
+evidence that is clearly raised at the true square still peaks one square away.
+Argmax discards a graded signal; the continuous score keeps it.
+
+**Consequence for I14, restated precisely.** TDLM needs a per-state
+reactivation probability, which is an argmax-family read-out. No signal in this
+dataset supports one. The sequence analysis has no front end — not because
+location is absent, but because the read-out it requires is the one that fails.
+
+### Figures built for the presentation (2026-09-18 set)
+- **Fig 12** — decoder comparison: every signal at chance (a), the same spikes
+  with the continuous estimator (b), and the evidence matrix explaining the
+  difference (c).
+- **Fig 13** — reward locations vs the current location, in-ripple and
+  ripple-minus-flank, with `reward not yet found` as the built-in knowledge
+  control sitting at zero.
+- **Fig 14** — every regressor in the route model, both measures, for
+  HC_mid/known (where the effect is) and HC_all/explore.
+
+## 2026-09-18 (w) — Collinearity audit of the roles model, and the post-uncover power limit
+
+SK: *"a lot of the regressors are pretty overlapping, and worst case even fully
+contain another... how correlated are they? What happens if you remove some
+co-regressors?"* — `scripts/swr_roles_collinearity.py`.
+
+**The design is not collinear in the damaging sense.** The binary roles are
+mutually exclusive by construction, so no regressor contains another, and the
+variance inflation factors are all **1.3–2.3** (problem threshold 5), including
+`on_route` at 2.16 — the thin off-route reference category (~1.5 squares per
+run) does not make the design ill-conditioned.
+
+Largest correlations between role regressors: **`on_route` ↔ `recent` r = +0.625**,
+then `errors_here` ↔ `visits_here` +0.362, `goal` ↔ `next_step` +0.305, all
+others below 0.26.
+
+**Leave-one-regressor-out on the route effect** (HC_mid, known, ripple−flank):
+
+| model | z | p |
+|---|---|---|
+| full | +0.530 | 0.0088 |
+| minus current | +0.622 | 0.0030 |
+| minus goal_1 | +0.610 | 0.0030 |
+| minus reward / goal_2 / adjacent / goal | +0.560…+0.569 | 0.0053–0.0067 |
+| minus next_step / errors_here / visits_here / train_occ | +0.520…+0.530 | 0.0072–0.0100 |
+| **minus recent** | **+0.369** | **0.046** |
+
+Stable against dropping any rival except `recent`, where it halves but stays
+significant. `recent` carries a NEGATIVE coefficient (≈ −0.30) and correlates
++0.625 with `on_route`: recently-visited squares carry less ripple-specific
+evidence, and because route squares are usually recent ones the two partly
+cancel until recency is controlled. **The route effect is therefore conditional
+on separating "on the route" from "just been there"** — a real claim about the
+model and the effect's one load-bearing covariate.
+
+### The post-reward-uncover subset cannot be fitted, and the number says why
+
+SK asked whether Fig 13 uses all ripples or only those after a reward uncover.
+**All ripples in the phase**, wherever the subject was. Adding `after_reward` /
+`after_error` subsets produced no usable sessions:
+
+| subset | ripples/session (median) | sessions with ≥ 50 |
+|---|---|---|
+| exploration, all | 241 | 61/61 |
+| **after a rewarded uncover** | **16** | **2/61** |
+| after an erroneous uncover | 67 | 37/61 |
+
+The regression has 21 parameters. A median of 16 ripples cannot support it.
+That question is answerable only by a design built for small n — which is what
+I11 is (matched triplets rather than regression), and its answer stands:
+known-reward vs non-reward squares during exploration, +0.241, p = 0.29.
+Figure 13c now shows that instead of an unfittable regression. ⚠ `after_error`
+IS feasible in 37 sessions and has not been run.
+
+### Model change: `known_rew` in exploration is now nominally negative
+With `goal_1`, `goal_2` and `train_occ` added, HC_all exploration `known_rew` is
+−0.350 in ripple (p = 0.016) and −0.349 ripple−flank (p = 0.018), up from −0.266.
+Already-found reward squares are represented LESS than other squares. Wrong sign
+for the hypothesis, one of ~200 tests, and not to be presented as a finding —
+but it should not be hidden either.
+
+## 2026-09-18 — He et al. peri-ripple windows, hippocampal units: still null
+
+Results: `data/ephys_humans/derivatives/group/swr/ripple_rsa_periripple_2026-09-18/`
+Code: `scripts/swr_ripple_rsa_periripple.py`, `rrsa.cache_band_rates`
+
+Peri-ripple (-250 to +250 ms) vs non-peri-ripple (both flanks, -750/-250 and
++250/+750 combined), ripple-shuffled surrogate null (500 draws, pseudo-peaks
+matched in number per event), hippocampal single units, 32 conditions
+(config x uncover), z-scored, pad 0.25. Two event sets as requested:
+explore-phase discoveries and all correct uncovers.
+
+### (a) Two design problems had to be fixed first
+1. Under the standing 1 s post-press selection cap, **100% of +-750 ms flanks
+   fell outside their own inter-uncover interval** -- the early flank reaches
+   back before the uncover. The cap and these windows are incompatible.
+2. At the all-uncovers event density the **median inter-uncover gap is 1.35 s,
+   shorter than the 1.5 s window itself** (explore: 5.45 s).
+Fix: run on UNCAPPED intervals and require the full +-750 ms to lie inside one
+interval, so both windows describe one condition. Keeps 3794 explore (71%) and
+14091 all-uncover (47%) ripples. Surrogates drawn from the same
+clearance-respecting sub-interval.
+
+### (b) A duration confound in the He et al. design, worth knowing
+Their baseline is BOTH flanks = 1000 ms against a 500 ms peri window.
+Reliability scales with integration time, so the baseline is intrinsically
+better measured. Split-half reliability of the data RDM (HC_anterior):
+                     explore   all
+  peri (500 ms)       +0.046  +0.072
+  nonperi (1000 ms)   +0.122  +0.215
+  nonperi_late (500)  +0.032  +0.144   <- duration-matched control, added here
+So a peri-vs-nonperi contrast is biased AGAINST peri unless duration-matched.
+`nonperi_late` (+250 to +750 ms alone) was added to `rrsa.BANDS` for this.
+
+### (c) RESULT: 2 of 36 significant uncorrected, NOTHING survives FDR
+  explore | peri         | HC_mid | full_abcd  rho +0.045  z 1.78  p 0.048
+  all     | nonperi_late | HC_mid | known_set  rho +0.123  z 1.91  p 0.020
+The larger of the two is in the NON-ripple window. No peri-ripple-specific
+effect. Peri-minus-nonperi contrasts are small and inconsistent in sign across
+ROIs and event sets.
+
+### (d) What this does and does not change
+CONFIRMS the sparsity diagnosis: the 500 ms peri window raises reliability
+from ~0.02 (ripple-internal) to 0.046-0.072, exactly as the window sweep
+predicted. The extra spikes are real.
+DOES NOT rescue the result: duration-matched, peri is no better than ordinary
+non-ripple time (worse in the all-uncovers set, 0.072 vs 0.144; marginally
+better in explore, 0.046 vs 0.032). So the gain is INTEGRATION TIME, not
+ripple alignment.
+Caveat to carry: 500 ms is ~8x the 60 ms ripple, so this tests ripple-ALIGNED
+rather than ripple-internal coding -- a weaker claim than the project's.
+One reading worth testing rather than asserting: a ripple is a stereotyped
+population burst, so peri-ripple firing may be LESS condition-discriminative
+than ongoing task firing.

@@ -69,6 +69,7 @@ CLAUDE.md rule 4.
 @author: Svenja Kuchenhoff
 """
 
+import json
 import os
 import glob
 import itertools
@@ -137,12 +138,42 @@ MIN_PAIRS_TO_FIT = 10
 # EVENTS
 # =============================================================================
 
-def load_bundle(bundle_dir):
-    """The three bundle tables this analysis needs."""
+def default_bundle_dir(data_root=None):
+    """Newest bundle on disk, preferring swr_v2 over the 2026-09-08 swr_v1."""
+    base = os.path.join(_derivatives(data_root), "group", "swr")
+    for name in ("bundle_v2", "bundle", "bundle_08.09.2026"):
+        p = os.path.join(base, name)
+        if os.path.isdir(p) and os.path.isfile(os.path.join(p, "ripples.csv")):
+            return p
+    raise FileNotFoundError(f"no bundle under {base}")
+
+
+def load_bundle(bundle_dir=None, pad_s=None, data_root=None):
+    """The three bundle tables this analysis needs.
+
+    `pad_s` re-imposes an artifact pad at home, as `meta.json` of the swr_v2
+    bundle describes: events are kept only if `dist_to_artifact_s >= pad_s`.
+    The bundle is detected at its smallest pad (0.1 s), so a larger pad is a
+    pure subset and the sweep is nested.
+
+    NOTE the meta.json caveat -- "doing only the first inflates the rate" --
+    applies to ripple RATES, which need artifact-free exposure rebuilt from
+    `artifact_intervals`. This analysis never divides by exposure: it measures
+    each neuron's firing DURING a ripple. Filtering the events is therefore
+    sufficient and complete here.
+    """
+    bundle_dir = bundle_dir or default_bundle_dir(data_root)
+    rip = pd.read_csv(os.path.join(bundle_dir, "ripples.csv"))
+    if pad_s is not None:
+        if "dist_to_artifact_s" not in rip.columns:
+            raise ValueError(f"{bundle_dir} has no dist_to_artifact_s; "
+                             "pad sweeps need the swr_v2 bundle")
+        rip = rip[rip.dist_to_artifact_s >= pad_s]
     return {
         "uncover": pd.read_csv(os.path.join(bundle_dir, "uncover.csv")),
-        "ripples": pd.read_csv(os.path.join(bundle_dir, "ripples.csv")),
+        "ripples": rip.reset_index(drop=True),
         "behaviour": pd.read_csv(os.path.join(bundle_dir, "behaviour.csv")),
+        "bundle_dir": bundle_dir, "pad_s": pad_s,
     }
 
 
@@ -589,9 +620,11 @@ def ripples_near_events(bundle, session, events, window, with_duration=True):
         for k in range(lo, hi):
             rows.append({"session": session, "t_peak_s": t[k],
                          "duration_s": dur[k], "cfg": e.cfg, "state": e.state,
-                         "grid_no": e.grid_no, "press_t_s": e.t_s})
+                         "grid_no": e.grid_no, "press_t_s": e.t_s,
+                         "win_lo_s": e.t_s + window[0],
+                         "win_hi_s": e.t_s + window[1]})
     cols = ["session", "t_peak_s", "duration_s", "cfg", "state", "grid_no",
-            "press_t_s"]
+            "press_t_s", "win_lo_s", "win_hi_s"]
     out = pd.DataFrame(rows, columns=cols)
     if len(out):
         # one ripple detected on several derivations is one event
@@ -839,6 +872,21 @@ def pipeline_null_contrast(bundle, events, roi_tab, spikes, roi, state, model,
 # permutation a re-indexing operation, and thousands of draws become cheap.
 # `patterns_from_cache` reproduces `collect_spike_patterns` exactly.
 
+def _surrogate_times(rip, rng):
+    """A random time in the same admissible window as each ripple.
+
+    The window is the one the ripple was selected from (`win_lo_s`,
+    `win_hi_s`), so the surrogate keeps the event, the config, the state and
+    the knowledge state, and differs in exactly one thing: it is not at a
+    ripple. This is the primary null of the whole analysis -- "during a ripple,
+    does the pattern become similar to the model" -- so it must be a matched
+    window, not a shuffled label.
+    """
+    lo = rip.win_lo_s.values
+    hi = rip.win_hi_s.values
+    return lo + rng.uniform(0, 1, len(rip)) * (hi - lo)
+
+
 def cache_ripple_rates(bundle, events, roi_tab, spikes, window,
                        extent="duration", fixed_half_s=0.010,
                        surrogate_rng=None, scheme="window"):
@@ -859,15 +907,7 @@ def cache_ripple_rates(bundle, events, roi_tab, spikes, window,
             continue
         t = rip.t_peak_s.values.copy()
         if surrogate_rng is not None:
-            if scheme == "interval":
-                # a surrogate must stay inside the SAME interval, or it would
-                # change which knowledge state the window belongs to
-                lo = rip.press_t_s.values
-                hi = rip.interval_end_s.values
-                t = lo + surrogate_rng.uniform(0, 1, len(rip)) * (hi - lo)
-            else:
-                t = (rip.press_t_s.values
-                     + surrogate_rng.uniform(window[0], window[1], len(rip)))
+            t = _surrogate_times(rip, surrogate_rng)
         half = (rip.duration_s.values / 2.0 if extent == "duration"
                 else np.full(len(rip), fixed_half_s))
         width = 2 * half
@@ -875,20 +915,34 @@ def cache_ripple_rates(bundle, events, roi_tab, spikes, window,
         for row, (_, c) in enumerate(cells.iterrows()):
             n = spike_counts_in_windows(spikes[s]["spikes"][int(c.cell)], t, half)
             rates[row] = n / width
-        out.append({
+        blk = {
             "session": s,
+            "kind": "spikes",
             "rates": rates,
             "ci": np.array([CONFIG_LABELS.index(c) for c in rip.cfg]),
             "si": np.array([STATES.index(x) for x in rip.state]),
             "roi": cells.roi.to_numpy(),
-        })
+        }
+        if "phase" in rip.columns:
+            blk["pi"] = np.array([PHASES.index(x) for x in rip.phase])
+        out.append(blk)
     return out
 
 
 def patterns_from_cache(cache, config_perm=None, split_halves=False,
-                        drop_silent=True):
+                        drop_silent=None):
     """Rebuild a pattern pack from cached rates -- same output as
-    `collect_spike_patterns`, but a permutation costs no spike lookups."""
+    `collect_spike_patterns`, but a permutation costs no spike lookups.
+
+    `drop_silent=None` (the default) decides from the block's `kind`: on for
+    spikes, off for HFB. It MUST be off for HFB. The test is
+    `rates.sum() > 0`, which for a cell means "fired at least one spike", but
+    for a robust-z HFB derivation means "was above its own session median more
+    often than below" -- true for about half of them by construction. Applying
+    it to HFB silently discarded ~50% of every ROI's derivations, which is what
+    pushed mPFC (32 derivations) under MIN_CELLS_PER_PAIR and made it vanish
+    from the HFB results table.
+    """
     n_half = 2 if split_halves else 1
     P, rois, sess, N, silent = [], [], [], [], 0
     for blk in cache:
@@ -903,8 +957,10 @@ def patterns_from_cache(cache, config_perm=None, split_halves=False,
             m = hix == h
             np.add.at(counts[h], (ci[m], si[m]), 1)
 
+        ds = (blk.get("kind", "spikes") == "spikes") if drop_silent is None \
+            else drop_silent
         keep = np.ones(rates.shape[0], bool)
-        if drop_silent:
+        if ds:
             keep = rates.sum(axis=1) > 0
             silent += int((~keep).sum())
         if not keep.any():
@@ -979,8 +1035,9 @@ def ripples_in_intervals(bundle, session, events, window=None):
        the press.
 
     The cost: it is no longer "the moment of discovery" -- most of the interval
-    is spent searching for the next reward. `window` is accepted and ignored,
-    so the two schemes are interchangeable at the call site.
+    is spent searching for the next reward. `window` caps the lag after the
+    press (e.g. (0, 1) keeps only the first second), still clipped at the next
+    discovery, so the two schemes are interchangeable at the call site.
 
     Returns the same columns as `ripples_near_events`.
     """
@@ -1014,15 +1071,1087 @@ def ripples_in_intervals(bundle, session, events, window=None):
             t1 = ts[STATES[i + 1]] if (i < 3 and STATES[i + 1] in ts) else end_D
             if not np.isfinite(t1) or t1 <= t0:
                 continue
-            lo, hi = np.searchsorted(t, t0), np.searchsorted(t, t1)
+            # `window` caps the lag after the press, still clipped at the next
+            # discovery, so the interval never leaks into the next condition.
+            w0 = t0 if window is None else t0 + window[0]
+            w1 = t1 if window is None else min(t1, t0 + window[1])
+            if w1 <= w0:
+                continue
+            lo, hi = np.searchsorted(t, w0), np.searchsorted(t, w1)
             for j in range(lo, hi):
                 rows.append({"session": session, "t_peak_s": t[j],
                              "duration_s": dur[j], "cfg": gi.cfg[k],
                              "state": k, "grid_no": grid,
-                             "press_t_s": t0, "interval_end_s": t1})
+                             "press_t_s": t0, "interval_end_s": t1,
+                             "win_lo_s": w0, "win_hi_s": w1})
     cols = ["session", "t_peak_s", "duration_s", "cfg", "state", "grid_no",
-            "press_t_s", "interval_end_s"]
+            "press_t_s", "interval_end_s", "win_lo_s", "win_hi_s"]
     return pd.DataFrame(rows, columns=cols).reset_index(drop=True)
 
 
 SCHEMES = {"window": ripples_near_events, "interval": ripples_in_intervals}
+
+
+# =============================================================================
+# HFB VARIANT -- same RSA, continuous power instead of spikes
+# =============================================================================
+#
+# Why this is the better-powered version of the same question:
+#   * no spike-count floor. A single unit contributes ~0.2 spikes to a ripple;
+#     an HFB derivation contributes a real-valued power estimate.
+#   * more independent sites. The 65 mPFC units sit on ~8 microwire bundles;
+#     mPFC HFB has 32 derivations across 17 sessions.
+#   * a proper negative control exists: 81 Visual derivations.
+# The cost: HFB is a population proxy, not spiking, and a derivation is a much
+# coarser spatial sample than a unit.
+#
+# CIRCULARITY: ripples are detected ON the hippocampal derivations, so
+# hippocampal HFB at its own ripple times is partly the ripple itself
+# (80-120 Hz sits inside the 70-150 Hz HFB band). Hippocampal HFB rows are
+# therefore a positive control at best, never a result -- `hfb_roi_table`
+# flags them with `is_ripple_source`.
+
+HFB_BANDS = ("hfb", "ripple", "theta", "beta")
+
+
+def hfb_roi_table(bundle_dir=None, sessions=None, data_root=None,
+                  drop_excluded=True):
+    """One row per usable HFB derivation: session, pair_id, ROI, MNI, role."""
+    bundle_dir = bundle_dir or default_bundle_dir(data_root)
+    sessions = DSR_SESSIONS if sessions is None else sessions
+    p = pd.read_csv(os.path.join(bundle_dir, "hfb_pairs.csv"))
+    if drop_excluded and "excluded" in p.columns:
+        p = p[~p.excluded.astype(bool)]
+    p = p[p.session.isin(sessions)].copy()
+    p["is_ripple_source"] = p.get("role", pd.Series(index=p.index)).eq("ripple")
+    return p.rename(columns={"pair_roi": "roi"})[
+        ["session", "pair_id", "roi", "role", "is_ripple_source",
+         "mni_x", "mni_y", "mni_z"]].reset_index(drop=True)
+
+
+def load_hfb(session, bundle_dir=None, band="hfb", data_root=None):
+    """(pair_ids, signal, fs) for one session. Signal is (n_pairs, n_samples).
+
+    Stored as float16 at 100 Hz on the SAME session clock as behaviour and
+    ripple times: sample i is t = i / fs seconds. Returned as float32 --
+    float16 cannot be z-scored without losing precision.
+    """
+    bundle_dir = bundle_dir or default_bundle_dir(data_root)
+    z = np.load(os.path.join(bundle_dir, "hfb", f"s{int(session):02d}_hfb.npz"),
+                allow_pickle=True)
+    return ([str(x) for x in z["pair_ids"]], z[band].astype(np.float32),
+            float(z["out_fs"]))
+
+
+def _robust_z(x):
+    """Median / IQR z-score, per derivation, over the whole session.
+
+    Derivations differ in impedance and gain by orders of magnitude, so raw
+    power is not comparable across them and the RDM would be dominated by a
+    handful of loud channels. Median and IQR rather than mean and SD because
+    the tail is artifact.
+    """
+    med = np.median(x, axis=1, keepdims=True)
+    q1, q3 = np.percentile(x, [25, 75], axis=1, keepdims=True)
+    iqr = np.maximum(q3 - q1, 1e-9)
+    return (x - med) / iqr
+
+
+def cache_hfb_rates(bundle, events, hfb_tab, window, scheme="window",
+                    band="hfb", bundle_dir=None, extent="duration",
+                    surrogate_rng=None, data_root=None, verbose=True):
+    """Mean HFB power inside each ripple, per derivation -- the HFB analogue of
+    `cache_ripple_rates`, and interchangeable with it downstream.
+
+    Returns the same block structure, so `patterns_from_cache`, `rdm_for`,
+    `fit_rho` and every null work unchanged.
+    """
+    get = SCHEMES[scheme]
+    out = []
+    for s in sorted(set(hfb_tab.session)):
+        rip = get(bundle, s, events, window)
+        rows = hfb_tab[hfb_tab.session == s]
+        if rip.empty or rows.empty:
+            continue
+        try:
+            pair_ids, sig, fs = load_hfb(s, bundle_dir, band, data_root)
+        except FileNotFoundError:
+            if verbose:
+                print(f"  s{s}: no HFB file")
+            continue
+        idx = {p: i for i, p in enumerate(pair_ids)}
+        keep = [(i, p) for i, p in enumerate(rows.pair_id) if p in idx]
+        if not keep:
+            continue
+        sig = _robust_z(sig[[idx[p] for _, p in keep]])
+
+        t = rip.t_peak_s.values.copy()
+        if surrogate_rng is not None:
+            t = _surrogate_times(rip, surrogate_rng)
+        half = (rip.duration_s.values / 2.0 if extent == "duration"
+                else np.full(len(rip), 0.010))
+
+        a = np.clip(np.round((t - half) * fs).astype(int), 0, sig.shape[1] - 1)
+        b = np.clip(np.round((t + half) * fs).astype(int) + 1, 1, sig.shape[1])
+        power = np.empty((sig.shape[0], len(t)), np.float32)
+        cs = np.cumsum(sig, axis=1)
+        cs = np.concatenate([np.zeros((sig.shape[0], 1), np.float32), cs], 1)
+        n = np.maximum(b - a, 1)
+        power[:] = (cs[:, b] - cs[:, a]) / n          # windowed mean, O(1) each
+
+        blk = {
+            "session": s, "kind": "hfb", "rates": power,
+            "ci": np.array([CONFIG_LABELS.index(c) for c in rip.cfg]),
+            "si": np.array([STATES.index(x) for x in rip.state]),
+            "roi": rows.iloc[[i for i, _ in keep]].roi.to_numpy(),
+        }
+        if "phase" in rip.columns:
+            blk["pi"] = np.array([PHASES.index(x) for x in rip.phase])
+        out.append(blk)
+    if verbose:
+        tot = sum(b["rates"].shape[1] for b in out)
+        nder = sum(b["rates"].shape[0] for b in out)
+        print(f"  HFB[{band}]: {tot} ripples, {nder} derivations, "
+              f"{len(out)} sessions")
+    return out
+
+
+# =============================================================================
+# STANDING DECISIONS -- the choices this pipeline has already settled
+# =============================================================================
+#
+# Recorded here rather than in each script so that every entry point inherits
+# the same choice and a change has to be made once, visibly.
+
+DECISIONS = {
+    "pad_s": 0.25,
+    "pad_why": (
+        "Artifact pad swept over 0.1/0.25/0.5/0.75/1.0 s. The pad is a near-"
+        "uniform ~30% thinning of ripples (Spearman lag vs dist_to_artifact "
+        "= +0.005, p = 0.69) and a random 33% thinning moves a single ROI's "
+        "rho over a range of ~1.0 (SD 0.20), i.e. the pad dependence IS "
+        "resampling noise. 0.25 s is fixed a priori so no result can pick it."),
+    "primary_null": "surrogate_window",
+    "primary_null_why": (
+        "The question is what is encoded DURING a ripple, so the comparison "
+        "must be ripple vs not-ripple. The surrogate window keeps the event, "
+        "the config, the state, the knowledge state, the number of windows and "
+        "the cells, and moves only the window off the ripple peak. A label "
+        "shuffle answers a different question and is kept as a secondary "
+        "check."),
+    "scheme": "interval",
+    "window_s": (0.0, 1.0),
+    "window_why": (
+        "Ripples in the first second after the uncover press, clipped at the "
+        "next discovery so nothing leaks between conditions. The time-resolved "
+        "sweep showed the fit stops growing at ~1 s, and the ripple-HFB "
+        "literature this is being compared against uses -1 to 1 s."),
+    "extent": "duration",
+    "extent_why": "firing/power is read inside the ripple, t_peak +- duration/2.",
+    "sign": "both matrices are dissimilarities, so POSITIVE rho = model encoded",
+    "min_cells_per_pair": MIN_CELLS_PER_PAIR,
+    "normalise": "zscore",
+    "normalise_why": (
+        "Features are z-scored across conditions before the correlation "
+        "distance, matching `_z_score_per_neuron` in mc/analyse/"
+        "rsa_perm_rdms.py -- the convention already used by the other RSAs in "
+        "this project. Centring alone (what this pipeline shipped until "
+        "2026-09-17) leaves a feature's influence proportional to its "
+        "across-condition variance, and firing rates span two orders of "
+        "magnitude: effective n was 36-43% of the actual cell count, with the "
+        "top 5 cells carrying up to 43% of an ROI's RDM. The choice is made "
+        "on prior project convention, NOT on which normalisation gives the "
+        "nicer answer -- it does change which ROI looks best, and that "
+        "sensitivity is reported in ripple_rsa_inputs_*/."),
+    "seed": 42,
+}
+
+
+# =============================================================================
+# EXPANDED CONDITION SPACE -- config x state
+# =============================================================================
+#
+# The 8-config RDM has 28 unique pairs, so chance rho has SD = 1/sqrt(27) =
+# 0.192 no matter how many ripples go in: the noise floor is arithmetic, not
+# statistical, and more data cannot lower it. More CONDITIONS can. Treating
+# each (config, state) as its own condition gives 32 conditions and 496 pairs,
+# a floor of 1/sqrt(495) = 0.045.
+#
+# Two pair families have to be handled, not merged blindly:
+#   within-state  (k == k')   -- the old 8-condition analysis, four times over.
+#   cross-state   (k != k')   -- new, and where the extra power comes from.
+# Cross-state pairs of the SAME config are dropped: those two conditions come
+# from the same grid a few seconds apart, so any slow drift in firing makes
+# them look alike, and that is exactly the pattern `full_abcd` predicts. They
+# are 48 of the 496 and removing them costs little.
+# The state model (|k - k'|) is partialled out of every fit, because the known
+# set grows with k and firing drifts with time-on-task, so a region that only
+# tracked "how far into the grid am I" would otherwise fit `known_set`.
+
+N_STATE = len(STATES)
+N_COND = N_CONFIG * N_STATE
+# condition index is state-major: i = k * N_CONFIG + c
+COND_CFG = np.tile(np.arange(N_CONFIG), N_STATE)
+COND_STATE = np.repeat(np.arange(N_STATE), N_CONFIG)
+COND_LABELS = [f"{CONFIG_LABELS[c]}|{STATES[k]}"
+               for k, c in zip(COND_STATE, COND_CFG)]
+
+
+def flat_patterns(pack):
+    """(n_cells, 32) from a pack's (n_cells, 8, 4), in COND order."""
+    P = pack["patterns"]
+    return P.transpose(0, 2, 1).reshape(P.shape[0], N_COND)
+
+
+def normalise_features(P, mode="zscore"):
+    """Per-feature normalisation across conditions, project convention.
+
+    "centre"  subtract each feature's mean across conditions.
+    "zscore"  additionally divide by its across-condition SD, so every feature
+              contributes equally to the correlation regardless of firing rate.
+
+    The zscore branch reproduces `_z_score_per_neuron` in
+    mc/analyse/rsa_perm_rdms.py exactly, INCLUDING its handling of a constant
+    feature: SD 0 is replaced by 1.0 rather than NaN, so such a feature stays
+    an all-zero column instead of dropping out. Matching that matters -- an
+    all-zero column is not inert in a pairwise correlation.
+    """
+    P = np.asarray(P, float)
+    C = P - np.nanmean(P, axis=1, keepdims=True)
+    if mode == "centre":
+        return C
+    if mode != "zscore":
+        raise ValueError(f"unknown normalisation {mode!r}")
+    sd = np.nanstd(C, axis=1, keepdims=True)
+    return C / np.where(sd > 0, sd, 1.0)
+
+
+def build_rdm_flat(P, min_cells=MIN_CELLS_PER_PAIR, normalise=None):
+    """Correlation-distance RDM over an arbitrary number of conditions.
+
+    Per-feature normalisation across conditions (see `normalise_features`;
+    default from DECISIONS), then pairwise-complete correlation distance.
+    Written separately from `build_rdm` so the 8-condition results stay
+    bit-identical.
+    """
+    P = np.asarray(P, float)
+    n = P.shape[1]
+    C = normalise_features(P, normalise or DECISIONS["normalise"])
+    rdm = np.full((n, n), np.nan)
+    n_used = np.zeros((n, n), int)
+    np.fill_diagonal(rdm, 0.0)
+    ok_all = np.isfinite(C)
+    for i in range(n):
+        for j in range(i + 1, n):
+            ok = ok_all[:, i] & ok_all[:, j]
+            n_used[i, j] = n_used[j, i] = ok.sum()
+            if ok.sum() < min_cells:
+                continue
+            a, b = C[ok, i], C[ok, j]
+            if a.std() == 0 or b.std() == 0:
+                continue
+            rdm[i, j] = rdm[j, i] = 1.0 - np.corrcoef(a, b)[0, 1]
+    return rdm, n_used
+
+
+def rdm_for_flat(pack, roi, min_cells=MIN_CELLS_PER_PAIR, normalise=None):
+    """32 x 32 data RDM for one ROI, all four states at once."""
+    sel = np.asarray(pack["roi"]) == roi
+    P = np.asarray(flat_patterns(pack), float)[sel]
+    return build_rdm_flat(P, min_cells, normalise)
+
+
+# ---------------------------------------------------------------- models
+
+def _cond_known(i):
+    c, k = COND_CFG[i], COND_STATE[i]
+    return set(CONFIGS[c][:k + 1])
+
+
+def current_location_rdm():
+    """Is the reward just uncovered in the same place? 0 = same, 1 = different.
+
+    Within a state this is constant (the 8 configs put every state in a
+    different location by counterbalancing), so it is carried entirely by the
+    cross-state pairs -- which is the reason to build the 32-condition space.
+    """
+    loc = np.array([CONFIGS[c][k] for c, k in zip(COND_CFG, COND_STATE)])
+    return (loc[:, None] != loc[None, :]).astype(float)
+
+
+def known_set_rdm_flat():
+    """Jaccard distance between the sets of locations known so far."""
+    S = [_cond_known(i) for i in range(N_COND)]
+    M = np.zeros((N_COND, N_COND))
+    for i in range(N_COND):
+        for j in range(N_COND):
+            M[i, j] = 1.0 - len(S[i] & S[j]) / len(S[i] | S[j])
+    return M
+
+
+def full_abcd_rdm_flat():
+    """Jaccard distance between the whole configurations -- state-invariant."""
+    S = [set(CONFIGS[c]) for c in COND_CFG]
+    M = np.zeros((N_COND, N_COND))
+    for i in range(N_COND):
+        for j in range(N_COND):
+            M[i, j] = 1.0 - len(S[i] & S[j]) / len(S[i] | S[j])
+    return M
+
+
+def state_rdm_flat():
+    """|k - k'| -- the nuisance that is partialled out of every fit."""
+    return np.abs(COND_STATE[:, None] - COND_STATE[None, :]).astype(float) / 3.0
+
+
+def model_rdms_flat():
+    return {"current_location": current_location_rdm(),
+            "known_set": known_set_rdm_flat(),
+            "full_abcd": full_abcd_rdm_flat()}
+
+
+NUISANCE_FLAT = "state"
+
+
+def pair_mask(family="all", drop_same_config=True):
+    """Boolean mask over the upper triangle of the 32 x 32 RDM."""
+    iu = np.triu_indices(N_COND, 1)
+    ki, kj = COND_STATE[iu[0]], COND_STATE[iu[1]]
+    ci, cj = COND_CFG[iu[0]], COND_CFG[iu[1]]
+    m = np.ones(len(iu[0]), bool)
+    if family == "within_state":
+        m &= ki == kj
+    elif family == "cross_state":
+        m &= ki != kj
+    elif family != "all":
+        raise ValueError(family)
+    if drop_same_config:
+        m &= ~((ci == cj) & (ki != kj))
+    return iu, m
+
+
+def _partial_rank(d, m, z):
+    """Spearman partial correlation of d and m given z, on matched vectors."""
+    R = np.vstack([stats.rankdata(v) for v in (d, m, z)]).astype(float)
+    R -= R.mean(axis=1, keepdims=True)
+    sd = R.std(axis=1)
+    if np.any(sd == 0):
+        return np.nan
+    d_, m_, z_ = R
+    d_ = d_ - (d_ @ z_) / (z_ @ z_) * z_
+    m_ = m_ - (m_ @ z_) / (z_ @ z_) * z_
+    if d_.std() == 0 or m_.std() == 0:
+        return np.nan
+    return float(np.corrcoef(d_, m_)[0, 1])
+
+
+def fit_rho_flat(rdm, model, family="all", partial=True,
+                 min_pairs=MIN_PAIRS_TO_FIT):
+    """Spearman (partial) correlation between a 32 x 32 data RDM and a model.
+
+    Both matrices are dissimilarities, so a region encoding the model gives a
+    POSITIVE rho.
+    """
+    iu, m = pair_mask(family)
+    d = rdm[iu][m]
+    mv = model[iu][m]
+    zv = state_rdm_flat()[iu][m]
+    ok = np.isfinite(d) & np.isfinite(mv)
+    if ok.sum() < min_pairs or np.unique(mv[ok]).size < 2:
+        return np.nan
+    if not partial:
+        if np.unique(d[ok]).size < 2:
+            return np.nan
+        return float(stats.spearmanr(d[ok], mv[ok]).correlation)
+    if np.unique(zv[ok]).size < 2:          # within-state: nothing to partial
+        return float(stats.spearmanr(d[ok], mv[ok]).correlation)
+    return _partial_rank(d[ok], mv[ok], zv[ok])
+
+
+def relabel_flat(model, perm):
+    """Apply a permutation of the 8 configs to a 32-condition model RDM.
+
+    The configs are relabelled consistently across states, so the state
+    structure -- and therefore the nuisance being partialled out -- is
+    untouched. Permuting the MODEL rather than the data keeps the observed-pair
+    mask fixed, which is what makes partial RDMs fittable.
+    """
+    idx = COND_STATE * N_CONFIG + np.asarray(perm)[COND_CFG]
+    return model[np.ix_(idx, idx)]
+
+
+# =============================================================================
+# STORING NULLS -- so a model change does not cost another surrogate run
+# =============================================================================
+#
+# A surrogate draw is expensive for the reason that it is the right null: it
+# re-runs the WHOLE estimator, which for HFB means re-reading a session's
+# 100 Hz signal off disk (~6 s per draw, ~50 min for 500). But almost all of
+# that work is independent of the model being fitted. The expensive part ends
+# at the pattern pack -- (n_features, 8, 4) mean rate per condition -- and
+# everything after it (RDM, model, family, partialling) is milliseconds.
+#
+# So the packs are stored. A new model, a new pair family, a different
+# nuisance, a different min_cells: all re-fittable in seconds against the
+# identical stored null.
+#
+# WHAT INVALIDATES A STORED NULL: anything upstream of the pack -- the pad,
+# the bundle, the ripple->condition scheme, the window, the extent, the ROI
+# table, the surrogate definition. Those are recorded in the sidecar `meta`
+# and `load_packs` refuses to return packs whose meta does not match what the
+# caller expects, rather than silently mixing two nulls.
+
+def save_packs(path, packs, meta):
+    """Store a list of pattern packs (one per surrogate draw) plus its meta.
+
+    Packs are ragged -- `drop_silent` can keep a different number of cells in
+    different draws -- so patterns and roi go in as object arrays.
+    """
+    np.savez_compressed(
+        path,
+        patterns=np.array([p["patterns"].astype(np.float32) for p in packs],
+                          dtype=object),
+        roi=np.array([p["roi"] for p in packs], dtype=object),
+        session=np.array([p["session"] for p in packs], dtype=object),
+        counts=np.array([p["counts"] for p in packs], dtype=object),
+        meta=json.dumps(meta))
+
+
+def load_packs(path, expect=None):
+    """Return (packs, meta). `expect` is checked key by key against `meta`."""
+    z = np.load(path, allow_pickle=True)
+    meta = json.loads(str(z["meta"]))
+    if expect:
+        bad = {k: (meta.get(k), v) for k, v in expect.items()
+               if meta.get(k) != v}
+        if bad:
+            raise ValueError(
+                f"{os.path.basename(path)} was built with different settings, "
+                f"so its null does not apply here: {bad}")
+    packs = [{"patterns": p, "roi": r, "session": s, "counts": c}
+             for p, r, s, c in zip(z["patterns"], z["roi"], z["session"],
+                                   z["counts"])]
+    return packs, meta
+
+
+def null_meta(decisions=None, **extra):
+    """The settings a stored null is only valid for."""
+    d = dict(decisions or DECISIONS)
+    m = {k: (list(v) if isinstance(v, tuple) else v) for k, v in d.items()
+         if k in ("pad_s", "scheme", "window_s", "extent",
+                  "min_cells_per_pair", "seed")}
+    m.update(extra)
+    return m
+
+
+# =============================================================================
+# WHICH CONDITIONS CARRY THE FIT
+# =============================================================================
+
+def loco_flat(rdm, model, family="all", partial=True):
+    """Leave-one-condition-out contribution of each of the 32 conditions.
+
+    `delta[i] = rho(all conditions) - rho(without condition i)`.
+
+    POSITIVE delta = dropping the condition HURTS, i.e. it was carrying the
+    fit. Negative delta = dropping it HELPS, i.e. it was working against the
+    model. Near zero = it contributed nothing either way, which for a condition
+    with almost no ripples is what you would expect and is the cheapest way to
+    see whether the fit rests on a handful of well-sampled conditions.
+    """
+    iu, base = pair_mask(family)
+    full = fit_rho_flat(rdm, model, family=family, partial=partial)
+    d = rdm[iu]
+    mv = model[iu]
+    zv = state_rdm_flat()[iu]
+    out = np.full(N_COND, np.nan)
+    for i in range(N_COND):
+        keep = base & (iu[0] != i) & (iu[1] != i)
+        ok = keep & np.isfinite(d) & np.isfinite(mv)
+        if ok.sum() < MIN_PAIRS_TO_FIT or np.unique(mv[ok]).size < 2:
+            continue
+        if partial and np.unique(zv[ok]).size > 1:
+            r = _partial_rank(d[ok], mv[ok], zv[ok])
+        else:
+            r = float(stats.spearmanr(d[ok], mv[ok]).correlation)
+        out[i] = full - r
+    return out, full
+
+
+def loco_configs(rdm, model, min_pairs=MIN_PAIRS_TO_FIT):
+    """The same, for one 8-config RDM at one state. `delta[c]` over 8 configs."""
+    iu = np.triu_indices(N_CONFIG, 1)
+    d, mv = rdm[iu], model[iu]
+    ok0 = np.isfinite(d) & np.isfinite(mv)
+    if ok0.sum() < min_pairs or np.unique(mv[ok0]).size < 2:
+        return np.full(N_CONFIG, np.nan), np.nan
+    full = float(stats.spearmanr(d[ok0], mv[ok0]).correlation)
+    out = np.full(N_CONFIG, np.nan)
+    for c in range(N_CONFIG):
+        ok = ok0 & (iu[0] != c) & (iu[1] != c)
+        if ok.sum() < min_pairs or np.unique(mv[ok]).size < 2 \
+                or np.unique(d[ok]).size < 2:
+            continue
+        out[c] = full - float(stats.spearmanr(d[ok], mv[ok]).correlation)
+    return out, full
+
+
+def condition_coverage(pack, roi):
+    """Per-condition sampling: ripples, features with data, estimable pairs."""
+    sel = pack["roi"] == roi
+    P = flat_patterns(pack)[sel]
+    rdm, n_used = build_rdm_flat(P)
+    iu = np.triu_indices(N_COND, 1)
+    est = np.zeros(N_COND, int)
+    for a, b in zip(*iu):
+        if np.isfinite(rdm[a, b]):
+            est[a] += 1
+            est[b] += 1
+    return pd.DataFrame({
+        "cond": np.arange(N_COND), "label": COND_LABELS,
+        "config": COND_CFG, "state": [STATES[k] for k in COND_STATE],
+        "n_ripples": pack["counts"].sum(axis=0).T.reshape(-1),
+        "n_features_with_data": np.isfinite(P).sum(axis=0),
+        "n_pairs_estimable": est,
+        "median_cells_per_pair": np.nanmedian(
+            np.where(np.eye(N_COND, dtype=bool), np.nan,
+                     n_used.astype(float)), axis=1)})
+
+
+# =============================================================================
+# CROSSNOBIS -- cross-validated Mahalanobis distance
+# =============================================================================
+#
+# Follows the project's existing recipe in
+# scripts/RSA_human_cells_DSR_crossnobis.py: per SESSION, estimate the noise
+# covariance from residuals, shrink toward the identity, take a
+# leave-one-fold-out cross-validated Mahalanobis distance, then average the
+# per-session RDMs. Per session is not a stylistic choice -- cells in
+# different sessions are never recorded together, so their covariance is not
+# estimable and a pooled full-Sigma crossnobis does not exist.
+#
+# Why bother: crossnobis is the principled answer to "which features get
+# weighted". Correlation distance after centring weights a feature by its
+# across-condition variance (so loud cells dominate); after z-scoring it
+# weights every feature equally (so quiet noisy cells are amplified).
+# Crossnobis divides by the NOISE, estimated from how much a feature varies
+# between ripples WITHIN a condition, so a feature counts in proportion to its
+# signal-to-noise. It is also cross-validated, hence unbiased: the expected
+# distance between two conditions that do not differ is 0, not positive, and
+# individual entries may legitimately be negative.
+#
+# FEASIBILITY IS THE BINDING CONSTRAINT HERE. Crossnobis needs at least
+# `n_folds` ripples per condition per session. Measured on the pad-0.25,
+# 0-1 s interval window:
+#     32 conditions (config x state): median 1 ripple per (session, condition);
+#         0 of 27 sessions have >=2 in every condition. NOT ESTIMABLE.
+#      8 conditions (config, states pooled): median 5; 17 of 27 sessions
+#         complete. Estimable.
+# So crossnobis runs on the 8-config space, where the only fittable model is
+# `full_abcd`. It is a different, weaker question than the 32-condition RSA --
+# not a drop-in replacement for it.
+
+CROSSNOBIS_SHRINKAGE = 0.1        # as SHRINKAGE_ALPHA in the DSR script
+
+
+def _fold_means(rates, cond, n_cond, n_folds):
+    """X[cond, fold, cell] and the residuals used for the noise covariance.
+
+    Folds interleave ripples in their recorded order (i % n_folds), which is
+    deterministic and balanced -- no RNG, so a surrogate draw and the observed
+    value are folded the same way.
+    """
+    n_cells = rates.shape[0]
+    X = np.full((n_cond, n_folds, n_cells), np.nan)
+    resid = []
+    for c in range(n_cond):
+        idx = np.flatnonzero(cond == c)
+        if len(idx) < n_folds:
+            continue
+        f = np.arange(len(idx)) % n_folds
+        for k in range(n_folds):
+            take = idx[f == k]
+            if not len(take):
+                break
+            m = rates[:, take].mean(axis=1)
+            X[c, k] = m
+            resid.append(rates[:, take] - m[:, None])
+    R = np.concatenate(resid, axis=1).T if resid else np.zeros((0, n_cells))
+    return X, R
+
+
+def _crossnobis_from_X(X, sigma_inv, per_neuron=True):
+    """Leave-one-fold-out crossnobis over the conditions that are estimable."""
+    n_cond, K, n_cells = X.shape
+    ok = np.flatnonzero(np.isfinite(X).all(axis=(1, 2)))
+    out = np.full((n_cond, n_cond), np.nan)
+    if len(ok) < 2:
+        return out, ok
+    Xo = X[ok]
+    acc = np.zeros((len(ok), len(ok)))
+    for k in range(K):
+        A = Xo[:, k, :]
+        B = Xo[:, np.delete(np.arange(K), k), :].mean(axis=1)
+        A_S = A @ sigma_inv
+        AB = A_S @ B.T
+        d = np.einsum("ij,ij->i", A_S, B)
+        acc += d[:, None] + d[None, :] - AB - AB.T
+    acc /= K
+    if per_neuron:
+        # DELIBERATE DEVIATION from the DSR script, which averages raw
+        # per-session RDMs. A whitened d^2 grows with the number of neurons,
+        # and ROI cell counts here range from 3 to 40+ per session, so without
+        # this the biggest session would dominate the average.
+        acc /= n_cells
+    out[np.ix_(ok, ok)] = acc
+    return out, ok
+
+
+def crossnobis_rdm(cache, roi, conditions="config", n_folds=2,
+                   shrinkage=CROSSNOBIS_SHRINKAGE, per_neuron=True):
+    """Crossnobis RDM for one ROI, averaged over the sessions that support it.
+
+    `conditions` is "config" (8, states pooled -- the estimable space) or
+    "config_state" (32; kept so the infeasibility is reproducible rather than
+    asserted). Returns (rdm, n_sessions_per_pair).
+    """
+    n_cond = N_CONFIG if conditions == "config" else N_COND
+    mats = []
+    for blk in cache:
+        sel = np.asarray(blk["roi"]) == roi
+        if sel.sum() < 2:
+            continue
+        rates = np.asarray(blk["rates"], float)[sel]
+        cond = (blk["ci"] if conditions == "config"
+                else blk["si"] * N_CONFIG + blk["ci"])
+        X, R = _fold_means(rates, cond, n_cond, n_folds)
+        if R.shape[0] < 2 or not np.isfinite(X).all(axis=(1, 2)).sum() >= 2:
+            continue
+        S = np.cov(R, rowvar=False)
+        S = np.atleast_2d(S)
+        S = (1 - shrinkage) * S + shrinkage * np.eye(S.shape[0])
+        rdm, _ = _crossnobis_from_X(X, np.linalg.pinv(S), per_neuron)
+        if np.isfinite(rdm).any():
+            mats.append(rdm)
+    if not mats:
+        return np.full((n_cond, n_cond), np.nan), np.zeros((n_cond, n_cond), int)
+    M = np.stack(mats)
+    n_sess = np.isfinite(M).sum(axis=0)
+    with np.errstate(invalid="ignore"):
+        rdm = np.nanmean(M, axis=0)
+    rdm[n_sess == 0] = np.nan
+    np.fill_diagonal(rdm, 0.0)
+    return rdm, n_sess
+
+
+def crossnobis_feasibility(cache, rois, n_folds=2):
+    """How many (session, condition) cells carry enough ripples to fold."""
+    rows = []
+    for name, n_cond, key in (("config", N_CONFIG, "ci"),
+                              ("config_state", N_COND, None)):
+        for roi in rois:
+            per_sess, complete = [], 0
+            for blk in cache:
+                if (np.asarray(blk["roi"]) == roi).sum() < 2:
+                    continue
+                cond = (blk["ci"] if key else blk["si"] * N_CONFIG + blk["ci"])
+                n = np.bincount(cond, minlength=n_cond)
+                per_sess.append(n)
+                complete += int((n >= n_folds).all())
+            if not per_sess:
+                continue
+            A = np.array(per_sess)
+            rows.append({"conditions": name, "roi": roi, "n_sessions": len(A),
+                         "median_ripples_per_cell": float(np.median(A)),
+                         "pct_cells_foldable": float(100 * (A >= n_folds).mean()),
+                         "n_sessions_complete": complete})
+    return pd.DataFrame(rows)
+
+
+# =============================================================================
+# ALL UNCOVERS -- not just the explore-phase discoveries
+# =============================================================================
+#
+# The discovery-only event set is 2665 uncovers and 1185 ripples. Every
+# correct uncover on the 8 shared configs is 32688 uncovers and 12902 ripples,
+# 10.9x more. That matters for two reasons:
+#   * the 32-condition RDM goes from ~37 to ~400 ripples per condition;
+#   * crossnobis becomes ESTIMABLE on the 32-condition space (~14 ripples per
+#     session x condition, against a median of 1 for discoveries only), so the
+#     estimator question can finally be asked where the design is strong.
+#
+# The cost is that a repeat is not a discovery. The subject already knows the
+# configuration, the ripple-rate increase was established on discoveries, and
+# firing differs between the two. So the phase is never silently pooled: the
+# 64-condition space keeps it as its own factor, and phase is partialled out
+# of every fit in the collapsed space.
+
+PHASES = ["first", "repeat"]
+
+
+def all_uncover_events(bundle, sessions=None, phases=None):
+    """Every CORRECT uncover with a state, on the 8 shared configs.
+
+    `is_discovery == 1` is exactly `rep_overall == 1` in this table, so phase
+    is "first" for the initial traversal of a grid and "repeat" afterwards.
+    """
+    sessions = DSR_SESSIONS if sessions is None else sessions
+    u = bundle["uncover"]
+    ev = u[(u.session.isin(sessions)) & (u.correct == 1)
+           & u.state.notna()].copy()
+
+    beh = bundle["behaviour"]
+    cfg = beh[beh.session.isin(sessions)].drop_duplicates(["session", "grid_no"])
+    cfg = cfg[["session", "grid_no", "loc_A", "loc_B", "loc_C", "loc_D"]].copy()
+    cfg["cfg"] = (cfg[["loc_A", "loc_B", "loc_C", "loc_D"]]
+                  .astype(int).astype(str).agg("-".join, axis=1))
+    ev = ev.merge(cfg[["session", "grid_no", "cfg"]],
+                  on=["session", "grid_no"], how="left")
+    ev = ev[ev.cfg.isin(CONFIG_LABELS)].copy()
+    ev["phase"] = np.where(ev.is_discovery == 1, "first", "repeat")
+    if phases is not None:
+        ev = ev[ev.phase.isin(phases)]
+    return ev[["session", "grid_no", "rep_overall", "t_s", "state", "cfg",
+               "phase"]].reset_index(drop=True)
+
+
+def ripples_after_uncovers(bundle, session, events, window):
+    """Ripples after each uncover, clipped at the NEXT uncover of that session.
+
+    Generalises `ripples_in_intervals` to repeats. The interval logic there
+    walks A->B->C->D within one traversal, which assumes one row per state per
+    grid; with repeats there are many. Here the cap is simply the next correct
+    uncover in the session, whichever grid or repeat it belongs to, so the
+    intervals tile the session exactly once and no ripple can be counted in
+    two conditions.
+    """
+    t = np.sort(swu.dedup_ripples(
+        bundle["ripples"].loc[bundle["ripples"].session == session,
+                              "t_peak_s"].values, tol_s=DEDUP_S))
+    d = bundle["ripples"].loc[bundle["ripples"].session == session]
+    d = d.sort_values("t_peak_s")
+    if not len(t):
+        return pd.DataFrame(columns=[
+            "session", "t_peak_s", "duration_s", "cfg", "state", "phase",
+            "grid_no", "press_t_s", "win_lo_s", "win_hi_s"])
+    idx = np.clip(np.searchsorted(d.t_peak_s.values, t), 0, len(d) - 1)
+    dur = d.duration_s.values[idx]
+
+    ev = events[events.session == session].sort_values("t_s")
+    ut = ev.t_s.values.astype(float)
+    nxt = np.r_[ut[1:], np.inf]
+    lo = ut + window[0]
+    hi = np.minimum(nxt, ut + window[1])
+
+    a, b = np.searchsorted(t, lo), np.searchsorted(t, hi)
+    keep = b > a
+    rows = []
+    for k in np.flatnonzero(keep):
+        e = ev.iloc[k]
+        for j in range(a[k], b[k]):
+            rows.append({"session": session, "t_peak_s": t[j],
+                         "duration_s": dur[j], "cfg": e.cfg, "state": e.state,
+                         "phase": e.phase, "grid_no": e.grid_no,
+                         "press_t_s": ut[k], "win_lo_s": lo[k],
+                         "win_hi_s": hi[k]})
+    cols = ["session", "t_peak_s", "duration_s", "cfg", "state", "phase",
+            "grid_no", "press_t_s", "win_lo_s", "win_hi_s"]
+    return pd.DataFrame(rows, columns=cols).reset_index(drop=True)
+
+
+SCHEMES["uncovers"] = ripples_after_uncovers
+
+
+# =============================================================================
+# 64-CONDITION SPACE -- config x state x phase
+# =============================================================================
+
+N_PHASE = len(PHASES)
+N_COND64 = N_CONFIG * N_STATE * N_PHASE
+# index is phase-major, then state, then config: i = p*32 + k*8 + c
+C64_CFG = np.tile(np.arange(N_CONFIG), N_STATE * N_PHASE)
+C64_STATE = np.tile(np.repeat(np.arange(N_STATE), N_CONFIG), N_PHASE)
+C64_PHASE = np.repeat(np.arange(N_PHASE), N_CONFIG * N_STATE)
+COND64_LABELS = [f"{CONFIG_LABELS[c]}|{STATES[k]}|{PHASES[p]}"
+                 for p, k, c in zip(C64_PHASE, C64_STATE, C64_CFG)]
+
+
+def _known64(i):
+    """What the subject knows at condition i.
+
+    On a REPEAT the subject has already completed the grid, so the known set
+    is the whole configuration regardless of which reward is being uncovered.
+    This is what makes `known_set` and `full_abcd` differ only in the `first`
+    half of the 64-condition space -- and it is the reason splitting by phase
+    is informative rather than merely doubling the conditions.
+    """
+    c, k, p = C64_CFG[i], C64_STATE[i], C64_PHASE[i]
+    return set(CONFIGS[c]) if PHASES[p] == "repeat" else set(CONFIGS[c][:k + 1])
+
+
+def _jaccard(sets):
+    n = len(sets)
+    M = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            M[i, j] = 1.0 - len(sets[i] & sets[j]) / len(sets[i] | sets[j])
+    return M
+
+
+def model_rdms_64():
+    loc = np.array([CONFIGS[c][k] for c, k in zip(C64_CFG, C64_STATE)])
+    return {"current_location": (loc[:, None] != loc[None, :]).astype(float),
+            "known_set": _jaccard([_known64(i) for i in range(N_COND64)]),
+            "full_abcd": _jaccard([set(CONFIGS[c]) for c in C64_CFG])}
+
+
+def nuisance_rdms_64():
+    return {"state": np.abs(C64_STATE[:, None] - C64_STATE[None, :]) / 3.0,
+            "phase": (C64_PHASE[:, None] != C64_PHASE[None, :]).astype(float)}
+
+
+def pair_mask_64(family="all", drop_same_config_cross_state=True):
+    """Upper-triangle mask over the 64 x 64 RDM.
+
+    Families are about PHASE here: "within_phase" compares first with first
+    and repeat with repeat; "cross_phase" compares the two.
+    """
+    iu = np.triu_indices(N_COND64, 1)
+    pi, pj = C64_PHASE[iu[0]], C64_PHASE[iu[1]]
+    ki, kj = C64_STATE[iu[0]], C64_STATE[iu[1]]
+    ci, cj = C64_CFG[iu[0]], C64_CFG[iu[1]]
+    m = np.ones(len(iu[0]), bool)
+    if family == "within_phase":
+        m &= pi == pj
+    elif family == "first_only":
+        m &= (pi == 0) & (pj == 0)
+    elif family == "repeat_only":
+        m &= (pi == 1) & (pj == 1)
+    elif family == "cross_phase":
+        m &= pi != pj
+    elif family != "all":
+        raise ValueError(family)
+    if drop_same_config_cross_state:
+        m &= ~((ci == cj) & (ki != kj))
+    return iu, m
+
+
+def _partial_rank_multi(d, m, Z):
+    """Spearman partial correlation of d and m given several nuisances."""
+    R = np.vstack([stats.rankdata(v) for v in ([d, m] + list(Z))]).astype(float)
+    R -= R.mean(axis=1, keepdims=True)
+    if np.any(R.std(axis=1) == 0):
+        return np.nan
+    dv, mv, N = R[0], R[1], R[2:].T
+    beta, *_ = np.linalg.lstsq(N, np.vstack([dv, mv]).T, rcond=None)
+    res = np.vstack([dv, mv]).T - N @ beta
+    if res[:, 0].std() == 0 or res[:, 1].std() == 0:
+        return np.nan
+    return float(np.corrcoef(res[:, 0], res[:, 1])[0, 1])
+
+
+def fit_rho_64(rdm, model, family="all", partial=True,
+               min_pairs=MIN_PAIRS_TO_FIT):
+    """Partial Spearman on the 64-condition space, state AND phase removed."""
+    iu, m = pair_mask_64(family)
+    d, mv = rdm[iu][m], model[iu][m]
+    nz = [n[iu][m] for n in nuisance_rdms_64().values()]
+    ok = np.isfinite(d) & np.isfinite(mv)
+    if ok.sum() < min_pairs or np.unique(mv[ok]).size < 2:
+        return np.nan
+    Z = [z[ok] for z in nz if np.unique(z[ok]).size > 1]
+    if not partial or not Z:
+        if np.unique(d[ok]).size < 2:
+            return np.nan
+        return float(stats.spearmanr(d[ok], mv[ok]).correlation)
+    return _partial_rank_multi(d[ok], mv[ok], Z)
+
+
+def flat_patterns_64(pack):
+    """(n_features, 64) from a pack's (n_features, 8, 4, 2)."""
+    P = np.asarray(pack["patterns"], float)
+    return P.transpose(0, 3, 2, 1).reshape(P.shape[0], N_COND64)
+
+
+def patterns_uncover(cache, collapse_phase=False, config_perm=None,
+                     drop_silent=None):
+    """Pattern pack from an "uncovers" cache, with or without the phase axis.
+
+    `collapse_phase=True` gives the (n_features, 8, 4) shape every existing
+    32-condition function already expects, with first and repeat pooled.
+    `False` gives (n_features, 8, 4, 2) for the 64-condition space.
+
+    Pooling is a mean over RIPPLES, not a mean of the two phase means, so a
+    condition is not dragged toward whichever phase happens to be rarer.
+    """
+    shape = (N_CONFIG, N_STATE) if collapse_phase else (N_CONFIG, N_STATE,
+                                                        N_PHASE)
+    P, rois, sess, N, silent = [], [], [], [], 0
+    for blk in cache:
+        ci = blk["ci"]
+        if config_perm is not None:
+            ci = config_perm[blk["session"]][ci]
+        rates = blk["rates"]
+        key = ((ci, blk["si"]) if collapse_phase
+               else (ci, blk["si"], blk["pi"]))
+        counts = np.zeros(shape)
+        np.add.at(counts, key, 1)
+
+        ds = (blk.get("kind", "spikes") == "spikes") if drop_silent is None \
+            else drop_silent
+        keep = rates.sum(axis=1) > 0 if ds else np.ones(rates.shape[0], bool)
+        silent += int((~keep).sum())
+        if not keep.any():
+            continue
+        R = rates[keep]
+        sums = np.zeros((int(keep.sum()),) + shape)
+        np.add.at(sums.transpose(*range(1, len(shape) + 1), 0), key, R.T)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            P.append(sums / np.where(counts == 0, np.nan, counts))
+        rois.extend(blk["roi"][keep].tolist())
+        sess.extend([blk["session"]] * int(keep.sum()))
+        N.append(counts)
+    return {"patterns": np.concatenate(P, axis=0), "roi": np.array(rois),
+            "session": np.array(sess), "counts": np.stack(N),
+            "n_silent_dropped": silent}
+
+
+def rdm_for_64(pack, roi, min_cells=MIN_CELLS_PER_PAIR, normalise=None):
+    """64 x 64 data RDM for one ROI."""
+    sel = np.asarray(pack["roi"]) == roi
+    return build_rdm_flat(flat_patterns_64(pack)[sel], min_cells, normalise)
+
+
+# =============================================================================
+# PERI-RIPPLE BANDS -- He et al. windows
+# =============================================================================
+#
+# He et al. analyse compositional encoding in a PERI-RIPPLE window of
+# -250 to +250 ms around the ripple peak, against a NON-PERI-RIPPLE baseline
+# made of the two flanks, -750 to -250 ms and +250 to +750 ms, combined.
+#
+# This is a different question from "what is encoded DURING a ripple": 500 ms
+# is ~8x the 60 ms ripple itself, so it is ripple-ALIGNED rather than
+# ripple-internal. It is worth running because the sparsity diagnosis says the
+# ripple-internal version cannot work -- 87% of (cell, ripple) observations
+# are empty -- while a 500 ms window collects ~8x the spikes, and the
+# peri-vs-non-peri contrast keeps a genuine test of ripple alignment.
+#
+# The two bands are computed from the SAME cumulative spike counts, so the
+# non-peri rate is exactly "everything in +-750 ms that is not in +-250 ms":
+#     peri     = n(+-0.25) / 0.5
+#     nonperi  = (n(+-0.75) - n(+-0.25)) / 1.0
+
+PERI_HALF_S = 0.25
+NONPERI_OUTER_S = 0.75
+# "nonperi" is He et al.'s baseline: BOTH flanks, so 1000 ms against the peri
+# window's 500 ms. That asymmetry is not harmless here -- reliability scales
+# with integration time, and the baseline measured 2.5-3x MORE reliable than
+# the signal window purely for being twice as long. "nonperi_late" is the
+# duration-matched control: the +250 to +750 ms flank alone, 500 ms, so peri
+# and baseline carry the same counting noise.
+BANDS = ("peri", "nonperi", "nonperi_late")
+
+
+def _band_rate(spikes, t, band):
+    """Firing rate in the peri- or non-peri-ripple band around times `t`."""
+    inner = spike_counts_in_windows(spikes, t, PERI_HALF_S)
+    if band == "peri":
+        return inner / (2 * PERI_HALF_S)
+    outer = spike_counts_in_windows(spikes, t, NONPERI_OUTER_S)
+    return (outer - inner) / (2 * (NONPERI_OUTER_S - PERI_HALF_S))
+
+
+def cache_band_rates(bundle, events, roi_tab, spikes, window, band="both",
+                     scheme="uncovers", surrogate_rng=None,
+                     require_clearance=True):
+    """`cache_ripple_rates` with the He et al. bands instead of the ripple extent.
+
+    `require_clearance` keeps only ripples whose FULL +-750 ms extent lies
+    inside their own inter-uncover interval, so both the peri window and the
+    non-peri flanks describe one condition. This is not optional book-keeping:
+    with the 1 s post-press selection cap, 100% of flanks reached outside their
+    interval (the early flank lands before the uncover), and at the
+    all-uncovers event density the median gap is 1.35 s -- shorter than the
+    1.5 s window itself. Run uncapped (`window=None` for the interval scheme)
+    the clearance is met by 71% of explore ripples and 47% of all-uncover ones.
+
+    `band="both"` returns (peri, nonperi, nonperi_late) from one pass, sharing
+    the same spike lookups and -- crucially -- the same surrogate peaks, so the
+    two bands of a given draw are the same pseudo-events.
+
+    Surrogates are drawn from the clearance-respecting sub-interval, matched in
+    number per event, which is the ripple-shuffle He et al. describe: temporal
+    structure and ripple count preserved, true ripple timing removed.
+    """
+    if band not in BANDS + ("both",):
+        raise ValueError(f"band must be one of {BANDS + ('both',)}")
+    get = SCHEMES[scheme]
+    out_p, out_n, out_l = [], [], []
+    for s in sorted(set(roi_tab.session)):
+        rip = get(bundle, s, events, window)
+        cells = roi_tab[roi_tab.session == s]
+        if rip.empty or cells.empty:
+            continue
+        lo_ok = rip.press_t_s.values + NONPERI_OUTER_S
+        hi_ok = rip.win_hi_s.values - NONPERI_OUTER_S
+        if require_clearance:
+            keep = ((rip.t_peak_s.values >= lo_ok)
+                    & (rip.t_peak_s.values <= hi_ok))
+            rip = rip[keep]
+            lo_ok, hi_ok = lo_ok[keep], hi_ok[keep]
+        if rip.empty:
+            continue
+        if surrogate_rng is not None:
+            t = lo_ok + surrogate_rng.uniform(0, 1, len(rip)) * (hi_ok - lo_ok)
+        else:
+            t = rip.t_peak_s.values.copy()
+
+        n_p = np.empty((len(cells), len(rip)))
+        n_n = np.empty((len(cells), len(rip)))
+        n_l = np.empty((len(cells), len(rip)))
+        flank = (NONPERI_OUTER_S - PERI_HALF_S) / 2.0     # 0.25 s half-width
+        t_late = t + PERI_HALF_S + flank                  # centre of +250-750
+        for row, (_, c) in enumerate(cells.iterrows()):
+            sp = spikes[s]["spikes"][int(c.cell)]
+            inner = spike_counts_in_windows(sp, t, PERI_HALF_S)
+            outer = spike_counts_in_windows(sp, t, NONPERI_OUTER_S)
+            n_p[row] = inner / (2 * PERI_HALF_S)
+            n_n[row] = (outer - inner) / (2 * (NONPERI_OUTER_S - PERI_HALF_S))
+            n_l[row] = spike_counts_in_windows(sp, t_late, flank) / (2 * flank)
+        meta = {"session": s, "kind": "spikes",
+                "ci": np.array([CONFIG_LABELS.index(x) for x in rip.cfg]),
+                "si": np.array([STATES.index(x) for x in rip.state]),
+                "roi": cells.roi.to_numpy()}
+        if "phase" in rip.columns:
+            meta["pi"] = np.array([PHASES.index(x) for x in rip.phase])
+        out_p.append(dict(meta, rates=n_p))
+        out_n.append(dict(meta, rates=n_n))
+        out_l.append(dict(meta, rates=n_l))
+    if band == "peri":
+        return out_p
+    if band == "nonperi":
+        return out_n
+    if band == "nonperi_late":
+        return out_l
+    return out_p, out_n, out_l
+
+
+def band_window_overlap(bundle, events, roi_tab, window, scheme="uncovers"):
+    """Fraction of ripples whose +-750 ms flanks cross the next uncover.
+
+    Reported rather than corrected: the flanks are what He et al. use, and the
+    same overlap applies to the surrogate draws, so the contrast stays fair.
+    But a flank that crosses into the next inter-uncover interval carries
+    firing from a different condition, which dilutes rather than inflates.
+    """
+    get = SCHEMES[scheme]
+    n_tot = n_cross = 0
+    for s in sorted(set(roi_tab.session)):
+        rip = get(bundle, s, events, window)
+        if rip.empty or "win_hi_s" not in rip.columns:
+            continue
+        lag_end = rip.t_peak_s.values + NONPERI_OUTER_S
+        n_tot += len(rip)
+        n_cross += int((lag_end > rip.win_hi_s.values).sum())
+    return (n_cross / n_tot if n_tot else np.nan), n_tot

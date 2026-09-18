@@ -35,7 +35,12 @@
     "every across combo carries its ordered execution counterpart.",
     "",
     "Reuses the data_RDMs_glmbase_<glm>_<mask> cache (keyed on regression_version +",
-    "searchlight_mask, not on name_of_RSA): no searchlight is recomputed."
+    "searchlight_mask, not on name_of_RSA): no searchlight is recomputed.",
+    "",
+    "plot_example_data_RDM is OFF: this config fits 37 maps, and the plotting path",
+    "opens a figure per model per scope without closing them (matplotlib warns past",
+    "20). Across 33 subjects x 11 epochs that is wasted memory on the cluster, and",
+    "the model RDMs were already checked once locally."
   ],
 
   "name_of_RSA": "instr_dir_unord",
@@ -55,7 +60,7 @@
     "instruction_unordered": ["within_only", "across_only"]
   },
   "run_combo_models": true,
-  "plot_example_data_RDM": true,
+  "plot_example_data_RDM": false,
 
   "selected_models": [
     "direction",
