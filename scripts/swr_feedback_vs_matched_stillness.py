@@ -362,7 +362,8 @@ def figure(out_png, centres, raw_by_bin, per_cell, standardised, sliding,
 # ── 4) Main ───────────────────────────────────────────────────────────
 
 def run(bundle=None, out_dir=None, unit='session', min_events=10,
-        n_perm=rip.N_SIGN_FLIPS, stillness_cache=None, pause_cache=None):
+        n_perm=rip.N_SIGN_FLIPS, stillness_cache=None, pause_cache=None,
+        pad_s=None):
     root = swr_io.get_data_root()
     if bundle is None:
         bundle = os.path.join(swr_io.derivatives_dir(root), 'group', 'swr',
@@ -376,6 +377,15 @@ def run(bundle=None, out_dir=None, unit='session', min_events=10,
     np.random.seed(SEED)
 
     data = rip.load_bundle(bundle)
+    if pad_s is not None:
+        # Re-impose the artifact pad at analysis time, exactly as
+        # `swr_final_ripple_analysis.py` does: events filtered on
+        # `dist_to_artifact_s` AND exposure rebuilt, so the rate stays events
+        # per artifact-free second.
+        import mc.analyse.swr_bundle as _swb
+        _n0 = len(data['ripples'])
+        data = _swb.repad_bundle(data, float(pad_s))
+        print(f"  re-padded to {pad_s} s: {_n0} -> {len(data['ripples'])} ripples")
     print(f"\n  bundle: {bundle}\n  {QUESTION}")
     print(f"  unit = {unit}, min {min_events} events per {unit} per cell "
           f"per bin\n")
@@ -399,7 +409,7 @@ def run(bundle=None, out_dir=None, unit='session', min_events=10,
         return None
 
     results = {'question': QUESTION, 'bundle': bundle, 'unit': unit,
-               'min_events': min_events, 'n_sign_flips': n_perm, 'seed': SEED,
+               'min_events': min_events, 'n_sign_flips': n_perm, 'seed': SEED, 'pad_s': pad_s,
                'bin_edges_s': [float(e) for e in BIN_EDGES],
                'primary_window_s': list(PRIMARY_WINDOW),
                'baseline_window_s': list(rip.BASELINE_WIN),

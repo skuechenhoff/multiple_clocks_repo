@@ -660,6 +660,82 @@ def _project_and_transform(nii_path, amp_path, mode, hemi, subjects_dir,
     return data, cmap, fmin, fmid, fmax, cbar_info, vertex_alpha
 
 
+def _save_brain_figure(brain, stem, cmap, cbar_info, vertex_alpha):
+    """Save one rendered Brain as PNG (+PDF) with the matplotlib
+    colourbar — and the R-opacity legend — underneath. Shared by
+    `render_one` and `render_cell_gradient_panels` so every panel
+    carries an identical colourbar."""
+    png_path = str(stem) + '.png'
+    pdf_path = str(stem) + '.pdf'
+    try:
+        brain.save_image(png_path)
+        # Embed PNG in a PDF page with a matplotlib colourbar underneath
+        # so the labels show raw values (not the shifted numbers MNE
+        # would otherwise print).
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+        img = plt.imread(png_path)
+        h_in = img.shape[0] / 300; w_in = img.shape[1] / 300
+        fig = plt.figure(figsize=(w_in, h_in + 0.55), dpi=300)
+        gs = fig.add_gridspec(
+            2, 1, height_ratios=[img.shape[0], 55],
+            hspace=0.02, left=0.0, right=1.0, bottom=0.0, top=1.0,
+        )
+        ax_img = fig.add_subplot(gs[0])
+        ax_img.imshow(img); ax_img.axis('off')
+        ax_cb = fig.add_subplot(gs[1])
+        # Shrink the colourbar horizontally so it doesn't look absurd.
+        cb_pos = ax_cb.get_position()
+        cb_width_frac = 0.50 if vertex_alpha is not None else 0.55
+        cb_left = 0.08 if vertex_alpha is not None else (1 - cb_width_frac) / 2
+        ax_cb.set_position([cb_left, cb_pos.y0,
+                             cb_width_frac, cb_pos.height * 0.4])
+        norm = Normalize(vmin=cbar_info['vmin'], vmax=cbar_info['vmax'])
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        cbar = fig.colorbar(sm, cax=ax_cb, orientation='horizontal')
+        cbar.set_ticks(cbar_info['ticks'])
+        cbar.set_ticklabels([f'{t:g}' for t in cbar_info['ticks']])
+        cbar.set_label(cbar_info['label'], fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
+        if vertex_alpha is not None:
+            # A compact second legend: black is composited over the same
+            # light-grey background with alpha increasing from R=0 to R=1.
+            ax_alpha = fig.add_axes(
+                [0.68, cb_pos.y0, 0.24, cb_pos.height * 0.4])
+            ramp = np.linspace(0.0, 1.0, 256)
+            rgba = np.zeros((1, 256, 4), dtype=float)
+            rgba[..., :3] = 0.05
+            opaque_cutoff = cbar_info['alpha_opaque_cutoff']
+            if opaque_cutoff is None:
+                rgba[..., 3] = (AGREEMENT_ALPHA_MAX
+                                * ramp ** AGREEMENT_ALPHA_GAMMA)
+            elif opaque_cutoff > 0:
+                rgba[..., 3] = np.clip(
+                    ramp / opaque_cutoff, 0.0, 1.0) ** AGREEMENT_ALPHA_GAMMA
+            else:
+                rgba[..., 3] = (ramp > 0).astype(float)
+            ax_alpha.set_facecolor('#d9d9d9')
+            ax_alpha.imshow(rgba, aspect='auto', origin='lower',
+                            extent=[0, 1, 0, 1])
+            ax_alpha.set_yticks([])
+            ax_alpha.set_xticks([0, 0.5, 1])
+            ax_alpha.tick_params(axis='x', labelsize=8)
+            ax_alpha.set_xlabel(cbar_info['alpha_label'], fontsize=8)
+        # PNG always; PDF only if SAVE_PDF (default off).
+        fig.savefig(png_path, dpi=300, bbox_inches='tight')
+        if SAVE_PDF:
+            fig.savefig(pdf_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  wrote {png_path if not SAVE_PDF else pdf_path}")
+    except Exception as exc:
+        print(f"  [mne] save failed: {exc}")
+    finally:
+        try:
+            brain.close()
+        except Exception:
+            pass
+
+
 def render_one(ds, map_name, mask_name, nii_path, amp_path, mode,
                 cells_df, subjects_dir, hemi, view,
                 roi_mask_img=None, outline_mask_img=None):
@@ -751,75 +827,149 @@ def render_one(ds, map_name, mask_name, nii_path, amp_path, mode,
     if not PLOT_CELLS:
         mode_tag = f'{mode_tag}_no_cells'
     stem = out_dir / f'{map_name}__{mask_name}__{mode_tag}__{hemi}_{view}'
-    png_path = str(stem) + '.png'
-    pdf_path = str(stem) + '.pdf'
-    try:
-        brain.save_image(png_path)
-        # Embed PNG in a PDF page with a matplotlib colourbar underneath
-        # so the labels show raw values (not the shifted numbers MNE
-        # would otherwise print).
-        from matplotlib.cm import ScalarMappable
-        from matplotlib.colors import Normalize
-        img = plt.imread(png_path)
-        h_in = img.shape[0] / 300; w_in = img.shape[1] / 300
-        fig = plt.figure(figsize=(w_in, h_in + 0.55), dpi=300)
-        gs = fig.add_gridspec(
-            2, 1, height_ratios=[img.shape[0], 55],
-            hspace=0.02, left=0.0, right=1.0, bottom=0.0, top=1.0,
-        )
-        ax_img = fig.add_subplot(gs[0])
-        ax_img.imshow(img); ax_img.axis('off')
-        ax_cb = fig.add_subplot(gs[1])
-        # Shrink the colourbar horizontally so it doesn't look absurd.
-        cb_pos = ax_cb.get_position()
-        cb_width_frac = 0.50 if vertex_alpha is not None else 0.55
-        cb_left = 0.08 if vertex_alpha is not None else (1 - cb_width_frac) / 2
-        ax_cb.set_position([cb_left, cb_pos.y0,
-                             cb_width_frac, cb_pos.height * 0.4])
-        norm = Normalize(vmin=cbar_info['vmin'], vmax=cbar_info['vmax'])
-        sm = ScalarMappable(cmap=cmap, norm=norm)
-        cbar = fig.colorbar(sm, cax=ax_cb, orientation='horizontal')
-        cbar.set_ticks(cbar_info['ticks'])
-        cbar.set_ticklabels([f'{t:g}' for t in cbar_info['ticks']])
-        cbar.set_label(cbar_info['label'], fontsize=9)
-        cbar.ax.tick_params(labelsize=8)
-        if vertex_alpha is not None:
-            # A compact second legend: black is composited over the same
-            # light-grey background with alpha increasing from R=0 to R=1.
-            ax_alpha = fig.add_axes(
-                [0.68, cb_pos.y0, 0.24, cb_pos.height * 0.4])
-            ramp = np.linspace(0.0, 1.0, 256)
-            rgba = np.zeros((1, 256, 4), dtype=float)
-            rgba[..., :3] = 0.05
-            opaque_cutoff = cbar_info['alpha_opaque_cutoff']
-            if opaque_cutoff is None:
-                rgba[..., 3] = (AGREEMENT_ALPHA_MAX
-                                * ramp ** AGREEMENT_ALPHA_GAMMA)
-            elif opaque_cutoff > 0:
-                rgba[..., 3] = np.clip(
-                    ramp / opaque_cutoff, 0.0, 1.0) ** AGREEMENT_ALPHA_GAMMA
-            else:
-                rgba[..., 3] = (ramp > 0).astype(float)
-            ax_alpha.set_facecolor('#d9d9d9')
-            ax_alpha.imshow(rgba, aspect='auto', origin='lower',
-                            extent=[0, 1, 0, 1])
-            ax_alpha.set_yticks([])
-            ax_alpha.set_xticks([0, 0.5, 1])
-            ax_alpha.tick_params(axis='x', labelsize=8)
-            ax_alpha.set_xlabel(cbar_info['alpha_label'], fontsize=8)
-        # PNG always; PDF only if SAVE_PDF (default off).
-        fig.savefig(png_path, dpi=300, bbox_inches='tight')
-        if SAVE_PDF:
-            fig.savefig(pdf_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-        print(f"  wrote {png_path if not SAVE_PDF else pdf_path}")
-    except Exception as exc:
-        print(f"  [mne] save failed: {exc}")
-    finally:
-        try:
-            brain.close()
-        except Exception:
-            pass
+    _save_brain_figure(brain, stem, cmap, cbar_info, vertex_alpha)
+
+
+# ── Cell-gradient figure panels (one map, four overlays) ─────────────
+# The mPFC cell panels and the fMRI gradient figure have to show the SAME
+# map, so they are rendered here, from this script's projection pipeline,
+# rather than rebuilt next to the cell analysis. Only the cell markers and
+# the split geometry come from cell_fMRI_angle_match.
+CELL_PANEL_SPLITS_CSV = Path(
+    '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans'
+    '/derivatives/group/cell_gradient_master/2026-08-28_15-19-35'
+    '/final_splits/final_splits_per_cell.csv')
+CELL_PANEL_SCHEME = 'pc1_ventral_dorsal'   # the split reported in the paper
+CELL_PANEL_DATASET = 'quarters'
+# Unit-vector maps (one equal vote per subject) rather than the
+# magnitude-weighted group mean. Amplitude weighting silently suppresses a
+# weak-but-consistent direction — here the -90 deg territory — because the
+# subjects and voxels with the largest effects dominate the group vector.
+# That is a display bias against the smallest true effect, so these panels
+# use equal subject weight. Opacity still comes from the unit-vector mean
+# resultant length (`_unit_agreement_path`), which is unchanged either way.
+CELL_PANEL_UNIT_VECTOR = True
+
+
+def render_cell_gradient_panels(dataset=CELL_PANEL_DATASET,
+                                splits_csv=CELL_PANEL_SPLITS_CSV,
+                                out_dir=None, hemis=HEMIS, view='medial',
+                                use_unit_vector=CELL_PANEL_UNIT_VECTOR):
+    """Four figure panels that share ONE gradient map, per hemisphere:
+
+      A  gradient only
+      B  gradient + black DSR main-effect outline
+      C  gradient + all mPFC cells in grey
+      D  gradient + cells coloured by their group's preferred lag,
+         with the split axis (grey) and boundary (black) on top
+
+    The map is projected ONCE per hemisphere with this module's own
+    `_project_and_transform` (mode `circular_alpha`, gradient_thr1.5 gate),
+    so all four panels are pixel-identical in the map they show. NOTE the
+    default map source here is the UNIT-VECTOR branch, while `render_one`
+    follows the module-level `USE_UNIT_VECTOR_MAPS`; set both the same way
+    for these panels and the standalone fMRI gradient figure to agree. Cell
+    coordinates, group colours and the split geometry come from
+    cell_fMRI_angle_match / its `final_splits_per_cell.csv`.
+    """
+    import cell_fMRI_angle_match as cfa
+
+    subjects_dir = _ensure_fsaverage()
+    root = (HARMONIC_RESULTS_ROOT / UNIT_VECTOR_RESULTS_DIRNAME
+            if use_unit_vector else HARMONIC_RESULTS_ROOT)
+    src_tag = 'unitvec' if use_unit_vector else 'magw'
+    nii_path = root / dataset / 'angle_deg.nii.gz'
+    amp_path = root / dataset / 'amplitude.nii.gz'
+    ref_img = nib.load(str(nii_path))
+    grad_img = _resample_mask(nib.load(str(GRAD15_MASK_PATH)), ref_img)
+    outline_img = _resample_mask(
+        nib.load(str(DSR_MAIN_EFFECT_OUTLINE_PATH)), ref_img)
+
+    splits_csv = Path(splits_csv)
+    out_dir = Path(out_dir) if out_dir else splits_csv.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cells = pd.read_csv(splits_csv)
+    coords = cells[['MNI_x', 'MNI_y', 'MNI_z']].to_numpy(float)
+    grey = tuple(np.clip(np.array(cfa.GREY) * cfa.CELL_DARKEN, 0, 1))
+    split_cols = np.tile(np.array(grey + (1.0,)), (len(cells), 1))
+    grp = cells[f'{CELL_PANEL_SCHEME}_group'].to_numpy()
+    ang = cells[f'{CELL_PANEL_SCHEME}_angle'].to_numpy(float)
+    inm = grp != 'outside'
+    split_cols[inm, :3] = np.clip(
+        cfa.angles_to_colours(ang[inm])[:, :3] * cfa.CELL_DARKEN, 0, 1)
+
+    # split axis + boundary, from the master table the splits were made on
+    master_csv = splits_csv.parent.parent / 'per_cell_master.csv'
+    master = pd.read_csv(master_csv)
+    prov = cfa.load_master_provenance(master_csv)
+    axis_line, boundary_lines = cfa.compute_split_lines(
+        master, 'grad_axis_coord', master['grad_axis_coord'].to_numpy(float),
+        master['in_gradient_mask'].to_numpy(bool), 2, prov)
+
+    print(f"Cell-gradient panels: {dataset}, {src_tag} "
+          f"({'equal subject weight' if use_unit_vector else 'magnitude-weighted'}), "
+          f"{PRE_PROJ_SMOOTH_FWHM_MM:g} mm, gate=gradient_thr1.5, "
+          f"mode=circular_alpha -> {out_dir}")
+    for hemi in hemis:
+        data, cmap, fmin, fmid, fmax, cbar_info, vertex_alpha = \
+            _project_and_transform(nii_path, amp_path, 'circular_alpha',
+                                   hemi, subjects_dir, roi_mask_img=grad_img)
+        keep = coords[:, 0] <= 0 if hemi == 'lh' else coords[:, 0] >= 0
+        rng = np.random.default_rng(abs(hash(hemi)) % (2 ** 32))
+        cj = coords[keep] + rng.uniform(-cfa.JITTER_MM, cfa.JITTER_MM,
+                                        coords[keep].shape)
+        sign = -1 if hemi == 'lh' else 1
+
+        def _to_hemi(pts):
+            q = np.asarray(pts, float).copy()
+            q[:, 0] = sign * cfa.BAR_X
+            return q
+
+        for panel, cell_mode, outline, bars in (
+                ('A_gradient_only',            None,    False, False),
+                ('B_gradient_dsr_outline',     None,    True,  False),
+                ('C_gradient_cells_grey',      'grey',  False, False),
+                ('D_gradient_cells_ventral_dorsal', 'split', False, True)):
+            brain = _make_brain(hemi, subjects_dir)
+            add_kwargs = dict(hemi=hemi, fmin=fmin, fmid=fmid, fmax=fmax,
+                              colormap=cmap, alpha=OVERLAY_ALPHA,
+                              colorbar=False)
+            try:
+                brain.add_data(data, smoothing_steps=int(
+                    SURFACE_SMOOTHING_STEPS), **add_kwargs)
+            except TypeError:
+                brain.add_data(data, **add_kwargs)
+            if vertex_alpha is not None:
+                brain._layered_meshes[hemi].update_overlay(
+                    name='data', opacity=vertex_alpha)
+                brain._renderer._update()
+            if outline:
+                _add_mask_outline(brain, outline_img, hemi, subjects_dir)
+            if cell_mode is not None:
+                cols = (split_cols[keep] if cell_mode == 'split'
+                        else np.tile(np.array(grey + (1.0,)),
+                                     (int(keep.sum()), 1)))
+                for cc, col in zip(cj, cols):
+                    brain.add_foci(cc[None], coords_as_verts=False, hemi=hemi,
+                                   color=tuple(col[:3]),
+                                   scale_factor=cfa.CELL_SCALE)
+            if bars:
+                brain.add_foci(_to_hemi(axis_line), coords_as_verts=False,
+                               hemi=hemi, color=cfa.AXIS_BAR_COLOR,
+                               scale_factor=cfa.BAR_SCALE)
+                for bl in boundary_lines:
+                    brain.add_foci(_to_hemi(bl), coords_as_verts=False,
+                                   hemi=hemi, color=cfa.BOUND_BAR_COLOR,
+                                   scale_factor=cfa.BAR_SCALE)
+            try:
+                brain.show_view(view)
+            except Exception as exc:
+                print(f"  [mne] show_view({view!r}) failed: {exc}")
+            n = int(keep.sum()) if cell_mode else 0
+            stem = out_dir / (f'cellpanel_{panel}__{dataset}_{src_tag}_'
+                              f'gradient_thr1.5__{hemi}_{view}')
+            _save_brain_figure(brain, stem, cmap, cbar_info, vertex_alpha)
+            print(f'  {hemi} {panel}: {n} cells')
 
 
 def main():

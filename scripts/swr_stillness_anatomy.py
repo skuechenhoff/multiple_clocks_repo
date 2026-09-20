@@ -423,7 +423,8 @@ def figure(out_png, centres_gap, start_profiles, end_profiles, late_stats,
 # ── 5) Main ───────────────────────────────────────────────────────────
 
 def run(bundle=None, out_dir=None, unit='session', min_events=8,
-        n_perm=rip.N_SIGN_FLIPS, stillness_cache=None, pause_cache=None):
+        n_perm=rip.N_SIGN_FLIPS, stillness_cache=None, pause_cache=None,
+        pad_s=None):
     root = swr_io.get_data_root()
     if bundle is None:
         bundle = os.path.join(swr_io.derivatives_dir(root), 'group', 'swr',
@@ -437,6 +438,15 @@ def run(bundle=None, out_dir=None, unit='session', min_events=8,
     np.random.seed(SEED)
 
     data = rip.load_bundle(bundle)
+    if pad_s is not None:
+        # Re-impose the artifact pad at analysis time, exactly as
+        # `swr_final_ripple_analysis.py` does: events filtered on
+        # `dist_to_artifact_s` AND exposure rebuilt, so the rate stays events
+        # per artifact-free second.
+        import mc.analyse.swr_bundle as _swb
+        _n0 = len(data['ripples'])
+        data = _swb.repad_bundle(data, float(pad_s))
+        print(f"  re-padded to {pad_s} s: {_n0} -> {len(data['ripples'])} ripples")
     print(f"\n  bundle: {bundle}\n  {QUESTION}")
     print(f"  unit = {unit}, min {min_events} events per {unit}\n")
 
@@ -465,7 +475,7 @@ def run(bundle=None, out_dir=None, unit='session', min_events=8,
     results = {'question': QUESTION, 'bundle': bundle, 'unit': unit,
                'min_events': min_events, 'gap_min_s': GAP_MIN_S,
                'gap_max_s': GAP_MAX_S, 'late_window_s': list(LATE_WINDOW),
-               'n_sign_flips': n_perm, 'seed': SEED,
+               'n_sign_flips': n_perm, 'seed': SEED, 'pad_s': pad_s,
                'stillness_definition': (
                    'time from the event to the next key press of any kind '
                    '(movement or uncover), from the 25 ms button series; '

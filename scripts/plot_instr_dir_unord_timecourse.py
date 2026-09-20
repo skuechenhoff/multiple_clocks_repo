@@ -87,6 +87,13 @@ PANELS = (
         "traces": [("HC_left", memory_model(lvl), MEMORY_DARK, "L"),
                    ("HC_right", memory_model(lvl), MEMORY_LIGHT, "R")]}
        for lvl in ("A", "AB", "ABC", "ABCD")]
+    # The memory model in the SAME mask as the plan effect, raw betas, to show
+    # it is a null there: once beside the plan trace, once on its own.
+    + [{"name": "plan_and_memory_mPFC_ABCD", "svc": SVC_RAW,
+        "traces": [("mPFC", plan_model("ABCD"), MPFC, "plan"),
+                   ("mPFC", memory_model("ABCD"), MEMORY_DARK, "memory")]},
+       {"name": "memory_mPFC_ABCD", "svc": SVC_RAW,
+        "traces": [("mPFC", memory_model("ABCD"), MEMORY_DARK, None)]}]
 )
 
 
@@ -134,7 +141,7 @@ def draw_panel(panel, mid):
     traces = {}
     for row, (mask, model, colour, label) in enumerate(panel["traces"]):
         t_values, p_fwe, t_crit, path = load_trace(panel["svc"], mask, model)
-        traces[mask] = (t_values, p_fwe, t_crit, path)
+        traces[(mask, model)] = (t_values, p_fwe, t_crit, path)
         # one significance rail per trace, stacked so two traces never overlap
         for (_n, start, stop, _s), p in zip(EPOCHS, p_fwe):
             if p < .05:
@@ -144,7 +151,7 @@ def draw_panel(panel, mid):
 
     ax.axhline(0, color="grey", linewidth=.6, zorder=1)
     for mask, model, colour, label in panel["traces"]:
-        t_values = traces[mask][0]
+        t_values = traces[(mask, model)][0]
         ax.plot(mid, t_values, "-o", color=colour, markersize=2.6,
                 linewidth=1.3, zorder=3, clip_on=False)
 
@@ -152,25 +159,49 @@ def draw_panel(panel, mid):
     # placed at the condition where the traces are furthest apart, and offset
     # away from each other, so they land inside the axes rather than clipping
     # at an edge or colliding with the significance rails above.
-    labelled = [(m, c, l) for m, _mod, c, l in panel["traces"] if l]
+    lower_anchor = None
+    labelled = [((m, mod), c, l) for m, mod, c, l in panel["traces"] if l]
     if len(labelled) > 1:
-        stack = np.array([traces[m][0] for m, _c, _l in labelled])
+        stack = np.array([traces[key][0] for key, _c, _l in labelled])
         split = int(np.argmax(stack.max(0) - stack.min(0)))
         order = np.argsort(-stack[:, split])
         for rank, index in enumerate(order):
-            mask, colour, label = labelled[index]
-            ax.annotate(label, (mid[split], stack[index, split]),
-                        textcoords="offset points",
-                        xytext=(3.0, 3.0 if rank == 0 else -8.5),
+            _key, colour, label = labelled[index]
+            # Anchor to the trace's own extreme, not to its value at `split`.
+            # A label sits to the RIGHT of its anchor, so anchoring at the local
+            # value lets a long label run into the trace further along; anchoring
+            # at the series max (top label) or min (bottom label) cannot.
+            top = rank == 0
+            # The label sits to the RIGHT of its anchor and spans roughly the
+            # left half of the axis, so it is anchored on the extreme of THAT
+            # segment only. Anchoring on the whole trace's extreme drags the
+            # lower label down to a minimum that may occur far right, pushing it
+            # onto the x axis; anchoring on the local value lets the trace catch
+            # up with it further along. Left half, own extreme, is free of both.
+            span = stack[index][:len(mid) // 2 + 1]
+            if not top:
+                lower_anchor = float(span.min())
+            ax.annotate(label,
+                        (mid[split] if top else mid[0],
+                         stack[index].max() if top else span.min()),
+                        textcoords="offset points", xytext=(3.0, 3.0 if top else -10.0),
                         fontsize=8, color=colour, fontweight="bold")
 
-    ax.margins(y=.12)   # room for the inline labels below the lowest point
+    ax.margins(y=.18 if len(panel["traces"]) > 1 else .12)
+    if lower_anchor is not None:
+        # The bottom label is offset in POINTS, so whether it clears the axis
+        # depends on the data range -- a deep anchor put it on the spine. Reserve
+        # the space explicitly instead of relying on the margin.
+        low, high = ax.get_ylim()
+        needed = lower_anchor - .30 * (high - low)
+        if needed < low:
+            ax.set_ylim(needed, high)
     ax.set_xlim(0, 12)
     ax.set_xticks([0, 3, 6, 9, 12])
     ax.set_xlabel("time (s)", fontsize=9, labelpad=1.0)
     ax.set_ylabel("group $t$", fontsize=9, labelpad=1.0)
     ax.set_yticks(integer_yticks(np.concatenate(
-        [traces[m][0] for m, _mod, _c, _l in panel["traces"]] + [[0.0]])))
+        [traces[(m, mod)][0] for m, mod, _c, _l in panel["traces"]] + [[0.0]])))
     ax.tick_params(labelsize=8, length=2, pad=1.5)
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -195,11 +226,12 @@ def main():
         stats["panels"][panel["name"]] = {
             "file": stem + ".pdf",
             "betas": "demeaned" if panel["svc"] is SVC_DEMEAN else "raw",
-            "traces": {mask: {"model": model,
-                              "t": traces[mask][0].round(4).tolist(),
-                              "p_FWE": traces[mask][1].round(4).tolist(),
-                              "t_crit_FWE05": round(traces[mask][2], 4),
-                              "source_file": traces[mask][3]}
+            "traces": {f"{mask}|{model}": {
+                          "mask": mask, "model": model,
+                          "t": traces[(mask, model)][0].round(4).tolist(),
+                          "p_FWE": traces[(mask, model)][1].round(4).tolist(),
+                          "t_crit_FWE05": round(traces[(mask, model)][2], 4),
+                          "source_file": traces[(mask, model)][3]}
                        for mask, model, _c, _l in panel["traces"]}}
         print("wrote", os.path.basename(stem) + ".pdf")
     with open(os.path.join(OUT, "figure_stats.json"), "w") as handle:

@@ -68,13 +68,13 @@ compared against.
 SPLITS (in-mask cells only; outside-mask cells shown grey, never used to
 define the gradient)
   1. z_tercile_consist : MNI z, 3 terciles, consistency-weighted
-                         -> ventral 0deg, mid 30deg, dorsal 60deg
-                            (fMRI at those cells: 63 / 76 / 80deg)
+                         -> ventral 30deg, mid 60deg, dorsal 60deg
+                            (fMRI at those cells: 34 / 59 / 85deg)
   2. pc1_ventral_dorsal: PC1 axis, median split, unweighted
-                         -> ventral 30deg (n=42) / dorsal 60deg (n=32)
+                         -> ventral 30deg (n=48) / dorsal 60deg (n=39)
                             *** the split reported in the manuscript ***
   3. y_antpost_subj    : MNI y, median split, subject-weighted
-                         -> posterior 60deg / anterior 90deg
+                         -> posterior 60deg / anterior 30deg
 
 Profiles are POOLED FIRST, then the peak is read off — never an average
 of per-cell argmaxes, which are unreliable at this SNR. Three weightings
@@ -86,13 +86,14 @@ weighted).
 
 TWO CAVEATS THAT BELONG WITH ANY REPORT OF THIS RESULT
 ------------------------------------------------------
-* Effective N is recording SITES, not cells. The 74 in-mask cells come
-  from 16 unique microwire bundles; cells on one bundle share identical
-  coordinates. The pc1 median (-13.81) falls exactly on a 15-cell bundle,
-  which is why that split is 42/32 rather than 37/37 (ties go to the
-  `<= median` ventral side). The per-cell circular correlation between
-  cell lag and fMRI angle is null (approx -0.15 to -0.21); the agreement
-  here is coarse and directional, at group level.
+* Effective N is recording SITES, not cells. The 87 in-mask cells (of 158
+  mPFC cells) come from 19 distinct coordinates; cells on one microwire
+  bundle share identical coordinates. Six cells sit exactly ON the pc1
+  median (-13.51), which is why that split is 48/39 rather than 43/44
+  (ties go to the `<= median` ventral side), and the two groups draw on
+  12 and 7 sites. The per-cell circular correlation between cell lag and
+  fMRI angle is null (approx -0.15 to -0.21); the agreement here is
+  coarse and directional, at group level.
 * The axis/n_groups/weighting combinations reported above were picked
   from a much larger sweep for the cleanest gradient-direction match.
   Those exploratory scripts now live in
@@ -518,7 +519,8 @@ def render_brain(c, lab, order, ang, tag, subtitle, subjects_dir,
         print(f'  wrote {png} + _bars (+pdf)')
 
 
-def _brain_cbar(png, hemi, subtitle):
+def _brain_cbar(png, hemi, subtitle,
+                prefix='cell group preferred lag (deg) on fMRI-gradient backdrop.'):
     img = plt.imread(png)
     fig = plt.figure(figsize=(img.shape[1]/300, img.shape[0]/300 + 0.7), dpi=300)
     gs = fig.add_gridspec(2, 1, height_ratios=[img.shape[0], 70],
@@ -529,8 +531,7 @@ def _brain_cbar(png, hemi, subtitle):
     sm = ScalarMappable(cmap=CIRC_CMAP, norm=Normalize(-180, 180))
     cb = fig.colorbar(sm, cax=cax, orientation='horizontal')
     cb.set_ticks([-180, -90, 0, 90, 180])
-    cb.set_label(f'cell group preferred lag (deg) on fMRI-gradient backdrop.  '
-                 f'{subtitle}  [{hemi}]', fontsize=7)
+    cb.set_label(f'{prefix}  {subtitle}  [{hemi}]', fontsize=7)
     cb.ax.tick_params(labelsize=7)
     fig.savefig(png, dpi=300, bbox_inches='tight')
     fig.savefig(png.replace('.png', '.pdf'), bbox_inches='tight')

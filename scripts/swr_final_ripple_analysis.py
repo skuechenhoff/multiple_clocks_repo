@@ -218,11 +218,23 @@ def build_press_table(data, out_csv):
     return out
 
 
-def press_table(data, bundle, out_csv, rebuild=False):
-    """Load the cache, rebuilding it if it is missing, stale or forced."""
+def press_table(data, bundle, out_csv, rebuild=None):
+    """Load the cache, rebuilding it if it is missing, stale or forced.
+
+    `rebuild=None` decides automatically; True forces a rebuild; False forces
+    reuse even when the cache looks stale. False is the right flag when the
+    bundle was rebuilt for a reason that cannot change button presses -- an
+    artifact-pad change, say -- because the cache is behavioural only and the
+    re-read costs ~15 minutes.
+    """
     stamp = os.path.join(bundle, 'swr_bundle.pkl')
     stale = (os.path.exists(out_csv) and os.path.exists(stamp)
              and os.path.getmtime(out_csv) < os.path.getmtime(stamp))
+    if rebuild is False and os.path.exists(out_csv):
+        if stale:
+            print(f"  press categories: reusing {os.path.basename(out_csv)} "
+                  f"though it predates the bundle (--rebuild=False)")
+        return pd.read_csv(out_csv)
     if rebuild or stale or not os.path.exists(out_csv):
         why = ('forced' if rebuild else 'older than the bundle' if stale
                else 'not found')
@@ -373,12 +385,25 @@ def analyse(data, presses, n_perm, caliper_s, rel_caliper, unit, min_events):
     # -- descriptives ---------------------------------------------------
     qc = data['channel_qc']
     qc = qc[~qc.excluded.fillna(False)] if 'excluded' in qc else qc
+    # Exposure must come from `intervals`, not from `channel_qc.clean_s`:
+    # `repad_bundle` rebuilds the former and deliberately leaves the latter at
+    # the bundle's native pad, so reading clean_s after a re-pad pairs a padded
+    # numerator with an unpadded denominator and understates the rate.
+    iv = data.get('intervals')
+    if iv is not None and len(iv):
+        keep = set(zip(qc.session.astype(int), qc.pair_id.astype(str)))
+        m = [(int(a), str(b)) in keep for a, b in zip(iv.session, iv.pair_id)]
+        clean_h = float((iv[m].stop_s - iv[m].start_s).sum() / 3600)
+    else:
+        clean_h = float(qc.clean_s.sum() / 3600) if 'clean_s' in qc else None
     out['descriptives'] = {
         'n_sessions': int(data['ripples'].session.nunique()),
         'n_subjects': int(data['ripples'].subject_key.nunique()),
         'n_derivations': int(len(qc)),
         'n_ripples': int(len(data['ripples'])),
-        'clean_hours': float(qc.clean_s.sum() / 3600) if 'clean_s' in qc else None,
+        'clean_hours': clean_h,
+        'clean_hours_channel_qc': (float(qc.clean_s.sum() / 3600)
+                                   if 'clean_s' in qc else None),
         'n_presses': int(len(presses)),
         'presses_by_key': presses.key.value_counts().to_dict()}
     print(f"\n  {out['descriptives']['n_sessions']} sessions | "
@@ -619,7 +644,20 @@ def feedback_stage_rows(data, presses, unit, min_events, n_perm):
     sliding = rip.sliding_window_test(baselined, centres,
                                       width_s=rip.SLIDE_WIDTHS_S[0],
                                       n_perm=n_perm, seed=SEED)
-    return centres, raw, counts, sliding
+    stats_out = {}
+    for label, prof in baselined.items():
+        rec = {'n_units': len(prof),
+               'n_events': int(counts[label]['n_events_used']),
+               'windows': {}}
+        for wname, win in NAMED_WINDOWS.items():
+            got = window_stats(prof, centres, win)
+            if got:
+                rec['windows'][wname] = got
+        res = sliding.get(label)
+        rec['clusters'] = ([c for c in res['clusters'] if c['p'] < 0.05]
+                           if res else [])
+        stats_out[label] = rec
+    return centres, raw, counts, sliding, stats_out
 
 
 def figure_main(out_png, centres, fb_raw, fb_counts, fb_sliding, res, n_perm):
@@ -804,12 +842,41 @@ def run(bundle=None, out_dir=None, presses_csv=None, rebuild=False,
                          min_events)
     res.pop('_raw_diffs', None)
 
+    still_labels, still_dists = stillness_distributions(presses)
+    res['stillness_distributions'] = still_dists
+
+    # The figure's rows 1-2 are these cells against their OWN baselines -- the
+    # conventional Sakon Eq. 2 analysis on every event of the cell. It is a
+    # different quantity from `cells[...]['vs own baseline']`, which is the
+    # target-minus-matched-control contrast on the matched subset, so it has to
+    # be tabulated separately or the figure quotes a number nothing can trace.
+    print("\n  feedback_stage rows (each cell vs its own baseline, all events)")
+    fb_c, fb_raw, fb_counts, fb_sliding, fb_stats = feedback_stage_rows(
+        data, presses[presses.kind == 'uncover'], unit, min_events, n_perm)
+    rows_fb = []
+    for label, rec in fb_stats.items():
+        w = rec['windows'].get('post (0..0.5)')
+        keep = rec['clusters']
+        print(f"    {label:26s} n={rec['n_units']:3d} ev={rec['n_events']:6d} "
+              f"{w['mean_hz']:+.4f} [{w['ci_low_hz']:+.4f},{w['ci_high_hz']:+.4f}] "
+              f"t({w['df']})={w['t']:+.2f} p={w['p_perm']:.4f}  " + ('; '.join(
+                  f"{k['direction']} {k['start_s']:+.2f}..{k['stop_s']:+.2f} s "
+                  f"p={k['p']:.4f}" for k in keep) if keep else 'no cluster'))
+        for wname, got in rec['windows'].items():
+            rows_fb.append(dict(analysis='feedback_stage', contrast=label,
+                                reading='vs own baseline (all events)',
+                                window_name=wname, n_events=rec['n_events'],
+                                **got))
+    res['feedback_stage'] = fb_stats
+    if rows_fb:
+        table = pd.concat([table, pd.DataFrame(rows_fb)], ignore_index=True)
+
     table.to_csv(os.path.join(out_dir, 'ripple_statistics.csv'), index=False)
     payload = {
         'created': datetime.now().isoformat(timespec='seconds'),
         'script': os.path.basename(__file__),
         'settings': {'bundle': bundle, 'presses_csv': presses_csv,
-                     'unit': unit, 'min_events': min_events,
+                     'pad_s': pad_s, 'unit': unit, 'min_events': min_events,
                      'caliper_s': caliper_s, 'rel_caliper': rel_caliper,
                      'n_sign_flips': n_perm, 'seed': SEED,
                      'primary_window_s': list(PRIMARY_WINDOW),
@@ -826,16 +893,6 @@ def run(bundle=None, out_dir=None, presses_csv=None, rebuild=False,
     with open(os.path.join(out_dir, 'ripple_statistics.json'), 'w') as f:
         json.dump(payload, f, indent=2, default=str)
 
-    still_labels, still_dists = stillness_distributions(presses)
-    res['stillness_distributions'] = still_dists
-    print("\n  feedback_stage rows (each cell vs its own baseline)")
-    fb_c, fb_raw, fb_counts, fb_sliding = feedback_stage_rows(
-        data, presses[presses.kind == 'uncover'], unit, min_events, n_perm)
-    for l, r in fb_sliding.items():
-        keep = [k for k in r['clusters'] if k['p'] < 0.05]
-        print(f"    {l:26s} " + ('; '.join(
-            f"{k['direction']} {k['start_s']:+.2f}..{k['stop_s']:+.2f} "
-            f"p={k['p']:.4f}" for k in keep) if keep else 'none'))
     figure_main(os.path.join(out_dir, 'ripple_main_figure.png'), fb_c, fb_raw,
                 fb_counts, fb_sliding, res, n_perm)
     figure_methods(os.path.join(out_dir, 'ripple_methods_figure.png'), res,
