@@ -72,9 +72,11 @@ TARGET = "reward_explore"
 # COLLAPSED conditions below are derived from them afterwards by relabelling,
 # so a ripple still contributes to exactly one fine condition and at most one
 # collapsed one.
-CONDITIONS = [TARGET, "error_explore", "reward_plan", "reward_execute",
+CONDITIONS = [TARGET, "error_explore", "reward_plan", "error_plan",
+              "reward_execute", "error_execute",
               "move_explore", "move_plan", "move_execute", "still_explore"]
 COLLAPSED = {"reward_all": ("reward_explore", "reward_plan", "reward_execute"),
+             "error_all": ("error_explore", "error_plan", "error_execute"),
              "move_all": ("move_explore", "move_plan", "move_execute")}
 ALL_CONDITIONS = CONDITIONS + list(COLLAPSED)
 # `mOFC` is not reliably medial -- 40% of the contacts carrying that label sit
@@ -97,6 +99,9 @@ VALENCE_C = {
     "reward_explore": "#0e3d3a",    # dark green   -- reward, first traversal
     "reward_execute": "#5b9b8d",    # bright green -- reward, route known
     "error_explore":  "#a30d6c",    # dark pink    -- error, first traversal
+    "error_plan":     "#c4568f",
+    "error_execute":  "#d4749f",    # lighter pink -- error, route known
+    "error_all":      "#a30d6c",
     # Movement presses are a CONTROL, not a feedback valence, so they take the
     # neutral grey this project uses for controls rather than a third hue that
     # would imply they sit on the same scale as the two reward conditions.
@@ -120,8 +125,11 @@ COND_LS = {
     "move_all": (0, (1.4, 1.2)),        # dotted
     "reward_explore": "-",
     "reward_execute": (0, (4, 1.5)),    # dashed
-    "error_explore": (0, (1.4, 1.2)),
+    "error_explore": (0, (4, 1.5)),
+    "error_execute": (0, (4, 1.5)),
+    "error_all": (0, (4, 1.5)),
     "move_explore": (0, (1.4, 1.2)),
+    "move_execute": (0, (1.4, 1.2)),
     "still_explore": (0, (0.8, 1.4)),
 }
 
@@ -132,7 +140,10 @@ COND_LABEL = {
     "reward_explore": "first reward uncovers",
     "reward_execute": "later reward uncovers",
     "reward_plan": "reward uncovers during planning",
-    "error_explore": "error, explore",
+    "error_explore": "incorrect uncover, explore",
+    "error_plan": "incorrect uncover, planning",
+    "error_execute": "incorrect uncover, once known",
+    "error_all": "incorrect uncovers",
     "move_explore": "movement press, explore",
     "move_plan": "movement press, planning",
     "move_execute": "movement press, execution",
@@ -163,14 +174,15 @@ def session_events(sess, data_root):
     ph = beh[["grid_no", "rep_overall", "phase3"]].drop_duplicates()
     u = unc.merge(ph, on=["grid_no", "rep_overall"], how="left")
     rows = []
+    # Every uncovering is an event, correct or not, in every phase. Dropping
+    # incorrect uncoverings outside `explore` -- as this did until 2026-09-21 --
+    # is the same assignment bug the missing movement presses were: a ripple
+    # following an error in plan or execute was assigned to whatever came before
+    # the error, up to 2 s earlier.
     for _, r in u.iterrows():
         p, ok = r.get("phase3"), int(r.correct)
-        if p == "explore":
-            rows.append((r.t_s, "reward_explore" if ok else "error_explore"))
-        elif p == "plan" and ok:
-            rows.append((r.t_s, "reward_plan"))
-        elif p == "execute" and ok:
-            rows.append((r.t_s, "reward_execute"))
+        if p in ("explore", "plan", "execute"):
+            rows.append((r.t_s, f"{'reward' if ok else 'error'}_{p}"))
 
     # Movement presses in EVERY phase, not only explore. Two reasons: it makes
     # a navigation control that is collapsible across phases, and it repairs the

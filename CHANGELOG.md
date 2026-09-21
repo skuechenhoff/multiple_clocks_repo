@@ -1,5 +1,47 @@
 # CHANGELOG
 
+## 2026-09-21 (b) — The full phase x event-type grid: no selectivity anywhere
+
+Incorrect uncoverings were also only extracted for the explore phase — the same
+assignment bug as the movement presses. Errors in plan and execute were dropped
+entirely, so a ripple following one was assigned to whatever preceded the error,
+up to 2 s earlier. Now extracted in every phase.
+
+MedialFrontal, session-level, real minus shifted null:
+
+| | reward | incorrect | navigation |
+|---|---|---|---|
+| **explore** | +0.0076 (0.009) | +0.0058 (0.006) | +0.0049 (0.19) |
+| **planning** | +0.0004 (0.95) | +0.0054 (0.39) | +0.0067 (0.16) |
+| **once known** | +0.0068 (3.1e-05) | −0.0049 (0.56, n=14) | **+0.0080 (8.2e-07)** |
+
+**No within-phase contrast is significant**, in either direction:
+
+| contrast | n | difference | p |
+|---|---|---|---|
+| explore: reward − navigation | 49 | +0.0028 | 0.55 |
+| explore: reward − incorrect | 51 | +0.0017 | 0.60 |
+| once known: reward − navigation | 53 | −0.0012 | 0.55 |
+| once known: reward − incorrect | 14 | +0.0133 | 0.13 |
+
+Nor does either event type differ across phases (reward explore vs once-known
+p = 0.73; navigation p = 0.24).
+
+**The apparent selectivity in the per-condition column is a power difference,
+not an effect difference.** Which conditions clear p < 0.05 against zero tracks
+ripple count and session count: navigation in explore has 10,654 ripples and
+misses, navigation once known has 52,228 and is the strongest cell in the grid.
+Every direct comparison is null.
+
+What survives: medial frontal HFB is locked to hippocampal ripples across the
+whole task (+0.0073, t(52) = +6.14, p = 1.1e-07), and that locking is regionally
+specific (auditory and visual null, and further-from-hippocampus regions show
+*larger* effects). Nothing in this analysis supports selectivity for reward, for
+errors, or for a task phase.
+
+Figures: `phase_explore_2`, `phase_explore_3`, `phase_known_2`, `phase_known_3`
+in `ripple_hfb_conditions_2026-09-21/`, each 2.5 x 2.5 cm.
+
 ## 2026-09-21 — Navigation presses are NOT a null control once sampled in every phase
 
 **New:** movement-press events extracted in all three phases, plus two collapsed
@@ -116,6 +158,43 @@ cluster test as any ordinary condition. Results in
 | error: exploring − once known | 52 | −0.0448 | −1.97 | 0.055 | 0.055 | none |
 | correct: exploring − once known | 61 | +0.0275 | +2.37 | 0.019 | 0.038 | none |
 | INTERACTION (correct−error) × (exploring − once known) | 52 | +0.0748 | +2.77 | 0.008 | 0.024 | increase 0.25..0.75 s, p=0.010 |
+
+### The 2 x 2 as tested (sessions every cell has) — `stage_interaction.png`
+
+Figure redesigned on SK's read: 3.2 x 3.2 cm panels, Arial 8-9 pt, lw 2.2.
+Colours now come from `rip.condition_colour` itself — valence sets the hue,
+stage sets the lightness — so a dark marker is an exploring cell here and in
+`ripple_main_figure.png` alike. The interaction time course was replaced: SK
+could not read a contrast plotted in Hz, so the two columns now show
+`correct − error` at each stage, filled teal where the correct uncover carries
+more ripples and pink where the error one does. The interaction is then simply
+"the teal panel vs the pink panel", and the cluster is shaded on both. The two
+per-stage p values are an uncorrected decomposition; the Holm adjustment sits
+on the interaction.
+
+The interaction is paired across all four cells, so it is tested only on their
+intersection; the figure now plots that, not each cell on its own session set.
+
+Own baseline, n=52 sessions:
+
+| | exploring | once known |
+|---|---|---|
+| correct uncover | **+0.0315** (p=0.002) | +0.0015 (p=0.818) |
+| error uncover | −0.0145 (p=0.068) | +0.0303 (p=0.138) |
+| correct − error | **+0.0460**, t(51)=+3.54, p=0.0010 | −0.0288, t(51)=−1.26, p=0.218 |
+
+Stillness-matched, n=49 sessions:
+
+| | exploring | once known |
+|---|---|---|
+| correct uncover | +0.0137 (p=0.259) | +0.0024 (p=0.844) |
+| error uncover | −0.0075 (p=0.384) | +0.0158 (p=0.402) |
+| correct − error | +0.0211, t(48)=+1.68, p=0.102 | −0.0134, t(48)=−0.67, p=0.501 |
+
+Note the asymmetry: on the own-baseline reading the valence effect is carried
+entirely by the exploring column (p=0.0010); the once-known column is a
+non-significant reversal (p=0.218). So "less for late positive, more for late
+negative" overstates it — late positive is flat (+0.0015), not suppressed.
 
 ### Reading
 
