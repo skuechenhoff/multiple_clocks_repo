@@ -33,6 +33,7 @@ Usage:
 
 import os
 import sys
+import json
 import pickle
 
 import numpy as np
@@ -159,8 +160,109 @@ def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
     return None
 
 
+def distance(results=None, bundle=None, out_csv=None):
+    """Euclidean distance from each cortical derivation to the hippocampus.
+
+    The control this supports: if the cortical HFB response were volume
+    conduction of the ripple itself, it would be LARGER for contacts closer to
+    the hippocampus. HFB (70-150 Hz) overlaps the ripple band (80-120 Hz), so
+    that is a real alternative and proximity is the variable that would drive it.
+
+    **Euclidean, not geodesic, and deliberately so.** Volume conduction spreads
+    through the volume, not along the cortical sheet, so straight-line distance
+    is the quantity that governs it. A geodesic distance is also not well
+    defined here: the hippocampus is not on the cortical surface, so there is no
+    surface path from it to a cortical contact. Geodesic distance would be the
+    right measure for a cortico-cortical connectivity argument; it is the wrong
+    one for this control.
+
+    Distance is measured to the NEAREST hippocampal derivation in the same
+    session -- the nearest one bounds the volume-conduction risk -- with the
+    mean over that session's hippocampal derivations reported alongside.
+    """
+    import pickle
+    from scipy import stats as st
+
+    R = results or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
+                                "group", "swr", "ripple_locked_hfb_2026-09-18")
+    b_dir = bundle or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
+                                   "group", "swr", "bundle_v2")
+    with open(os.path.join(b_dir, "swr_bundle.pkl"), "rb") as f:
+        pr = pickle.load(f)["pairs"].drop_duplicates(["session", "pair_id"])
+    coord = pr.set_index(["session", "pair_id"])[XYZ]
+
+    # The NATIVE pad, taken from the run's own settings -- not pad_s.max(),
+    # which is the sparsest pad in the stability sweep (3.0 s) and answers a
+    # different question with a third of the data.
+    with open(os.path.join(R, "result.json")) as f:
+        native = float(json.load(f)["results"].get("native_pad_s", 1.0))
+    d = pd.read_csv(os.path.join(R, "per_pair.csv"))
+    d = d[(~d.same_shaft) & (d.pad_s == native) & d.is_real]
+    print(f"  artifact pad: {native:.2f} s (the run's native pad)")
+    rows = []
+    for (sess, cx, roi), g in d.groupby(["session", "cx_pair", "roi"]):
+        try:
+            c = coord.loc[(sess, cx)].to_numpy(float)
+        except KeyError:
+            continue
+        hcs = []
+        for h in g.hc_pair.unique():
+            try:
+                hcs.append(coord.loc[(sess, h)].to_numpy(float))
+            except KeyError:
+                pass
+        if not hcs or np.isnan(c).any():
+            continue
+        hcs = np.asarray(hcs)
+        hcs = hcs[~np.isnan(hcs).any(1)]
+        if not len(hcs):
+            continue
+        dd = np.linalg.norm(hcs - c, axis=1)
+        rows.append({"session": sess, "cx_pair": cx, "roi": roi,
+                     "d_nearest_mm": float(dd.min()),
+                     "d_mean_mm": float(dd.mean()),
+                     "n_hc": int(len(dd))})
+    t = pd.DataFrame(rows)
+
+    print("\nEuclidean distance to the nearest hippocampal derivation "
+          "(same session, different-shaft only)\n")
+    print(f"  {'ROI':<17s}{'n':>5s}{'nearest (mm)':>26s}{'mean (mm)':>12s}")
+    for roi in ["MedialFrontal", "mPFC", "mOFC", "TemporalLateral", "Auditory",
+                "Visual"]:
+        g = t[t.roi == roi]
+        if not len(g):
+            continue
+        print(f"  {roi:<17s}{len(g):>5d}   median {g.d_nearest_mm.median():5.1f} "
+              f"(IQR {g.d_nearest_mm.quantile(.25):.1f}-"
+              f"{g.d_nearest_mm.quantile(.75):.1f})"
+              f"{g.d_mean_mm.median():>12.1f}")
+
+    # does proximity predict the effect? volume conduction says it should
+    eff = (d.groupby(["session", "cx_pair", "roi"])["diff"].mean()).reset_index()
+    nul = pd.read_csv(os.path.join(R, "per_pair.csv"))
+    nul = nul[(~nul.same_shaft) & (nul.pad_s == native) & (~nul.is_real)]
+    nul = nul.groupby(["session", "cx_pair", "roi"])["diff"].mean().reset_index()
+    e = eff.merge(nul, on=["session", "cx_pair", "roi"], suffixes=("_r", "_n"))
+    e["effect"] = e["diff_r"] - e["diff_n"]
+    e = e.merge(t, on=["session", "cx_pair", "roi"]).dropna(
+        subset=["effect", "d_nearest_mm"])
+    base = e[e.roi.isin(["mPFC", "mOFC", "TemporalLateral", "Auditory", "Visual"])]
+    rho, p = st.spearmanr(base.d_nearest_mm, base.effect)
+    print(f"\n  effect vs distance, pooled over cortical derivations "
+          f"(n = {len(base)}): rho = {rho:+.3f}, p = {p:.3g}")
+    print("  " + ("FURTHER from hippocampus = LARGER effect, i.e. the opposite "
+                  "of volume conduction" if rho > 0 else
+                  "closer = larger, consistent with volume conduction -- "
+                  "INVESTIGATE"))
+
+    out_csv = out_csv or os.path.join(R, "hc_distance_by_derivation.csv")
+    e.to_csv(out_csv, index=False)
+    print(f"\n  -> {out_csv}")
+    return None
+
+
 if __name__ == "__main__":
     if fire is not None:
-        fire.Fire({"run": run})
+        fire.Fire({"run": run, "distance": distance})
     else:
         run()

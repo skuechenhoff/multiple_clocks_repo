@@ -763,8 +763,138 @@ def figure(results=None, out_stem=None, smooth_ms=SMOOTH_MS):
     return None
 
 
+# Overlay colours. Medial frontal takes the project's Showgirl2 green (the
+# mPFC hue, CLAUDE.md); the two temporal controls are greys, so target and
+# control are separable without reading the key.
+OVERLAY_C = {"MedialFrontal": "#448363", "mPFC": "#448363", "mOFC": "#DC673E",
+             "TemporalLateral": "#8C8C8C", "Auditory": "#4F4F4F",
+             "Visual": "#B0A8C0"}
+OVERLAY_LABEL = {"MedialFrontal": "medial frontal", "TemporalLateral": "lat. temporal",
+                 "Auditory": "auditory", "Visual": "visual",
+                 "mPFC": "mPFC", "mOFC": "mOFC"}
+
+
+def overlay_figure(results=None, out_stem=None,
+                   rois=("MedialFrontal", "TemporalLateral", "Auditory"),
+                   width_cm=2.5, height_cm=2.5, font_pt=6.0, smooth_ms=100.0,
+                   n_perm=2000, seed=42, unit="session", legend=False):
+    """One small panel overlaying the target ROI with its control regions.
+
+    Significance bars come from the same cluster-based permutation the rest of
+    this project uses (`swr_sakon.cluster_perm_time`, sign-flipping across the
+    unit of inference), run on the same smoothed curves that are drawn.
+
+    At 2.5 cm a legend is wider than the panel, so it is off by default and
+    belongs in the caption; `_labelled` is written alongside with legend, axis
+    titles and the cluster statistics.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.ndimage import gaussian_filter1d
+    import mc.analyse.swr_sakon as sk
+
+    R = results
+    z = np.load(os.path.join(R, "timecourses.npz"))
+    t_ms, tr = z["t_ms"], z["traces"]
+    fs = 1000.0 / (t_ms[1] - t_ms[0])
+    ix = pd.read_csv(os.path.join(R, "timecourse_index.csv"))
+    ix["same_shaft"] = ix.same_shaft.astype(bool)
+    ix["is_real"] = ix.is_real.astype(bool)
+    if "trace_row" not in ix.columns:
+        ix["trace_row"] = np.arange(len(ix))
+    flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & (np.abs(t_ms) < NONPERI_S[1] * 1000)
+
+    curves, stats_out = {}, {}
+    for roi in rois:
+        sel = (ix.roi == roi) & (~ix.same_shaft)
+        if not sel.any():
+            continue
+        rows = []
+        for _, gi in ix[sel].groupby(unit):
+            rr = gi.trace_row.to_numpy()
+            r = tr[rr[gi.is_real.to_numpy()]]
+            n = tr[rr[~gi.is_real.to_numpy()]]
+            if not len(r) or not len(n):
+                continue
+            c = r.mean(0) - n.mean(0)
+            rows.append(c - c[flank].mean())
+        if len(rows) < 5:
+            continue
+        A = np.stack(rows)
+        if smooth_ms:
+            A = gaussian_filter1d(A, (smooth_ms / 1000.0 * fs) / 2.355, axis=-1)
+        curves[roi] = A
+        _, cl, pv, _ = sk.cluster_perm_time(A, n_perm=n_perm, seed=seed)
+        sig = [(float(t_ms[a]), float(t_ms[b - 1]), float(pp))
+               for (a, b), pp in zip(cl, pv) if pp < 0.05]
+        stats_out[roi] = {"n_units": int(len(A)), "unit": unit, "clusters": sig,
+                          "peak_z": float(A.mean(0).max()),
+                          "peak_at_ms": float(t_ms[int(np.argmax(A.mean(0)))])}
+        print(f"  {OVERLAY_LABEL.get(roi, roi):<16s} n={len(A):>3d} {unit}s  "
+              f"peak {A.mean(0).max():+.4f} z at {t_ms[int(np.argmax(A.mean(0)))]:+.0f} ms")
+        for a, b, pp in sig:
+            print(f"      cluster {a:+.0f} to {b:+.0f} ms, p = {pp:.4f}")
+        if not sig:
+            print("      no cluster survives correction")
+    if not curves:
+        raise RuntimeError("no ROI had enough units")
+
+    hi = max(float((A.mean(0) + A.std(0, ddof=1) / np.sqrt(len(A))).max())
+             for A in curves.values())
+    lo = min(float((A.mean(0) - A.std(0, ddof=1) / np.sqrt(len(A))).min())
+             for A in curves.values())
+    span = hi - lo
+
+    for suffix, wcm, hcm, fpt, lab in (("", width_cm, height_cm, font_pt, legend),
+                                       ("_labelled", 9.0, 7.0, 9.0, True)):
+        fig, ax = plt.subplots(figsize=(wcm / 2.54, hcm / 2.54),
+                               constrained_layout=True)
+        for i, (roi, A) in enumerate(curves.items()):
+            m = A.mean(0)
+            se = A.std(0, ddof=1) / np.sqrt(len(A))
+            col = OVERLAY_C.get(roi, "#888")
+            ax.plot(t_ms, m, color=col, lw=1.1 if not lab else 1.5,
+                    solid_capstyle="round",
+                    label=f"{OVERLAY_LABEL.get(roi, roi)} ({len(A)})")
+            ax.fill_between(t_ms, m - se, m + se, color=col, alpha=0.16, lw=0)
+            y = hi + span * (0.10 + 0.085 * i)
+            for a, b, _pp in stats_out[roi]["clusters"]:
+                ax.plot([a, b], [y, y], color=col, lw=1.8 if not lab else 2.6,
+                        solid_capstyle="butt", clip_on=False)
+        ax.axvline(0, color="0.45", lw=0.6, ls=(0, (2, 2)))
+        ax.axhline(0, color="0.75", lw=0.5)
+        ax.set_xlim(t_ms[0], t_ms[-1])
+        ax.set_ylim(lo - span * 0.10, hi + span * (0.10 + 0.085 * len(curves)))
+        ax.set_xticks([-500, 0, 500] if wcm >= 4 else [-500, 500])
+        ax.set_yticks([0.0, float(np.round(hi, 2))])
+        ax.tick_params(labelsize=fpt - 0.5, length=2.0, pad=1.0)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+        if lab:
+            ax.set_xlabel("Time from hippocampal ripple peak (ms)", fontsize=fpt)
+            ax.set_ylabel("HFB, real − shifted null, vs non-peri (z)", fontsize=fpt)
+            ax.set_title("bars = cluster-corrected p < 0.05", fontsize=fpt + 1)
+            ax.legend(fontsize=fpt - 1, frameon=False, loc="upper left")
+        else:
+            ax.set_xlabel("ms from ripple", fontsize=fpt, labelpad=1)
+            ax.set_ylabel("HFB (z)", fontsize=fpt, labelpad=1)
+        stem = (out_stem or os.path.join(R, "hfb_overlay")) + suffix
+        fig.savefig(stem + ".pdf")
+        fig.savefig(stem + ".png", dpi=600)
+        plt.close(fig)
+        print(f"figure -> {stem}.pdf / .png   ({wcm:.1f} x {hcm:.1f} cm, {fpt} pt)")
+
+    with open(os.path.join(R, "hfb_overlay_clusters.json"), "w") as f:
+        json.dump({"rois": list(curves), "unit": unit, "smooth_ms": smooth_ms,
+                   "n_perm": n_perm, "seed": seed, "colours": OVERLAY_C,
+                   "stats": stats_out}, f, indent=2)
+    return None
+
+
 if __name__ == "__main__":
     if fire is not None:
-        fire.Fire({"run": run, "figure": figure})
+        fire.Fire({"run": run, "figure": figure,
+                   "overlay_figure": overlay_figure})
     else:
         run()
