@@ -68,8 +68,15 @@ POST_S = 2.0                  # a ripple belongs to an event this long after it
 MIN_RIPPLES = 15              # per (session, condition, derivation)
 SHIFT_RANGE_S = (5.0, 120.0)
 TARGET = "reward_explore"
+# Fine-grained conditions drive the nearest-event assignment; the two
+# COLLAPSED conditions below are derived from them afterwards by relabelling,
+# so a ripple still contributes to exactly one fine condition and at most one
+# collapsed one.
 CONDITIONS = [TARGET, "error_explore", "reward_plan", "reward_execute",
-              "move_explore", "still_explore"]
+              "move_explore", "move_plan", "move_execute", "still_explore"]
+COLLAPSED = {"reward_all": ("reward_explore", "reward_plan", "reward_execute"),
+             "move_all": ("move_explore", "move_plan", "move_execute")}
+ALL_CONDITIONS = CONDITIONS + list(COLLAPSED)
 # `mOFC` is not reliably medial -- 40% of the contacts carrying that label sit
 # beyond |MNI x| = 25 mm, i.e. in lateral orbitofrontal cortex, because they
 # were assigned by a 1-3 mm neighbourhood rescue rather than by the Brainnetome
@@ -94,7 +101,28 @@ VALENCE_C = {
     # neutral grey this project uses for controls rather than a third hue that
     # would imply they sit on the same scale as the two reward conditions.
     "move_explore":   "#6E6E6E",
+    "move_plan":      "#8C8C8C",
+    "move_execute":   "#4F4F4F",
+    # The collapsed pair is distinguished by LINE STYLE, not hue: colour is
+    # carrying region in the companion figure, so reusing it for condition
+    # here would make the two panels contradict each other.
+    "reward_all":     "#448363",
+    "move_all":       "#448363",
     "still_explore":  "#B9B9B9",
+}
+
+# Line style carries CONDITION where colour carries region. The companion
+# overlay figure uses colour for ROI (medial frontal green vs grey controls);
+# if this panel also used colour for condition, the same green would mean two
+# different things across two panels of the same figure.
+COND_LS = {
+    "reward_all": "-",
+    "move_all": (0, (1.4, 1.2)),        # dotted
+    "reward_explore": "-",
+    "reward_execute": (0, (4, 1.5)),    # dashed
+    "error_explore": (0, (1.4, 1.2)),
+    "move_explore": (0, (1.4, 1.2)),
+    "still_explore": (0, (0.8, 1.4)),
 }
 
 # Display names. The internal keys stay machine-readable; these are what a
@@ -106,6 +134,10 @@ COND_LABEL = {
     "reward_plan": "reward uncovers during planning",
     "error_explore": "error, explore",
     "move_explore": "movement press, explore",
+    "move_plan": "movement press, planning",
+    "move_execute": "movement press, execution",
+    "reward_all": "reward uncovers",
+    "move_all": "navigation presses",
     "still_explore": "stillness, explore",
 }
 
@@ -140,22 +172,28 @@ def session_events(sess, data_root):
         elif p == "execute" and ok:
             rows.append((r.t_s, "reward_execute"))
 
-    # movement presses during explore, and stillness during explore
-    expl = beh[beh.phase3 == "explore"]
+    # Movement presses in EVERY phase, not only explore. Two reasons: it makes
+    # a navigation control that is collapsible across phases, and it repairs the
+    # assignment -- with movement events missing from plan and execute, a ripple
+    # in those phases was assigned to a rewarded uncovering up to 2 s earlier
+    # even when a navigation press had happened in between.
     press_t = []
-    for grid, g in expl.groupby("grid_no"):
-        t, is_move = swb.movement_series(sess, int(grid), data_root=data_root)
-        if t is None:
-            continue
-        onset = float(g.new_grid_onset.iloc[0])
-        mv = onset + t[is_move]
-        lo, hi = float(g.t_A.min()), float(g.t_D.max())
-        # A grid can carry NaN bounds when its last repeat was never completed.
-        if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
-            continue
-        mv = mv[(mv >= lo) & (mv <= hi)]
-        press_t.extend(mv.tolist())
-        rows.extend((x, "move_explore") for x in mv)
+    for phase in ("explore", "plan", "execute"):
+        ph = beh[beh.phase3 == phase]
+        for grid, g in ph.groupby("grid_no"):
+            t, is_move = swb.movement_series(sess, int(grid), data_root=data_root)
+            if t is None:
+                continue
+            onset = float(g.new_grid_onset.iloc[0])
+            mv = onset + t[is_move]
+            lo, hi = float(g.t_A.min()), float(g.t_D.max())
+            # A grid can carry NaN bounds when its last repeat was never completed.
+            if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
+                continue
+            mv = mv[(mv >= lo) & (mv <= hi)]
+            press_t.extend(mv.tolist())
+            rows.extend((x, f"move_{phase}") for x in mv)
+    expl = beh[beh.phase3 == "explore"]
     # stillness: explore time at least POST_S from ANY press
     allp = np.sort(np.r_[u.t_s.to_numpy(float), np.asarray(press_t, float)])
     for grid, g in expl.groupby("grid_no"):
@@ -237,6 +275,12 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
         for c in CONDITIONS:
             counts.append({"session": sess, "cond": c,
                            "n_ripples": int((cond == c).sum())})
+        # Relabel, do not re-assign: each collapsed condition is the union of
+        # its parts, so no ripple is counted twice within it.
+        cond_coll = {k: np.isin(cond, v) for k, v in COLLAPSED.items()}
+        for c, mask in cond_coll.items():
+            counts.append({"session": sess, "cond": c,
+                           "n_ripples": int(mask.sum())})
 
         # Count equalisation. Conditions differ ~10-fold in ripple count
         # (reward_execute 97k vs reward_explore 9.5k), and a mean over 10x more
@@ -248,12 +292,13 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
         # them cut the target from 46 ripples to 30 even when the control it was
         # being compared against had 68 -- power thrown away for nothing. Each
         # contrast now subsamples only the LARGER of its two sides.
-        avail = {c: t_all[cond == c] for c in CONDITIONS}
+        avail = {c: (t_all[cond_coll[c]] if c in COLLAPSED else t_all[cond == c])
+                 for c in ALL_CONDITIONS}
         avail = {c: v for c, v in avail.items() if len(v) >= MIN_RIPPLES}
         srng = np.random.default_rng(seed + int(sess))
         pair_bal = {}
         if TARGET in avail:
-            for c in CONDITIONS:
+            for c in ALL_CONDITIONS:
                 if c == TARGET or c not in avail:
                     continue
                 k = min(len(avail[TARGET]), len(avail[c]))
@@ -266,8 +311,9 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
         for _, x in cx.iterrows():
             if x.pair_id not in idx:
                 continue
-            for c in CONDITIONS:
-                tt = t_all[cond == c]
+            for c in ALL_CONDITIONS:
+                tt = (t_all[cond_coll[c]] if c in COLLAPSED
+                      else t_all[cond == c])
                 if len(tt) < MIN_RIPPLES:
                     continue
                 for sh in shifts:
@@ -407,7 +453,7 @@ def _stats(d, db=None):
         g0 = d[d.roi.isin(rois)]
         out[name] = {"per_condition": {}, "vs_target": {},
                      "vs_target_unbalanced": {}}
-        for c in CONDITIONS:
+        for c in ALL_CONDITIONS:
             v = _eff(g0[g0.cond == c])
             if len(v) < 5:
                 continue
@@ -421,7 +467,7 @@ def _stats(d, db=None):
         # COUNT-BALANCED estimate, with the unbalanced one reported beside it
         # unbalanced, for reference
         tv = _eff(g0[g0.cond == TARGET])
-        for c in CONDITIONS:
+        for c in ALL_CONDITIONS:
             if c == TARGET:
                 continue
             cv = _eff(g0[g0.cond == c])
@@ -471,7 +517,7 @@ def _report(res, cnt):
         print(f"\n  --- {name} ---")
         print(f"    {'condition':<18s}{'n_sess':>7s}{'ripples':>9s}"
               f"{'effect':>10s}{'t':>7s}{'p':>9s}")
-        for c in CONDITIONS:
+        for c in ALL_CONDITIONS:
             v = pc.get(c)
             if not v:
                 continue
@@ -516,7 +562,7 @@ def figure(results=None, out_stem=None):
 
     for j, name in enumerate(names):
         pc = res[name]["per_condition"]
-        cs = [c for c in CONDITIONS if c in pc]
+        cs = [c for c in ALL_CONDITIONS if c in pc]
         ax = axes[0, j]
         top = max(pc[c]["effect"] + pc[c]["sem"] for c in cs)
         for i, c in enumerate(cs):
@@ -543,7 +589,7 @@ def figure(results=None, out_stem=None):
         # --- contrasts, count-balanced pairwise --------------------------
         ax = axes[1, j]
         vt = res[name].get("vs_target", {})
-        cs2 = [c for c in CONDITIONS if c in vt]
+        cs2 = [c for c in ALL_CONDITIONS if c in vt]
         if not cs2:
             ax.axis("off")
             continue
@@ -767,8 +813,9 @@ def frontal_figure(results=None, out_stem=None, smooth_ms=100.0, n_perm=2000,
             m = A.mean(0)
             se = A.std(0, ddof=1) / np.sqrt(len(A))
             col = VALENCE_C.get(c, "#888")
+            ls = COND_LS.get(c, "-")
             ax.plot(t_ms, m, color=col, lw=1.1 if not labelled else 1.4,
-                    solid_capstyle="round",
+                    ls=ls, solid_capstyle="round", dash_capstyle="round",
                     label=f"{COND_LABEL.get(c, c)} ({len(A)})")
             ax.fill_between(t_ms, m - se, m + se, color=col, alpha=0.16, lw=0)
             y = hi + span * (0.10 + 0.085 * i)

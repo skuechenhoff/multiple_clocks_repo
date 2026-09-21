@@ -1,5 +1,533 @@
 # CHANGELOG
 
+## 2026-09-21 — Navigation presses are NOT a null control once sampled in every phase
+
+**New:** movement-press events extracted in all three phases, plus two collapsed
+conditions (`reward_all`, `move_all`) in `swr_ripple_hfb_conditions.py`.
+**Results:** `.../group/swr/ripple_hfb_conditions_2026-09-21/`.
+
+### What changed and why
+
+Movement presses were only ever extracted for the **explore** phase. That had
+two consequences, one cosmetic and one serious:
+
+- a navigation control that could not be collapsed across phases, and
+- **a broken event assignment**: with no movement events in plan or execute, a
+  ripple in those phases was assigned to a rewarded uncovering up to 2 s earlier
+  even when a navigation press had happened in between.
+
+Extracting movement presses in every phase fixes both. It also **moves ripples**:
+`reward_execute` falls from 79,084 to 39,514 ripples, because roughly 40,000 were
+in fact closer to a navigation press than to the reward.
+
+### The result this overturns
+
+MedialFrontal, session-level, real minus shifted null:
+
+| condition | ripples | effect | p |
+|---|---|---|---|
+| reward, explore | 8,041 | +0.0073 | 0.0096 |
+| reward, execute | 39,514 | +0.0066 | 4.4 × 10⁻⁵ |
+| error, explore | 12,814 | +0.0058 | 0.0063 |
+| navigation, explore | 10,654 | +0.0049 | 0.19 |
+| **navigation, plan** | 10,376 | **+0.0076** | 0.065 |
+| **navigation, execute** | 53,258 | **+0.0085** | **3.5 × 10⁻⁷** |
+| **reward, all phases** | 50,542 | **+0.0055** | 1.0 × 10⁻⁴ |
+| **navigation, all phases** | 74,582 | **+0.0077** | 6.1 × 10⁻⁶ |
+
+**Navigation presses collapsed across phases give a LARGER ripple-locked medial
+frontal response than rewarded uncoverings** (+0.0077 vs +0.0055), and
+navigation during execution is the largest single condition in the whole set.
+Cluster-corrected time courses agree: reward −120 to +80 ms (p = 0.0005),
+navigation −240 to +340 ms (p = 0.0005) — navigation's is the longer one.
+
+The previous "absent after navigation presses" (+0.0049, p = 0.19) was true
+**only of explore-phase navigation** — the phase with the fewest navigation
+ripples and the weakest effect. It was an artefact of where the control was
+sampled, not a property of navigation.
+
+### What the data actually support
+
+Within a phase, event type does not separate: explore gives reward +0.0073,
+error +0.0058, navigation +0.0049; execution gives reward +0.0066, navigation
++0.0085. The variation is **across phases**, not across event types. Medial
+frontal HFB is locked to hippocampal ripples throughout the task, and this
+analysis provides no evidence that the locking is selective for reward.
+
+⚠ **The claim "selectively for reward uncovers" cannot be carried forward**, and
+the results paragraph and `ripple_locked_HFB.md` both need revising. The overall
+ripple-locking result (+0.0073, t(52) = +6.14, p = 1.1 × 10⁻⁷) and the regional
+dissociation against auditory and visual cortex are untouched.
+
+
+## 2026-09-21 (d) — Ripple rate: explore vs execute, and the crossed error cells
+
+SK looked at row 2 of `ripple_main_figure.png` (pad 0.25) and asked whether the
+apparent crossing of the two error cells — rate falls from base to test after an
+error while exploring, rises after an error once the grid is known — is really
+untested.
+
+It was untested. `ripple_statistics.json` holds `between: stage | error
+(first - later)` (t(56)=0.51, p_perm=0.61), but that is a different quantity:
+each side is the stillness-matched target-minus-control difference, not the
+base→test change, and `later` pools `while learning` with `once known`. SK
+pointed out that this pooling is the wrong way round — `while learning` is still
+exploration, so putting it on the execute side dilutes exactly the contrast of
+interest. Correct.
+
+New script `scripts/swr_stage_interaction.py`. Pooling:
+
+    exploring  = first uncovers + while learning
+    once known = the grid is known and being executed
+
+Two readings: the stillness-matched one (uncovering minus its own matched arrow
+press, as everywhere else in the pipeline) and the own-baseline one (Sakon
+Eq. 2, the quantity the figure draws). Three contrasts per reading, Holm over
+that family; same `window_stats`, same sign-flip null, same sliding-window
+cluster test as any ordinary condition. Results in
+`derivatives/group/swr/ripple_stage_interaction_2026-09-21/`.
+
+### Stillness-matched (uncover − matched arrow press, 0–0.5 s)
+
+| cell | n | Δ (Hz) | t | p_perm | stillness tgt/ctl | events |
+|---|---|---|---|---|---|---|
+| correct, exploring | 61 | +0.0128 | +1.19 | 0.243 | 0.72 / 0.72 s | 6073 |
+| correct, once known | 61 | +0.0008 | +0.08 | 0.934 | 0.50 / 0.50 s | 10412 |
+| error, exploring | 61 | −0.0101 | −1.31 | 0.195 | 0.53 / 0.55 s | 7492 |
+| error, once known | 49 | +0.0158 | +0.85 | 0.402 | 0.75 / 0.76 s | 1744 |
+
+| contrast | n | Δ (Hz) | t | p_perm | Holm | cluster |
+|---|---|---|---|---|---|---|
+| error: exploring − once known | 49 | −0.0233 | −1.18 | 0.247 | 0.493 | none |
+| correct: exploring − once known | 61 | +0.0120 | +1.00 | 0.323 | 0.493 | none |
+| INTERACTION (correct−error) × (exploring − once known) | 49 | +0.0345 | +1.46 | 0.152 | 0.455 | none |
+
+### Own baseline (−1.6..−1.1 s → 0..0.5 s)
+
+| cell | n | base | test | change | p_perm |
+|---|---|---|---|---|---|
+| correct, exploring | 61 | 0.1756 | 0.2062 | +0.0306 | 0.0009 |
+| correct, once known | 61 | 0.1780 | 0.1811 | +0.0031 | 0.626 |
+| error, exploring | 61 | 0.1918 | 0.1763 | −0.0155 | 0.033 |
+| error, once known | 52 | 0.1700 | 0.2002 | +0.0303 | 0.138 |
+
+| contrast | n | Δ (Hz) | t | p_perm | Holm | cluster |
+|---|---|---|---|---|---|---|
+| error: exploring − once known | 52 | −0.0448 | −1.97 | 0.055 | 0.055 | none |
+| correct: exploring − once known | 61 | +0.0275 | +2.37 | 0.019 | 0.038 | none |
+| INTERACTION (correct−error) × (exploring − once known) | 52 | +0.0748 | +2.77 | 0.008 | 0.024 | increase 0.25..0.75 s, p=0.010 |
+
+### Reading
+
+1. The 2×2 valence × stage interaction is real on the own-baseline reading:
+   +0.075 Hz, t(51)=2.77, p_perm=0.008, Holm 0.024, and it survives its own
+   cluster test at 0.25–0.75 s (p=0.010) — the one place in this family where
+   window choice is not doing any work.
+2. The within-error stage effect alone is only marginal even with the right
+   pooling: −0.045 Hz, t(51)=−1.97, p_perm=0.055, no cluster. So the crossing
+   SK saw is carried by both arms together, not by the error arm on its own.
+   The correct arm is the cleaner of the two (+0.028, Holm 0.038).
+3. The correct pooling does move things in the expected direction. Against the
+   wrong pooling (`first uncovers` vs `first + while learning` pooled as
+   `later`) the same contrasts gave error −0.028 (p=0.105) and the interaction
+   +0.075 (p=0.012, Holm 0.074); pooling `while learning` with exploration
+   sharpens the error arm (−0.045) and drops the interaction's Holm p from
+   0.074 to 0.024.
+4. Nothing survives on the stillness-matched reading: the interaction is
+   +0.035 Hz, p_perm=0.152, no cluster — same sign, half the size, and `error,
+   once known` keeps only 49 sessions and 1744 matched events, the thinnest
+   cell in the design. So the effect is NOT established once each side is
+   stillness-adjusted, and the own-baseline result cannot be quoted as though
+   it were.
+
+### Caveats
+
+Post-hoc: the contrasts were chosen after looking at the figure, and two
+poolings were tried before this one, so the effective family is larger than the
+three the Holm adjustment covers. `error, once known` is the limiting cell
+(52 sessions own-baseline, 49 matched). The discrepancy between the two readings
+is the thing to resolve before this goes in the manuscript — stillness is not
+balanced across these cells (0.53 s exploring vs 0.75 s once known for errors),
+which is precisely the confound the matched reading exists to remove.
+
+## 2026-09-21 (c) — SK's same-task regressor: tested on sub-02, and a retraction
+
+SK objected: if the cue confound were the whole story, adding `direction` should
+fix it completely, so something else must drive the residual. Correct. SK then
+proposed a same-task RDM (0 on same-layout pairs, 1 elsewhere) as the control.
+Tested on sub-02, cached data RDM `glmbase_01-TR4_grey_matter`, 90 within-half
+cells, using the pipeline's own RDM builders and `evaluate_model_vec`
+(intercept + z-scored regressors). 126111 of 126404 voxels NaN-free.
+
+### Structure (exact, no estimation)
+
+Within-half cells: 90 (2 halves x 45). The instruction model is 0 on 10 of them,
+and **all 10 are exactly the same-layout pairs** -- SK's proposed regressor
+targets precisely the right cells.
+
+| correlation over the 90 within-half cells | r |
+|---|---|
+| instr vs direction | **-0.245** |
+| instr vs same-task | **+0.774** |
+| direction vs same-task | -0.316 |
+
+This is the quantitative answer to the objection: `direction` shares only ~6% of
+its variance with the instruction model, so it could never have removed the
+confound. The same-task indicator shares ~60%.
+
+### Result: median single-subject t of the instruction beta across voxels
+
+| design | ordered (ABCD_rew_instr) | unordered (set) |
+|---|---|---|
+| model alone | -0.508 | -0.606 |
+| + direction (**the combo that was run**) | **-0.567** (worse) | **-0.665** (worse) |
+| + same-task | **-0.251** | **-0.390** |
+| + direction + same-task | -0.250 | -- |
+
+SK's regressor roughly halves the shift; `direction` does not help at all and
+slightly worsens it.
+
+### RETRACTION
+
+My earlier claim that "`direction` removes the uniform crossing part
+(-0.630 -> -0.289)" is withdrawn. Those two numbers were the UNORDERED model
+from the epoch GLMs as a GROUP t over 33 subjects; the -0.630 was the
+single-model fit and -0.289 the combo, i.e. different data and a different
+statistic from this within-subject test. Here, on matched data, direction makes
+the shift worse in both models. So the partial improvement I attributed to
+direction absorbing the confound is not supported, and the reasoning built on it
+was wrong.
+
+### What is still unexplained
+
+A residual negative shift survives the same-task regressor (-0.25 ordered,
+-0.39 unordered). Neither the cue confound nor the same-task contrast accounts
+for all of it. Three explanations have now failed (temporal proximity; uniform
+within-half similarity absorbed by the intercept; direction partialling), so the
+residual is recorded as OPEN rather than explained.
+
+### Cost of the fix
+
+corr(instr, same-task) = +0.77, so adding it removes ~60% of the instruction
+model's variance. What identifies the model afterwards is only its graded
+structure among DIFFERENT-task pairs -- a weaker and less specific claim than
+"the two presentations of one layout look alike", and that graded structure is
+shared with the set and execution models.
+
+Caveats: one subject; the TR4 per-TR GLM, not the epoch GLMs the reported result
+uses; single-subject regression t, not a group statistic. Script:
+scratchpad/sametask_test.py.
+
+
+## 2026-09-21 (b) — Why the within-half memory effect is negatively shifted and hemisphere-split
+
+Follow-up to the unilateral test above. SK asked how to discuss three oddities of
+the `*_REW_INSTR-*_instr_vs_dir_within` (memory) result: it is tested within
+task-half only, its t-distribution is strongly negatively shifted despite
+controlling for forward/backward demand, and the two hippocampi carry opposite
+signs. Four checks, all on the existing beta maps (n=33, 9 instruction epochs).
+
+### 1. The negative shift is a property of the WITHIN-HALF scope, not of the model
+
+Voxelwise group t over the whole brain, RAW (before demeaning), median / % t<0 /
+% t<-1.96 / % t>+1.96:
+
+| model | median t | % t<0 | t<-1.96 | t>+1.96 |
+|---|---|---|---|---|
+| memory ordered, within-half           | -0.455 | 69.7 | 5.8 | 0.4 |
+| memory unordered, within-half         | -0.289 | 63.0 | 4.2 | 0.5 |
+| memory unordered, **alone**, within   | -0.630 | 76.3 | 8.6 | 0.2 |
+| memory unordered, **alone**, ACROSS   | **+0.005** | 49.8 | 2.8 | 2.6 |
+| direction alone, within-half          | +1.478 |  6.1 | 0.1 | 29.7 |
+| direction alone, across-half          | +0.491 | 30.2 | 0.6 | 6.7 |
+
+The same model fitted across halves is centred on zero to three decimals and has
+symmetric tails (2.8% vs 2.6%). Fitted within halves it sits at -0.63. So the
+shift is NOT cognitive demand, NOT the model, and NOT the direction competitor:
+**dropping the direction regressor makes the shift worse** (-0.289 -> -0.630),
+which rules out OLS partialling as the cause.
+
+CORRECTION (same day): my first explanation for this -- temporal proximity of
+within-half trials -- is WRONG and is retracted. The instruction onsets show
+forward and backward trials are interleaved, not blocked (sub-01 pt01 order:
+forw, backw, forw, backw, forw, backw, forw, forw, backw, backw), so there is no
+temporal clustering to drive it. It is also ruled out on principle: the RSA OLS
+(`my_RSA`, l.1316-1404) appends an intercept and z-scores every regressor, so a
+UNIFORM shift of the within-half data RDM is absorbed by the intercept and
+biases no model at all.
+
+The real mechanism is documented in `same_direction_mask_2d`
+(fMRI_run_RSA_instruction.py l.363-384), written for exactly this problem:
+
+  "The instruction screen is NOT identical for the two directions of a task: it
+   shows the same four reward locations plus a 'please backwards' text, or
+   nothing, implying forwards. Every `_instr` model ignores that cue and so
+   forces dissimilarity 0 on exactly the same-task forward/backward pairs --
+   which are precisely the cells where the cue differs. Those cells carry
+   enormous leverage (they are the only 0 level in a model whose other levels
+   are >= 0.25), and no nuisance regressor can absorb them: anything correlated
+   enough with the instruction model to move its coefficient IS the instruction
+   model's own main contrast."
+
+So one stimulus fact drives both signs. The instruction model predicts MAXIMUM
+similarity (its only d=0 cells, 5 of 45 pairs per half) exactly where the screen
+physically differed; the data there are dissimilar, so its beta goes negative.
+The direction regressor is 1 on exactly those same forward/backward crossings,
+i.e. it IS that cue structure, so its beta goes positive. The two models are
+anti-correlated by design, and the anti-correlation is concentrated on the
+instruction model's highest-leverage cells. This also explains why adding
+`direction` only partially helps (-0.630 -> -0.289 median t) and why controlling
+for forward/backward cognitive demand did not help: per the docstring, no
+nuisance regressor can absorb it.
+
+### WHY `direction` ONLY HALVES THE SHIFT (SK's objection, and it is correct)
+
+If the cue effect were uniform over crossings, the direction regressor would
+absorb it completely and the residual -0.289 would not exist. The geometry says
+why it does not. Within a half (10 conditions = 5 layouts x 2 directions,
+45 pairs):
+
+| cell type | n | instruction model | direction |
+|---|---|---|---|
+| same-task crossings  | 5  | **d = 0** (its only zero level) | 1 |
+| diff-task crossings  | 20 | >= 0.25 | 1 |
+| same-direction pairs | 20 | >= 0.25 | 0 |
+
+`direction` is 1 on 25 cells and treats all 25 alike, so partialling it removes
+only the MEAN crossing-vs-non-crossing difference. Any part of the crossing
+effect specific to the 5 same-task cells survives -- and those 5 are exactly
+where the instruction model places its only d=0 prediction.
+
+There is a concrete reason the 5 differ from the other 20: for one layout, the
+forward and backward trials require OPPOSITE executed trajectories, so the
+planned action differs maximally exactly there; for different-task crossings the
+plans differ anyway. A regressor marking "same task AND crossing" would absorb
+it, but that regressor IS the instruction model's own main contrast -- which is
+what the `same_direction_mask_2d` docstring means. Hence: direction removes the
+uniform part (-0.630 -> -0.289), the same-task-specific part is unabsorbable by
+construction, and only MASKING (within_same_direction) can remove it.
+
+This is a hypothesis for the residual, not a demonstration. The samedir run
+tests it: if the shift persists on same-direction cells only, the cause is
+something else about within-half data RDMs and this account is wrong too.
+
+### THE REPORTED RESULT USES THE CONFOUNDED SCOPE
+
+`condition_files/rsa_instruction_direction_and_unordered.json` sets
+`data_rdm_scope: "within_only"` and every instruction combo carries
+`"scope": "within_only"`. The fix the code already implements --
+`within_same_direction`, which drops every forward/backward crossing -- was NOT
+run: no `*-within-samedir` map exists in the per_TR folders. NOTE: the
+instruction+direction COMBO is a control, but it is the nuisance-regressor
+control, which is the one the docstring says cannot work here; masking and
+partialling are different operations. The reported
+`ABCD_REW_INSTR-ABCD_instr_vs_dir_within` therefore includes the confounded
+cells. Re-running the instruction combos with `"scope": "within_same_direction"`
+is the decisive test, and per the config comment all scopes are subsets of the
+same cached data RDM, so it costs no new searchlight work. Cost: it keeps 20 of
+45 cells per half, and each task pair appears twice with an identical model
+value, so only 10 independent predictions per half remain. It may simply be
+underpowered -- which is a likely reason it was not the default.
+
+### 2. Demeaning under-corrects in MTL, so the left-HC effect is conservative
+
+Median raw t relative to the whole-brain median: MTL_left +0.012, MTL_right
+-0.171, HC_left +0.108, HC_right -0.055. MTL sits at or below the brain-wide
+level, so subtracting the brain-wide mean leaves MTL slightly under-corrected.
+The surviving positive left-HC effect is therefore not an artefact of
+over-correction.
+
+### 3. The L/R asymmetry is NOT created by the within-half bias
+
+The same left>right MTL gradient appears in the across-half PLAN model, which
+carries no within-half bias at all, and is LARGER there:
+
+| model | MTL_left | MTL_right | L-R |
+|---|---|---|---|
+| memory (within-half) | -0.443 | -0.626 | +0.18 |
+| plan (across-half)   | +0.629 | +0.226 | **+0.40** |
+
+So the hemispheric difference is a general property of MTL RSA fits in this
+dataset, not something the within-half scope manufactured. It does not by itself
+establish a memory-specific lateralisation.
+
+### 4. The direction regressor does not explain the right-hemisphere dip
+
+LOSO k=100 on `DIRECTION-ABCD_instr_vs_dir_within` is flat in all four masks
+(peak t=0.61, p_FWE=0.70 in MTL_right; peak t=0.22, p=0.81 in MTL_left). The
+negative excursion in right HC at `see-D-first` is therefore NOT execution-
+direction coding. This refutes the tempting "right HC codes the executed
+trajectory" story -- it was tested and is not there.
+
+Run: `instr_dir_unord_svc_loso_DEMEANED_DIRECTION_2026-09-21`.
+
+### 5. Where the selected voxels actually are
+
+Across the 33 LOSO folds in the MTL_left mask, 205 distinct voxels ever enter
+the top-100 and 56 are picked in every fold. Of those 56: 73% Left Hippocampus,
+11% posterior parahippocampal, 5% anterior parahippocampal; centroid MNI
+(-31, -20, -18). In the HC_left mask the 57 always-picked voxels are 100%
+hippocampal, centroid (-30, -17, -18). The "left hippocampus" description of the
+MTL_left readout is therefore justified by the selection, not only by the peak.
+
+### 6. Incidental: the UNORDERED memory model is stronger, and right-lateralised
+
+`ABCD_REW_INSTR_UNORDERED-ABCD_unord_vs_dir_within`, LOSO k=100, MTL_right:
+t = 3.24, p_FWE = 0.0087 at `see-A-first` -- stronger than the left-lateralised
+ordered effect (t=2.55, p=.035 at `see-C-first`). Ordered and unordered traces
+are near-identical in right HC, so the two models are highly collinear there and
+this is not a clean order/set dissociation. Flagged, not claimed; it is one more
+test in an already uncorrected family.
+
+
+## 2026-09-21 — Unilateral MTL/HC test of `*_REW_INSTR-*_instr_vs_dir_within` (instruction phase)
+
+SK asked (a) where and in which condition the peak voxel of
+`ABCD_REW_INSTR-ABCD_instr_vs_dir_within` (demeaned, resolved) sits, and
+(b) whether the hippocampal effect that vanishes bilaterally survives when each
+hemisphere is tested on its own — the bilateral null being suspect because left
+and right HC carry opposite signs.
+
+Run: `instr_dir_unord_svc_loso_DEMEANED_UNILATERAL_2026-09-21`
+(`per_TR_loso.py --mode run --axis condition --demean`, 9 instruction conditions,
+n=33, 10000 sign-flip permutations, seed 0, k=50/100/200, max-t corrected over
+voxels x conditions within each mask). Masks: `Garvert_MTL_2mm_L/R.nii.gz`
+(Mona's MTL mask split at x=0) and `hippocampus_left/right_bin50.nii.gz`.
+HC_left/HC_right were re-run as a reproduction check and match
+`instr_dir_unord_svc_loso_DEMEANED_2026-09-17` to 3 decimals.
+
+### (a) Peak voxel
+
+The whole-brain positive peak of the demeaned ABCD map is **t = +4.64 at
+MNI (-34, -22, -22), condition `see-C-first`** — left hippocampal/collateral
+border (HO sub-prob: 56% cortex, 32% WM, 12% L hippocampus). Inside the HO
+hippocampus mask the peak is t = +3.63 at (-34, -18, -18), same condition,
+62% L hippocampus.
+
+The bilateral null is indeed a cancellation, not an absence: at `see-D-first`
+right HC carries t = -3.77 at (28, -20, -14) (97% R hippocampus) while left HC
+is positive at the same condition. Left peaks early (`see-C-first`), right peaks
+late (`empty-screen`, t = +3.50).
+
+### (b) Unilateral tests — LOSO readout, peak over the 9 conditions
+
+| mask | k=50 | k=100 | k=200 | peak condition |
+|---|---|---|---|---|
+| MTL_left (Garvert L)  | t=1.92 p=.141 | **t=2.55 p=.035** | t=2.30 p=.068 | `see-C-first` |
+| MTL_right (Garvert R) | **t=2.91 p=.018** | **t=2.62 p=.034** | t=2.11 p=.094 | `see-B-first` |
+| HC_left               | t=1.80 p=.173 | t=2.35 p=.057 | **t=2.73 p=.029** | `see-C-first` (k200: `see-D-first`) |
+| HC_right              | **t=2.54 p=.042** | t=2.12 p=.094 | t=1.85 p=.151 | `empty-screen` |
+
+At the k=100 readout used in the figures: Garvert L p_FWE = .035, Garvert R
+p_FWE = .034, HC_left p_FWE = .057, HC_right p_FWE = .094. Bilateral Garvert MTL
+at k=100 was p = .077, so splitting by hemisphere does move both halves below
+.05 — but see the caveats.
+
+### Caveats, so this is not over-read
+
+1. **Post-hoc split.** The hemispheres were tested separately only after the
+   bilateral test came out null. Bonferroni over the two hemispheres alone turns
+   .035/.034 into .07/.068.
+2. **k is not fixed a priori.** No mask is significant at all three k. MTL_left
+   only at k=100; MTL_right at k=50 and k=100; HC_left only at k=200; HC_right
+   only at k=50. Reporting the best k per mask would be selection on the result.
+3. **Not the same effect on both sides.** Left peaks at `see-C-first`, right at
+   `see-B-first`/`empty-screen`. This is not one bilateral effect masked by
+   averaging; the hemispheres peak at different points of the instruction period.
+4. **The voxel-wise max-t SVC remains null everywhere.** Across all four
+   unilateral masks the voxel-wise peak p_FWE is .21-.41 and no voxel survives
+   FWE .05. The effect exists only in the LOSO multivariate readout.
+5. 4 models x 4 masks were tested; peak_p_FWE corrects over voxels x conditions
+   within each mask only, not across that family.
+
+
+## 2026-09-19 — Manuscript numbers refreshed to bundle_v2 @ 0.25 s; two reporting bugs fixed
+
+SK spotted that the main figure printed `p = 0.018` for `correct, first
+uncovers` while the results draft reported different values. Both were correct;
+they were different analyses, and the draft was quoting one that appears on no
+figure.
+
+### Bug 1 — the figure's statistic was not in the statistics file
+
+`feedback_stage_rows()` produces the figure's rows 1–2 (each cell against its
+OWN baseline, all events — Sakon Eq. 2) but its results were never written to
+`ripple_statistics.csv/json`. The draft instead quoted
+`cells[...]['vs own baseline']`, which is
+`(target − baseline) − (matched control − baseline)` on the matched subset only,
+and mislabelled it "Sakon & Kahana's Eq. 2". Three distinct numbers existed for
+one claim:
+
+| analysis | events | window 0–0.5 s | cluster |
+|---|---|---|---|
+| own baseline, all events (Eq. 2) | 5,349 | +0.0340 Hz, t(60) = +2.70, p = 0.0068 | +0.35…+0.65 s, **p = 0.018** |
+| baselined matched contrast | 3,074 | +0.0482 Hz, t(60) = +2.31, p = 0.025 | +0.25…+0.75 s, p = 0.007 |
+| matched press, no baseline | 3,074 | +0.0344 Hz, t(60) = +2.15, p = 0.032 | +0.35…+0.75 s, p = 0.003 |
+
+`feedback_stage` stats now go into both tables. The drafts were restructured on
+**own-baseline as headline, matched press as control**, and the hybrid dropped.
+
+### Bug 2 — padded numerator over unpadded denominator
+
+`repad_bundle` rebuilds `intervals` (which `rip.derivations` uses, so every rate
+and test was correct) but deliberately leaves `channel_qc.clean_s` at the
+bundle's native pad. `swr_final_ripple_analysis.py` read `clean_hours` from
+`channel_qc`, so the reported exposure did not match the reported ripple count.
+
+- reported: 94,654 ripples / **142.4 h** ← unpadded denominator
+- correct: 94,654 ripples / **131.9 h** → 0.1994 Hz
+
+`clean_hours` now comes from `intervals`; `clean_hours_channel_qc` is kept
+alongside for comparison. This also reconciles with `repad_bundle`'s own
+docstring, which cites 91.4 h at the 1.0 s pad against `channel_qc`'s 91.2 h.
+
+### `--pad_s` added to the three stillness scripts, and all reruns done
+
+`swr_stillness_control.py`, `swr_feedback_vs_matched_stillness.py` and
+`swr_stillness_anatomy.py` now accept `--pad_s` and record it. Rerun on
+`bundle_v2` at 0.25 s; every number in that section of the results draft moved:
+
+| quantity | pad 1.0 | **pad 0.25** |
+|---|---|---|
+| stage effect, unstratified | +0.0360, p = 0.044 | +0.0256, p = 0.072 |
+| stillness-standardised | +0.0169, p = 0.488 | +0.0251, p = 0.176 |
+| **attributable to stillness** | **62%** | **51%** |
+| task-free rest vs in-task stillness | −0.0234, p = 0.046 | **−0.0332, t(60) = −3.10, p = 0.0037** |
+| feedback − matched pause (correct, first) | +0.0105, p = 0.56 | +0.0161, p = 0.282 |
+
+`--rebuild=False` added to the final script so a bundle rebuilt for a pad change
+does not trigger a needless 15-minute re-read of the button series.
+
+### A result that did not reproduce
+
+At the 1.0 s pad the matched contrast was already positive before the press
+(+0.039 Hz, p = 0.074), and the draft read that as resembling Sakon's PRE effect.
+At 0.25 s it is **−0.0002 Hz (p = 0.98)**; own-baseline **+0.014 (p = 0.46)**.
+The claim is removed. The effect is now cleanly post-event: the matched contrast
+runs −0.014 Hz at the baseline window and +0.034 Hz at the test window.
+
+### Documents updated
+
+- `statistics_results_DRAFT.md` — rewritten end to end on bundle_v2 @ 0.25 s.
+- `statistics_methods_DRAFT.md` — sample, control spread (0.019 → 0.028 Hz),
+  matching-balance claim (exact in 6 of 7, 1.050 vs 1.037 s in the seventh).
+- `methods_03` — ±1 s → ±0.25 s throughout; contamination **41% → 16.5%**
+  (IQR 12.2–22.0, range 5.8–46.1); 131.9 h; 94,654 ripples; 181 of 212
+  derivations; comparison table gained a third column; added that exclusion is
+  decided at a **fixed 1.0 s reference pad** so a pad sweep cannot move the
+  sample.
+- `methods_04` — 181 derivations, 94,654 events, rate 0.195 Hz, amplitude
+  1.37 µV; candidate denominator flagged as not regenerated.
+- `methods_01`, `methods_02` — marked **STALE** (2026-09-03 bundle, 46 sessions).
+  Not retyped: their numbers come from the localisation and artifact stages, so
+  refreshing them means rerunning those, not editing text.
+
+Still outstanding: the IED-clustering χ² in `methods_03` (p = 0.18) is from the
+~8-session development set and needs `swr_rejection_bias.py` rerun; the
+right/left split and the candidate count need `swr_export.py numbers` on
+`bundle_v2`.
+
+
 ## 2026-09-17 (i) — Stage 3, definitive: location content is NOT ripple-specific
 
 Supersedes (e), (f), (h). Two changes, both from SK:
@@ -9110,3 +9638,163 @@ rather than ripple-internal coding -- a weaker claim than the project's.
 One reading worth testing rather than asserting: a ripple is a stereotyped
 population burst, so peri-ripple firing may be LESS condition-discriminative
 than ongoing task firing.
+
+## 2026-09-19 — cell/fMRI gradient panels now share ONE gradient map
+
+### The discrepancy
+The cell<->fMRI gradient brain figure (`cell_fMRI_angle_match.render_brain`)
+and the fMRI gradient figure in the manuscript
+(`harmonic_maps_brain_overlay`, `angle_deg__gradient_thr1.5__circ_alphaR_
+top100_opaque_g1.2_dsr_outline_ribbonmax`) were built from DIFFERENT volumes:
+
+  cell figure : harmonic_angle_maps/unit_vector_derived/quarters, 0 mm smoothing,
+                mask -> surface by vol_to_surf nearest >= 0.5   (2958 rh verts)
+  fMRI figure : harmonic_angle_maps/quarters (magnitude-weighted), 3 mm FWHM,
+                mask -> surface by ribbon projfrac-max (11 depths) + close 2
+                rings + drop patches < 40 verts                 (3507 rh verts)
+
+Angle difference where both masks overlap (rh pial): median 6.4 deg, mean 11.2,
+p90 27.9. Decomposed: map source median 5.8 deg, 3 mm smoothing median 1.9 deg.
+The bigger VISUAL difference is the mask projection (~550 vertices, fatter and
+smoother patch edges), plus per-vertex alpha = (R/cutoff)^1.2 in the fMRI figure
+vs uniform opacity in the cell figure.
+
+### Which map is the honest one: magnitude-weighted
+unit_vector_derived normalises every subject's vector to length 1 before
+averaging (one vote per subject); magnitude-weighted is the plain group mean of
+the per-subject RSA vectors. In the gradient mask the two angle maps differ by
+median 13.3 deg (22% of voxels > 30 deg), so the choice is not cosmetic.
+The usual reason to prefer unit-vector — one high-amplitude subject dragging
+the group direction — does NOT apply here: across the 33 subjects the largest
+share of total in-mask vector length is 4.3% (3.0% would be perfectly even) and
+strongest/weakest is 2.5x. So the magnitude-weighted map is the less-transformed
+one and is what the manuscript's fMRI gradient + DSR main effect already use.
+
+### What changed
+`harmonic_maps_brain_overlay.render_cell_gradient_panels()` renders four panels
+per hemisphere from ONE projection of that map (magnitude-weighted, 3 mm,
+gradient_thr1.5 ribbon-max gate, alpha-by-R):
+  A gradient only | B + DSR main-effect outline | C + all cells grey
+  D + cells coloured by group preferred lag, with split axis/boundary
+Written to .../cell_gradient_master/2026-08-28_15-19-35/final_splits/ as
+`cellpanel_{A..D}__quarters_gradient_thr1.5__{lh,rh}_medial.{png,pdf}`.
+`_save_brain_figure` was factored out of `render_one` so both paths share one
+colourbar. The earlier `backdrop_only_*` / `cells_all_grey_*` figures (built on
+the unit-vector backdrop) were deleted.
+
+### STILL OPEN
+`per_cell_master.csv` (run 2026-08-28_15-19-35) sampled the per-cell fMRI angles
+from unit_vector_derived at 0 mm. So the fMRI angles QUOTED for these cells
+(`fmri_z_readout.csv`, the "fMRI58/fMRI61" subtitle) still come from the
+unit-vector maps, while the panels now show the magnitude-weighted map. The cell
+lags (30/60 deg) and the ventral/dorsal split are unaffected — the split axis is
+mask GEOMETRY (PC1) and the lags are cell data only. Re-running
+cell_gradient_master_table.py with harmonic_root = the magnitude-weighted maps
+(+ 3 mm) would make the quoted numbers match the picture.
+
+### CORRECTION (same day): panels use the UNIT-VECTOR maps after all
+The recommendation above was made on the wrong criterion. "No single subject
+dominates the group vector" (max 4.3% of in-mask vector length) rules out one
+outlier subject distorting the map; it does NOT address what magnitude
+weighting actually costs here, which is a weak-but-consistent direction being
+outvoted by co-located stronger effects. The -90 deg territory is real and is
+the weakest of the effects in this mask, so amplitude weighting suppresses
+precisely the effect least able to defend itself:
+
+  voxels in gradient mask with preferred angle in [-135, -45]
+    magnitude-weighted   3.7%
+    unit-vector          6.5%
+
+Equal subject weight is the display-neutral choice, so
+`CELL_PANEL_UNIT_VECTOR = True` and the four panels are now rendered from
+`harmonic_angle_maps/unit_vector_derived/quarters` (3 mm, gradient_thr1.5
+ribbon-max gate, alpha-by-R). Files carry the map source in the name:
+`cellpanel_{A..D}__quarters_unitvec_gradient_thr1.5__{lh,rh}_medial.{png,pdf}`;
+the magnitude-weighted set was deleted.
+
+Consequence: the panels now match `per_cell_master.csv` (which sampled the
+per-cell fMRI angles from unit_vector_derived) — the "STILL OPEN" item above is
+resolved, apart from smoothing (panels 3 mm, per-cell sampling 0 mm; a median
+1.9 deg difference). What no longer matches is the manuscript's standalone fMRI
+gradient figure, which was rendered with USE_UNIT_VECTOR_MAPS = False. To make
+that agree, re-run harmonic_maps_brain_overlay.main() with
+USE_UNIT_VECTOR_MAPS = True.
+
+## 2026-09-21 (x) — Ripples carry STATE as well as location, and the two look factorised
+
+`mc/analyse/swr_explore/state_content.py`, run as
+`python scripts/swr_content_explore.py state`. SK's question: ripples carry the
+current square — do they also carry position in the ABCD sequence, and are the
+two separable factors ("square 5 while heading to B")?
+
+`state` = the reward being SOUGHT (the steps table's `state`, 1–4 = A–D), SK's
+choice. Machinery identical to the location analysis throughout: four templates
+per unit z-scored across states, leave-one-configuration-out, per-unit z-scored
+counts, the ripple's own duration as the window, per-session permutation null,
+t across sessions. ⚠ The state null is EXHAUSTIVE — only 24 label permutations
+exist for four conditions, so all 23 non-identity ones are used.
+
+### 1. State is represented, and it is not the drift confound
+
+State advances monotonically within a traversal and correlates with
+time-into-traversal at r = 0.40, so a unit that merely drifts upward would fake
+a state-D template. Leave-one-configuration-out does NOT help — the drift is
+inside every configuration. Two controls:
+
+| ROI | raw | detrended | time-matched |
+|---|---|---|---|
+| HC_all | +0.349, p = 0.030 | **+0.777, p = 4.7e-07** | +0.384, p = 0.019 |
+| HC_mid | +0.435, p = 0.019 | **+0.755, p = 0.00046** | +0.369, p = 0.035 |
+| HC_anterior | +0.181, p = 0.24 | **+0.617, p = 1.8e-05** | +0.283, p = 0.093 |
+| mOFC | +0.004, p = 0.99 | +0.497, p = 0.054 | +0.038, p = 0.87 |
+| mPFC | +0.337, p = 0.12 | **+0.538, p = 0.016** | +0.235, p = 0.25 |
+
+**Detrending makes state STRONGER, not weaker** (HC_all +0.349 → +0.777). A drift
+artefact does the opposite: it inflates the raw value and dies under detrending.
+Removing the time trend here removes noise. The assumption-free time-matched
+control (states compared only within bands of time-into-traversal) also holds in
+HC_all and HC_mid. **This is not the confound.**
+
+**A dissociation:** mPFC carries state (+0.538, p = 0.016) but NOT location
+(+0.126, p = 0.53), while hippocampus carries both. Consistent with the
+project's framing of mPFC as task structure rather than place.
+
+**Not ripple-specific**, same as location: state ripple−flank +0.254 (p = 0.11)
+in HC_all, +0.333 (p = 0.038) in HC_anterior.
+
+### 2. The conjunction is the sum of its parts — consistent with factorisation
+
+36 templates, one per (square, state); each window's 36 evidence values
+regressed on three non-overlapping indicators — `loc_only` (3 of 36),
+`state_only` (8), `both` (1), reference (24).
+
+⚠ **ERROR MADE AND CORRECTED.** The first run reported `both` at p = 2.5e-06 as
+the conjunction result. It is not: with dummy coding `both` estimates
+(true cell − reference), which is exactly what ADDITIVE location + state coding
+already predicts. The test is the INTERACTION, `b_both − (b_loc + b_state)`,
+now computed with the same permutation draws.
+
+| ROI | loc_only | state_only | interaction | p | 95% CI |
+|---|---|---|---|---|---|
+| HC_all | +0.442 (0.0074) | +0.956 (2.6e-06) | +0.108 | 0.47 | [−0.19, +0.40] |
+| HC_mid | +0.243 (0.34) | +1.009 (0.00063) | +0.287 | 0.15 | [−0.11, +0.68] |
+| HC_anterior | +0.379 (0.035) | +0.675 (0.00065) | +0.016 | 0.92 | [−0.29, +0.32] |
+| mPFC | +0.077 (0.74) | +0.660 (0.0077) | +0.147 | 0.39 | [−0.20, +0.49] |
+
+Raw betas: HC_all b_loc +0.031 + b_state +0.046 = **+0.077 predicted** vs
+**+0.111 observed**.
+
+**Both marginals are present and the interaction is not — the pattern expected
+if square and state are separable factors.** ⚠ But this rests on a null
+interaction: the HC_all CI excludes an interaction above **+0.40**, which is
+about the size of the LOCATION marginal (+0.442) and 42% of the state marginal.
+So the claim is "no conjunction as large as the location effect", not "no
+conjunction". **Exploratory; needs a pre-specified replication before it is
+described as factorisation.**
+
+### Zero-fill artefact checked and absent
+With 36 conditions, unvisited (square, state) cells are zero-filled so the unit
+abstains rather than making the window unscorable. Measured: **100% of the 36
+conditions are observed in every leave-one-out template**, and the true
+condition is no more likely to be observed than any other, so `both` is not
+measuring observedness.
