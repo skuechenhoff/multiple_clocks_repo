@@ -461,3 +461,84 @@ def score_windows(C, t0, win_grid, loo, perm=None):
     return E
 
 
+
+
+# ---------------------------------------------------------------------------
+# Generic condition templates.
+#
+# `place_map` / `zscore_map` are the location-specific case. State (4 levels)
+# and the location x state conjunction (36) need the same arithmetic over a
+# different condition label, so the general version lives here and location
+# stays as the readable special case.
+# ---------------------------------------------------------------------------
+
+
+def cond_map(spike_times, occ, cond, n_cond, exclude_grid=None, weights=None):
+    """(n_cond,) firing rate per condition for one cell, NaN where unobserved.
+
+    `cond` is a per-interval integer label in 0..n_cond-1 (negative = skip).
+    `weights` optionally replaces the spike counts, which is how the detrended
+    variant passes in residuals instead of raw counts.
+    """
+    keep = np.ones(len(occ), bool) if exclude_grid is None else \
+        (occ.cv_group.to_numpy() != exclude_grid)
+    a = occ.start_s.to_numpy()[keep]
+    b = occ.stop_s.to_numpy()[keep]
+    c = np.asarray(cond)[keep]
+    dur = b - a
+    n = count_in(spike_times, a, b) if weights is None else \
+        np.asarray(weights, float)[keep]
+    out = np.full(n_cond, np.nan)
+    for i in range(n_cond):
+        m = (c == i) & (dur > 0)
+        if m.any() and dur[m].sum() > 0:
+            out[i] = n[m].sum() / dur[m].sum()
+    return out
+
+
+def zscore_cond(m, min_obs=2, fill=0.0):
+    """z-score across conditions, sum-to-zero, with unobserved conditions set
+    to `fill`.
+
+    A cell with no data for a condition ABSTAINS there (contributes exactly
+    zero evidence) rather than making the whole window unscorable, which is
+    what NaN propagation would do once there are 36 conditions and some are
+    never visited in a given session.
+    """
+    m = np.asarray(m, float)
+    ok = np.isfinite(m)
+    if ok.sum() < min_obs:
+        return None
+    sd = np.nanstd(m)
+    if not np.isfinite(sd) or sd == 0:
+        return None
+    z = np.full(len(m), fill, float)
+    z[ok] = (m[ok] - np.nanmean(m)) / sd
+    z[ok] -= z[ok].mean()
+    return z
+
+
+def detrend_on(y, t):
+    """Residuals of y after removing a linear trend in t, column-wise.
+
+    The drift control. State advances monotonically within a traversal and
+    correlates r = 0.40 with time-into-traversal, so a cell whose rate simply
+    drifts upward would look like a state-4 cell. Removing the linear trend from
+    BOTH the template side and the window side is the model-based half of that
+    control; `matched` windows in the state script are the assumption-free half.
+    """
+    y = np.asarray(y, float)
+    t = np.asarray(t, float)
+    ok = np.isfinite(t)
+    if ok.sum() < 10:
+        return y
+    X = np.column_stack([np.ones(ok.sum()), t[ok]])
+    out = y.copy()
+    Y = y[..., ok] if y.ndim > 1 else y[ok]
+    beta, *_ = np.linalg.lstsq(X, np.atleast_2d(Y).T, rcond=None)
+    fit = (X @ beta).T
+    if y.ndim > 1:
+        out[..., ok] = Y - fit
+    else:
+        out[ok] = Y - fit.ravel()
+    return out

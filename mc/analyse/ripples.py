@@ -579,9 +579,9 @@ def condition_colour(label, index=0, scheme=None):
 # that comes out is the font asked for.
 ROW_W_CM, ROW_H_CM = 14.0, 3.2
 CM = 1 / 2.54
-FS = 8                                        # Arial 8 pt at 14 cm wide
-LW_RATE = 1.2                                 # peri-event traces: thin enough
-LW = 2.0                                      # that the SEM band stays visible
+FS = 9                                        # Arial 9 pt, CLAUDE.md's floor
+LW_RATE = 1.8                                 # peri-event traces: thick enough
+LW = 2.6                                      # to read at a 3-4 cm panel width
 
 
 # The data rows are 4 cm each. The legend and the title get their own strips
@@ -711,6 +711,13 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
                 mean, sem = (triangle_smooth(mean, smooth_bins),
                              triangle_smooth(sem, smooth_bins))
             c = colours.get(label) or condition_colour(label, i, scheme)
+            # The surviving windows belong on the trace the reader is looking
+            # at, not only on the t curve three panels to the right.
+            sl = (sliding_by_condition or {}).get(label)
+            for cl in (sl or {}).get('clusters', []):
+                if cl['p'] < CLUSTER_ALPHA:
+                    ax.axvspan(cl['start_s'], cl['stop_s'], color=c,
+                               alpha=0.16, lw=0, zorder=1)
             ax.plot(centres_of(sliding_by_condition, profiles), mean, color=c,
                     lw=LW_RATE, label=_n_label(label, n, counts),
                     solid_capstyle='round', zorder=3)
@@ -755,7 +762,10 @@ def plot_rows(rows, out_png, baseline=BASELINE_WIN, width_s=None,
                 # At the top of the frame above the condition's own point.
                 # Placed at the data point they collided as soon as four
                 # conditions had similar means.
-                ax.annotate(star, xy=(x[1], 0.97), xycoords=('data', 'axes fraction'),
+                # the test is base-vs-window, so the star belongs over the PAIR,
+                # not over one of its two points
+                ax.annotate(star, xy=(0.5 * (x[0] + x[1]), 0.97),
+                            xycoords=('data', 'axes fraction'),
                             ha='center', va='top', fontsize=FS, color=c)
         lo, hi = ax.get_ylim()
         ax.set_ylim(lo, hi + 0.14 * (hi - lo))       # headroom for the stars

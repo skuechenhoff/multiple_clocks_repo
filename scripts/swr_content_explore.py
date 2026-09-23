@@ -72,6 +72,14 @@ ANALYSES = {
         "ieeg_location_decoder",
         "the iEEG decoder gate for sequence analysis, with positive control",
         "gate CLOSED; run the positive control before believing any null"),
+    "state": (
+        "state_content",
+        "do ripples carry STATE (A/B/C/D), and is it factorised from location?",
+        "see output -- drift-controlled and time-matched variants reported"),
+    "compositional": (
+        "compositional",
+        "ordered state structure across consecutive ripples; does HC lead mPFC?",
+        "see output -- the two compositional tests this dataset can support"),
     "location_timecourse": (
         "location_timecourse",
         "arrival-locked location time course",

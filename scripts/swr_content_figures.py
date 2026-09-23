@@ -1610,13 +1610,245 @@ def figure15(d, xlim_ms=250, compact=False):
 
 
 
+def figure16(d):
+    """State, location, their conjunction, and whether ripples bind them."""
+    src = _latest("ripple_state_content_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 16 skipped: no state results")
+        return
+    R = pd.read_csv(os.path.join(src, "state_per_session.csv"))
+    K = pd.read_csv(os.path.join(src, "conjunction_per_session.csv"))
+    P = pd.read_csv(os.path.join(src, "coupling_per_session.csv"))
+    rois = [r for r in ["HC_all", "HC_mid", "HC_anterior", "mOFC", "mPFC"]
+            if (R.roi == r).any()]
+    fig, ax = plt.subplots(2, 2, figsize=(19 * CM, 13 * CM))
+
+    def _bars(a, get, labels, cols, ylab, title, hatch=None):
+        w = .8 / len(labels)
+        for i, lab in enumerate(labels):
+            m, e, p = [], [], []
+            for rn in rois:
+                v = get(rn, lab).dropna()
+                m.append(v.mean() if len(v) else np.nan)
+                e.append(v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else 0)
+                p.append(stats.ttest_1samp(v, 0)[1] if len(v) >= 5 else np.nan)
+            x = np.arange(len(rois)) + (i - (len(labels) - 1) / 2) * w
+            a.bar(x, m, w, yerr=e, capsize=2, color=cols[i], edgecolor="none",
+                  label=lab)
+            for xx, mm, pp, ee in zip(x, m, p, e):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + np.sign(mm) * (ee + .04), "*", ha="center",
+                           va="bottom" if mm > 0 else "top", fontsize=9)
+        a.axhline(0, color="grey", lw=1)
+        a.set_xticks(range(len(rois)))
+        a.set_xticklabels([roi_display(r) for r in rois], rotation=30,
+                          ha="right", fontsize=7)
+        a.set_ylabel(ylab)
+        a.legend(frameon=False, fontsize=6.5)
+        a.set_title(title, loc="left", fontsize=9)
+
+    # a — state, and how it behaves under the two drift controls
+    def g_state(rn, lab):
+        if lab == "time-matched":
+            return R[(R.roi == rn) & (~R.detrend)].get(
+                "z_state_timematched", pd.Series(dtype=float))
+        return R[(R.roi == rn) & (R.detrend == (lab == "detrended"))].z_state
+    _bars(ax[0, 0], g_state, ["raw", "detrended", "time-matched"],
+          ["#FCDDE3", "#D7657F", "#5C1027"], "state signal (z vs null)",
+          "a  STATE survives both drift controls\n   (detrending makes it "
+          "stronger, not weaker)")
+
+    # b — location for comparison, same windows
+    def g_loc(rn, lab):
+        return R[(R.roi == rn) & (R.detrend == (lab == "detrended"))].z_location
+    _bars(ax[0, 1], g_loc, ["raw", "detrended"], ["#7eb1c4", "#0a607a"],
+          "location signal (z vs null)",
+          "b  LOCATION, same ripples\n   mPFC has state but no location")
+
+    # c — the conjunction test
+    a = ax[1, 0]
+    terms = [("z_loc_only", "location only", "#0a607a"),
+             ("z_state_only", "state only", "#5C1027"),
+             ("z_interaction", "INTERACTION", "#DC673E")]
+    w = .8 / 3
+    for i, (col, lab, c) in enumerate(terms):
+        m, e, p = [], [], []
+        for rn in rois:
+            v = K[K.roi == rn][col].dropna()
+            m.append(v.mean() if len(v) else np.nan)
+            e.append(v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else 0)
+            p.append(stats.ttest_1samp(v, 0)[1] if len(v) >= 5 else np.nan)
+        x = np.arange(len(rois)) + (i - 1) * w
+        a.bar(x, m, w, yerr=e, capsize=2, color=c, edgecolor="none", label=lab)
+        for xx, mm, pp, ee in zip(x, m, p, e):
+            if np.isfinite(pp) and pp < .05:
+                a.text(xx, mm + ee + .04, "*", ha="center", fontsize=9)
+    a.axhline(0, color="grey", lw=1)
+    a.set_xticks(range(len(rois)))
+    a.set_xticklabels([roi_display(r) for r in rois], rotation=30, ha="right",
+                      fontsize=7)
+    a.set_ylabel("coefficient (z vs label-permutation null)")
+    a.legend(frameon=False, fontsize=6.5)
+    a.set_title("c  both parts present, conjunction adds nothing\n"
+                "   = separable factors, within our power", loc="left",
+                fontsize=9)
+
+    # d — binding
+    a = ax[1, 1]
+    for i, rn in enumerate(rois):
+        g = P[P.roi == rn]
+        if not len(g):
+            continue
+        for k, (col, c) in enumerate((("r_ripple", "#5C1027"),
+                                      ("r_flank", "#D0C7CB"))):
+            a.bar(i + (k - .5) * .35, g[col].mean(), .35,
+                  yerr=g[col].std(ddof=1) / np.sqrt(len(g)), capsize=2,
+                  color=c, edgecolor="none",
+                  label=("ripple" if k == 0 else "matched flank")
+                  if i == 0 else None)
+    a.axhline(0, color="grey", lw=1)
+    a.set_xticks(range(len(rois)))
+    a.set_xticklabels([roi_display(r) for r in rois], rotation=30, ha="right",
+                      fontsize=7)
+    a.set_ylabel("location-state coupling\n(partial r within a window)")
+    a.legend(frameon=False, fontsize=6.5)
+    v = P[P.roi == "HC_all"].dz.dropna()
+    ci = stats.t.interval(0.95, len(v) - 1, loc=v.mean(),
+                          scale=v.std(ddof=1) / np.sqrt(len(v)))
+    a.set_title(f"d  ripples do NOT bind them more\n"
+                f"   HC pooled \u0394z = {v.mean():+.3f}, "
+                f"95% CI [{ci[0]:+.3f}, {ci[1]:+.3f}]", loc="left", fontsize=9)
+
+    kk = K[K.roi == "HC_all"]
+    ci_i = stats.t.interval(0.95, len(kk) - 1, loc=kk.z_interaction.mean(),
+                            scale=kk.z_interaction.std(ddof=1) / np.sqrt(len(kk)))
+    fig.suptitle(
+        "Figure 16 — position in the ABCD sequence, and whether ripples bind it "
+        "to location\n"
+        "State is carried in ripples and survives both drift controls (a), but "
+        "it is carried outside them too and is already known to be "
+        "network-wide.\n"
+        f"The conjunction adds nothing beyond the two parts (interaction "
+        f"{kk.z_interaction.mean():+.2f}, 95% CI [{ci_i[0]:+.2f}, "
+        f"{ci_i[1]:+.2f}]) and ripples do not increase their coupling (d). "
+        "EXPLORATORY.", fontsize=9, y=1.10)
+    fig.tight_layout()
+    save(fig, d, "fig16_state_and_binding")
+    plt.close(fig)
+
+
+
+def figure17(d):
+    """The two compositional tests this dataset can support. Both null."""
+    src = _latest("ripple_compositional_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 17 skipped: no compositional results")
+        return
+    S = pd.read_csv(os.path.join(src, "sequence_per_session.csv"))
+    X = pd.read_csv(os.path.join(src, "cross_region_per_session.csv"))
+    fig, ax = plt.subplots(1, 3, figsize=(25 * CM, 7 * CM))
+
+    # a — forward vs reverse, and why the raw values are both negative
+    a = ax[0]
+    gaps = sorted(S.gap.unique())
+    w = .35
+    for i, (col, lab, c) in enumerate((("z_forward", "forward", "#5C1027"),
+                                       ("z_reverse", "reverse", "#D7657F"))):
+        m = [S[S.gap == g][col].mean() for g in gaps]
+        e = [S[S.gap == g][col].sem() for g in gaps]
+        a.bar(np.arange(len(gaps)) + (i - .5) * w, m, w, yerr=e, capsize=2,
+              color=c, edgecolor="none", label=lab)
+    a.axhline(0, color="grey", lw=1)
+    a.set_xticks(range(len(gaps)))
+    a.set_xticklabels([f"{int(g * 1000)} ms" for g in gaps])
+    a.set_xlabel("max gap between paired ripples")
+    a.set_ylabel("transition score (z vs pairing shuffle)")
+    a.legend(frameon=False, fontsize=7)
+    a.set_title("a  both negative — a STRUCTURAL floor.\n"
+                "   Residuals sum to zero, so a positive\n"
+                "   diagonal forces the off-diagonal down",
+                loc="left", fontsize=8.5)
+
+    # b — the contrast that is free of it
+    a = ax[1]
+    for i, g in enumerate(gaps):
+        v = S[S.gap == g].z_fwd_minus_rev.dropna()
+        ci = stats.t.interval(0.95, len(v) - 1, loc=v.mean(),
+                              scale=v.std(ddof=1) / np.sqrt(len(v)))
+        a.scatter(np.full(len(v), i) + np.random.uniform(-.12, .12, len(v)), v,
+                  s=9, color="#CCB178", alpha=.5, edgecolors="none")
+        a.plot([i - .28, i + .28], [v.mean()] * 2, color=OBSERVED_VALUE_COLOR,
+               lw=2.5)
+        a.plot([i, i], ci, color=OBSERVED_VALUE_COLOR, lw=1.4)
+        a.text(i, a.get_ylim()[1],
+               f"p={stats.ttest_1samp(v, 0)[1]:.2g}\n{(v > 0).sum()}/{len(v)}",
+               ha="center", va="bottom", fontsize=6.5)
+    a.axhline(0, color="grey", lw=1)
+    a.set_xticks(range(len(gaps)))
+    a.set_xticklabels([f"{int(g * 1000)} ms" for g in gaps])
+    a.set_xlabel("max gap between paired ripples")
+    a.set_ylabel("forward minus reverse (z)")
+    yl = a.get_ylim(); a.set_ylim(yl[0], yl[1] + .35 * (yl[1] - yl[0]))
+    a.set_title("b  forward > reverse: consistent\n   direction, never significant",
+                loc="left", fontsize=8.5)
+
+    # c — does hippocampus lead cortex?
+    a = ax[2]
+    for pname, col in (("mPFC", get_roi_colour("mPFC")),
+                       ("mOFC", get_roi_colour("mOFC"))):
+        g = X[X.partner == pname]
+        if not len(g):
+            continue
+        lags, m, e = [], [], []
+        for lag in sorted(g.lag_s.unique()):
+            if lag == 0:
+                continue
+            aa = g[(g.lag_s == lag) & (g.direction == "hc_leads")
+                   ].set_index("session").r
+            bb = g[(g.lag_s == lag) & (g.direction == "pfc_leads")
+                   ].set_index("session").r
+            j = pd.concat([aa.rename("a"), bb.rename("b")], axis=1).dropna()
+            if len(j) < 5:
+                continue
+            dif = j.a - j.b
+            lags.append(lag * 1000); m.append(dif.mean())
+            e.append(dif.std(ddof=1) / np.sqrt(len(dif)))
+        a.errorbar(lags, m, yerr=e, marker="o", ms=3.5, lw=1.6, capsize=2,
+                   color=col, label=f"{roi_display(pname)} (n={len(j)})")
+    a.axhline(0, color="grey", lw=1)
+    a.set_xlabel("lag from the ripple (ms)")
+    a.set_ylabel("HC leads  minus  partner leads\n(partial r)")
+    a.legend(frameon=False, fontsize=7)
+    a.set_title("c  no directional asymmetry —\n"
+                "   hippocampus does not lead cortex", loc="left", fontsize=8.5)
+
+    v = S[S.gap == 0.25].z_fwd_minus_rev.dropna()
+    ci = stats.t.interval(0.95, len(v) - 1, loc=v.mean(),
+                          scale=v.std(ddof=1) / np.sqrt(len(v)))
+    fig.suptitle(
+        "Figure 17 — the two compositional-replay predictions this dataset CAN "
+        "test, since a within-ripple sequence decode is impossible here\n"
+        f"Ordered state structure across consecutive ripples, restricted to "
+        f"pairs where the participant's own state does NOT change: forward "
+        f"minus reverse {v.mean():+.2f}, 95% CI [{ci[0]:+.2f}, {ci[1]:+.2f}], "
+        f"p = {stats.ttest_1samp(v, 0)[1]:.2g} over "
+        f"{int(S[S.gap == 0.25].n_pairs.sum())} pairs.\n"
+        "Hippocampus does not lead mPFC or mOFC at any lag. Neither test "
+        "supports the account; both bounds are reported rather than a shrug. "
+        "EXPLORATORY.", fontsize=8.5, y=1.16)
+    fig.tight_layout()
+    save(fig, d, "fig17_compositional_tests")
+    plt.close(fig)
+
+
+
 if __name__ == "__main__":
     d = fig_dir()
     print("writing figures ...")
     figure1(d); figure2(d); figure2b(d); figure3(d); figure4(d); figure5(d); figure5(d, "thresh_0.2", "_tuned")
     figure6(d); figure6(d, "thresh_0.2", "_tuned")
     figure7(d); figure8(d); figure9(d)
-    figure10(d); figure11(d)
+    figure10(d); figure11(d); figure16(d); figure17(d)
     figure12(d); figure13(d); figure15(d)
     figure14(d, 'HC_mid', 'known'); figure14(d, 'HC_all', 'explore')
     print(f"\n-> {d}")

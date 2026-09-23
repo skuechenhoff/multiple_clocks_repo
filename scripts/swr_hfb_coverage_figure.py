@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 Coverage figure for the ripple-locked HFB analysis: hippocampal derivations
-that supplied the ripples, and the medial frontal derivations whose HFB was
-measured, in one 3-D rendering.
+that supplied the ripples, and the cortical derivations whose HFB was measured
+-- the medial frontal targets (mPFC, mOFC) and the temporal control regions
+(lateral temporal, A1 / auditory) -- in one 3-D rendering.
 
 Positions are the **SOURCE contact** of each bipolar derivation -- the anchor,
 whose atlas label defines the region. A bipolar derivation does not describe
@@ -20,13 +21,19 @@ if it is short, copy the cluster file:
     rsync <user>@ssh.swc.ucl.ac.uk:/ceph/behrens/svenja/human_ABCD_ephys/\
 derivatives/group/swr/macro_contacts_all.csv  <local group/swr>/
 
-Only derivations that entered the analysis are drawn: different-shaft
-(Methods §5.1) with enough clean peri-ripple epochs to yield an estimate.
+Only derivations that entered the analysis are drawn: with enough clean
+peri-ripple epochs to yield an estimate, and different-shaft (Methods §5.1) for
+the frontal sets. The temporal control regions are NOT restricted to
+different-shaft pairs -- they are the cortex the hippocampal electrode passes
+through, so sharing a shaft is their defining property, and imposing that
+filter would drop 203 of 445 lateral-temporal derivations from a figure whose
+only job is to show where the contacts are.
 
 Usage:
     conda activate env_multiple_clocks
     python scripts/swr_hfb_coverage_figure.py run --results=<ripple_locked_hfb dir>
     python scripts/swr_hfb_coverage_figure.py run --width_cm=4 --views="['left','dorsal']"
+    python scripts/swr_hfb_coverage_figure.py run --rois="['mPFC','mOFC']"   # frontal only
 
 @author: Svenja Kuchenhoff
 """
@@ -51,14 +58,31 @@ except ImportError:
 print("ARGS:", sys.argv)
 
 XYZ = ["mni_x", "mni_y", "mni_z"]
-# Project ROI colours (CLAUDE.md): mPFC = Showgirl2[1], mOFC = Showgirl2[4].
-GROUP_C = {"mPFC": rfig.PAL[1], "mOFC": rfig.PAL[4]}
+# ROI colours: `rfig.MONTAGE_C`, the same dict every other SWR figure uses, so
+# lateral temporal is the same grey here as in the locking-contrast panels.
+# mPFC = Showgirl2[1] and mOFC = Showgirl2[4] per CLAUDE.md; the control regions
+# are grey on purpose -- they are there to be unremarkable.
+GROUP_C = rfig.MONTAGE_C
+# ROIs whose definition is medial, and which the `medial_max_abs_x` restriction
+# therefore applies to. It must not touch the lateral sets.
+MEDIAL_ROIS = ("mPFC", "mOFC")
+# The temporal control regions are the cortex the hippocampal electrode passes
+# THROUGH, so most of their derivations share a shaft with the hippocampal one
+# -- that is the whole point of them as a control. Filtering to different-shaft
+# pairs, which is right for the frontal sets, would silently delete 203 of the
+# 445 lateral-temporal derivations from a figure whose job is to show coverage.
+SAME_SHAFT_OK_ROIS = ("TemporalLateral", "Auditory")
+# Legend names. The internal labels are pipeline keys, not what a reader of the
+# figure calls these regions.
+DISPLAY = {"TemporalLateral": "lateral temporal", "Auditory": "A1 / auditory"}
 
 
 def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
         views=("left", "right", "dorsal"), contact_scale=0.20,
         frontal_scale=0.22, font_pt=None, legend=True, view_labels=True,
-        medial_max_abs_x=None):
+        medial_max_abs_x=None, rois=("mPFC", "mOFC", "TemporalLateral",
+                                     "Auditory"),
+        control_scale=0.45, control_alpha=0.55):
     R = results or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
                                 "group", "swr", "ripple_locked_hfb_2026-09-16")
     b_dir = bundle or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
@@ -77,8 +101,10 @@ def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
               .set_index(["session", "anat_label"])[XYZ])
     print(f"contact table: {mc_p}\n  {mc.session.nunique()} sessions")
 
-    d = pd.read_csv(os.path.join(R, "per_pair.csv"))
-    d = d[~d.same_shaft]
+    d_all = pd.read_csv(os.path.join(R, "per_pair.csv"))
+    if "pad_s" in d_all.columns:                  # the native pad only
+        d_all = d_all[d_all.pad_s == d_all.pad_s.min()]
+    d = d_all[~d_all.same_shaft]
     if medial_max_abs_x is not None:
         # Restrict the cortical sets to genuinely medial contacts. The `mOFC`
         # label is not reliably medial: 40% of the contacts carrying it sit
@@ -92,12 +118,10 @@ def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
             [d.session, d.cx_pair]).map(mx), errors="coerce"))
         keep = pd.Series(ax, index=d.index).le(float(medial_max_abs_x))
         n0 = len(d[["session", "cx_pair"]].drop_duplicates())
-        d = d[keep | ~d.roi.isin(["mPFC", "mOFC"])]
+        d = d[keep | ~d.roi.isin(MEDIAL_ROIS)]
         print(f"medial restriction |x| <= {medial_max_abs_x} mm: "
               f"{len(d[['session','cx_pair']].drop_duplicates())} of {n0} "
               f"cortical derivations kept")
-    if "pad_s" in d.columns:                      # the native pad only
-        d = d[d.pad_s == d.pad_s.min()]
 
     def _coords(keys):
         """Anchor (source) coordinate for each (session, pair_id)."""
@@ -110,28 +134,44 @@ def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
         return (xyz[XYZ].to_numpy(float)[ok], a["hemisphere"].to_numpy()[ok],
                 int(len(a)), int(ok.sum()))
 
+    # The hippocampal set stays on the different-shaft table: it is the set of
+    # ripple sources that the frontal comparison rests on.
     hc_xyz, hc_hemi, hc_want, hc_got = _coords(zip(d.session, d.hc_pair))
     miss = [("hippocampal", hc_want, hc_got)]
     groups, counts = [], {}
-    for roi in ("mPFC", "mOFC"):
-        g = d[d.roi == roi]
+    for roi in rois:
+        src = d_all if roi in SAME_SHAFT_OK_ROIS else d
+        g = src[src.roi == roi]
         if not len(g):
+            print(f"  (no derivations for '{roi}' -- skipped)")
             continue
         xyz, hemi, want, got = _coords(zip(g.session, g.cx_pair))
         miss.append((roi, want, got))
         counts[roi] = len(xyz)
+        # The temporal sets are five times as numerous as the frontal ones and
+        # sit directly on the hippocampus. Drawn at the frontal marker size and
+        # fully opaque they bury both the hippocampal contacts and each other,
+        # so they get a smaller, semi-transparent marker: the same 3-D scene,
+        # but one where what is behind them is still visible.
+        is_ctrl = roi in SAME_SHAFT_OK_ROIS
         groups.append({"coords": xyz, "hemispheres": hemi,
-                       "color": GROUP_C[roi], "scale": frontal_scale,
-                       "label": f"{roi} ({len(xyz)})"})
+                       "color": GROUP_C.get(roi, "#777777"),
+                       "scale": control_scale if is_ctrl else frontal_scale,
+                       "alpha": control_alpha if is_ctrl else 1.0,
+                       "label": f"{DISPLAY.get(roi, roi)} ({len(xyz)})"})
 
-    print(f"\nsource contacts drawn (different-shaft, entered the analysis):")
+    print(f"\nsource contacts drawn (entered the analysis; different-shaft "
+          f"except {'/'.join(SAME_SHAFT_OK_ROIS)}, which are drawn in full):")
     print(f"  {'set':<16s}{'drawn':>7s}{'wanted':>8s}{'resolved':>10s}")
     for lab, want, got in miss:
         flag = "" if got == want else "   <-- INCOMPLETE"
         print(f"  {lab:<16s}{got:>7d}{want:>8d}{100*got/max(want,1):>9.0f}%{flag}")
     print(f"  hippocampal L {int((hc_hemi == 'L').sum())}, "
           f"R {int((hc_hemi == 'R').sum())}")
-    print(f"  sessions {d.session.nunique()}, subjects {d.subject.nunique()}")
+    drawn_src = pd.concat([d] + [d_all[d_all.roi == r] for r in rois
+                                 if r in SAME_SHAFT_OK_ROIS])
+    print(f"  sessions {drawn_src.session.nunique()}, "
+          f"subjects {drawn_src.subject.nunique()}")
     if any(g_ < w_ for _, w_, g_ in miss):
         print("\n  ⚠ some anchors have no coordinate in macro_contacts_all.csv.")
         print("    That file is probably a LOCAL build covering only the sessions")
@@ -157,6 +197,28 @@ def run(results=None, bundle=None, out_stem=None, width_cm=12.0,
           "n_right": int((hc_hemi == "R").sum())}]
         + [{"set": roi, "n_derivations": n} for roi, n in counts.items()]
     ).to_csv(out_stem + "_counts.csv", index=False)
+
+    # The settings that produced this rendering, beside it. A coverage figure
+    # whose marker counts cannot be traced back to a selection rule is a
+    # picture, not a result.
+    with open(out_stem + "_settings.json", "w") as f:
+        json.dump({
+            "results_dir": R, "bundle_dir": b_dir, "contact_table": mc_p,
+            "contact_table_sessions": int(mc.session.nunique()),
+            "rois": list(rois), "medial_rois": list(MEDIAL_ROIS),
+            "medial_max_abs_x_mm": medial_max_abs_x,
+            "same_shaft_kept_for": list(SAME_SHAFT_OK_ROIS),
+            "pad_s": float(d_all.pad_s.iloc[0]) if "pad_s" in d_all else None,
+            "views": list(views), "width_cm": width_cm,
+            "contact_scale": contact_scale, "frontal_scale": frontal_scale,
+            "control_scale": control_scale, "control_alpha": control_alpha,
+            "colours": {r: GROUP_C.get(r) for r in rois},
+            "n_drawn": {lab: got for lab, _, got in miss},
+            "n_wanted": {lab: want for lab, want, _ in miss},
+            "n_sessions": int(drawn_src.session.nunique()),
+            "n_subjects": int(drawn_src.subject.nunique()),
+        }, f, indent=2)
+    print(f"  -> {out_stem}_counts.csv / _settings.json")
     return None
 
 

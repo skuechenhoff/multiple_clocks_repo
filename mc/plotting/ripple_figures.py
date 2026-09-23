@@ -2259,7 +2259,16 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
     w_in = width_cm * CM
     scale = 1.0 if font_pt is None else font_pt / FS_TICK
     title_in = (0.20 * scale) if view_labels else 0.0
-    legend_in = (0.22 * scale) if legend else 0.0
+    # The legend wraps rather than running as one row. With six sets -- the
+    # hippocampal contacts, four cortical ones and the hippocampus body -- a
+    # single row is wider than the panel, and a tight bbox then widens the
+    # whole figure to fit it, shrinking the brains inside the page it was
+    # asked to fill.
+    n_legend = (1 + (0 if excluded is None or not len(excluded) else 1)
+                + len(kw.get("extra_groups") or []) + 1) if legend else 0
+    legend_ncol = min(n_legend, 3) or 1
+    legend_rows = int(np.ceil(n_legend / legend_ncol)) if legend else 0
+    legend_in = (0.22 * scale * legend_rows) if legend else 0.0
     panel_h_in = w_in / sum(aspects)
     h_in = panel_h_in + title_in + legend_in
 
@@ -2312,7 +2321,7 @@ def contact_coverage_3d_figure(included, excluded=None, out_stem=None,
                                   color=kw.get("hpc_color", HPC_BODY_C),
                                   label="hippocampus"))
             fig.legend(handles=handles, loc="lower center", frameon=False,
-                       ncol=len(handles), fontsize=font_pt or FS_TICK,
+                       ncol=legend_ncol, fontsize=font_pt or FS_TICK,
                        handletextpad=0.3, columnspacing=0.9,
                        borderaxespad=0.05)
 

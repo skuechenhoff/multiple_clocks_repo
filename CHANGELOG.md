@@ -1,5 +1,346 @@
 # CHANGELOG
 
+## 2026-09-23 (f) — Coverage figure: temporal control contacts added
+
+`swr_hfb_coverage_figure.py` now draws the two temporal control regions beside
+the medial frontal targets, in the project's SWR colours (`rfig.MONTAGE_C`):
+lateral temporal `#8C8C8C`, A1/auditory `#4F4F4F`, i.e. the same greys the
+locking-contrast panels use. `--rois` selects the sets; `--control_scale` /
+`--control_alpha` size them.
+
+**The temporal sets are NOT filtered to different-shaft pairs.** That filter is
+right for the frontal sets and wrong here: lateral temporal cortex is what the
+hippocampal electrode passes through, so sharing a shaft is its defining
+property, and the filter drops 203 of 445 lateral-temporal derivations. The
+hippocampal set stays on the different-shaft table.
+
+Drawn (native pad 0.25 s, `medial_max_abs_x=20`): hippocampal 92 (L 45 / R 47),
+mPFC 47, mOFC 54, lateral temporal 248, A1 50; 61 sessions, 42 subjects.
+Output `derivatives/group/swr/ripple_locked_hfb_2026-09-18/
+coverage_medial_temporal.{pdf,png}` + `_counts.csv` + `_settings.json`.
+
+⚠ **The figure is drawing about half the contacts it should.** Anchor
+coordinates come from `group/swr/macro_contacts_all.csv`, and the local copy
+covers 32 of 61 sessions, so 51% of hippocampal, 53% of mPFC, 59% of mOFC, 56%
+of lateral-temporal and 79% of auditory anchors resolve. This was already true
+of the earlier `coverage_medial_4x2` figure. Fix by copying the cluster build of
+that file; the counts above will then rise.
+
+Legend in `contact_coverage_3d_figure` now wraps at 3 columns instead of forcing
+one row, which at six sets was wider than the panel.
+
+## 2026-09-23 (e) — One phase definition everywhere, HFB re-split, and a results summary
+
+### The phase definition, now used in both branches
+
+| phase | ripple-rate branch (`stage`) | HFB branch (`cond` suffix) |
+|---|---|---|
+| **explore** | `first uncovers` + `while learning` | `_explore` + `_plan` |
+| **known** | `once known` | `_execute` |
+
+The HFB branch labels its stages explore/plan/execute, which map one-to-one onto
+first uncovers / while learning / once known. `plan` therefore belongs on the
+EXPLORE side, exactly as `while learning` does — it was previously left with
+`execute` by omission.
+
+### HFB: re-split and redrawn (`swr_hfb_locking_contrasts.py`)
+
+Conditions are pooled by ripple count, which equals the mean over their union
+because each saved trace is already a per-ripple mean. Visual dropped (its whole
+effect was same-shaft). Mean ripple duration 67.8 +- 0.4 ms (100737 ripples,
+61 sessions), drawn on each panel as peak +- duration/2. Output in
+`derivatives/group/swr/hfb_locking_contrasts_2026-09-23/`.
+
+Explore phase (medial frontal), each side vs its own shifted null:
+correct +0.0050 z, t(50)=+2.02, p=0.048, no cluster; incorrect +0.0054 z,
+t(52)=+3.16, p=0.0026, no cluster; navigation +0.0072 z, t(51)=+2.41, p=0.020,
+cluster +40..+270 ms p=0.011. Contrasts: all |d| <= 0.09, all p >= 0.52, no
+clusters.
+
+Known phase: correct +0.0066 z, t(52)=+4.59, p<0.0001, cluster -130..+110 ms
+p=0.0010; navigation +0.0079 z, t(52)=+5.68, p<0.0001, cluster -260..+350 ms
+p=0.0005; incorrect -0.0043 z, t(13)=-0.52, n.s. (only 14 sessions). Contrasts
+all n.s.
+
+**The condition claim is now dead in both phases.** With `plan` moved to the
+explore side the correct-uncover effect there weakens (p=0.048, no cluster) and
+navigation presses become the only explore condition with a cluster. Medial
+frontal HFB is ripple-locked throughout; it does not care what the ripple
+follows. The ANATOMICAL contrast is unaffected and remains the strong result:
+MF - lateral temporal +0.0058 z, t(45)=+3.72, p=0.0005, Holm 0.0011, cluster
+-130..+480 ms p=0.0005; MF - auditory +0.0065 z, t(23)=+2.65, p=0.0143,
+Holm 0.0143.
+
+### Figure conventions changed in `mc/analyse/ripples.py::plot_rows`
+
+Affects `ripple_main_figure` too, deliberately:
+
+1. `FS` 8 -> 9 (CLAUDE.md's floor), `LW_RATE` 1.2 -> 1.8, `LW` 2.0 -> 2.6.
+2. The base-vs-window star now sits over the MIDDLE of the pair. It tests
+   base against window, so putting it above the window point implied the
+   window alone was significant.
+3. Surviving clusters are now shaded on the peri-event trace as well as on the
+   t curve. The docstring had always claimed this; the code never did it.
+
+`swr_stage_interaction.py` figures: difference traces carry a 5-bin triangular
+DISPLAY smooth (`SMOOTH_DISPLAY`) and thicker lines; every window and cluster
+test still reads the unsmoothed per-session profiles.
+
+### `scripts/swr_results_summary.py`
+
+Collapses five result files into one flat list of 81 records with a common
+shape (id, what, n, estimate, t, df, p, p_corrected, correction, cluster,
+source, apa). `apa` is paste-ready; `source` names the file each number came
+from, so no sentence can silently mix two estimators. Output in
+`derivatives/group/swr/results_summary_2026-09-23/results_summary.json`.
+
+## 2026-09-23 (d) — Two-phase versions of the main ripple figures
+
+SK asked for the main-figure layout and the pairwise-difference layout redrawn
+with two phases (explore = first uncovers + while learning, vs once known), so
+the figure and the tested contrast describe the same cells.
+
+`scripts/swr_stage_interaction.py` now writes four figures for the
+`explore_known` scheme, all into
+`derivatives/group/swr/ripple_stage_interaction_2026-09-23/`:
+
+| file | what it shows |
+|---|---|
+| `two_phase_main.png` | `ripple_main_figure` layout via `rip.plot_rows`: peri-event rate, base-vs-window, sliding test, three rows |
+| `phase_pairwise.png` | the two phases per valence plus a forest of the three tested differences |
+| `stage_interaction.png` | the 2 x 2 and the valence difference per phase, sign-filled |
+| `correct_phase.png` | correct uncovers alone |
+
+Two things the two-phase main figure makes visible that the three-stage one did
+not:
+
+1. `error, exploring` now yields TWO sliding-window clusters (p=0.024 and
+   p=0.016), one of them BEFORE the press. In the three-stage split the error
+   cells had no clusters at all, so the pre-event drift was invisible. This is
+   the same drift documented in 2026-09-23 (a); it is now on the figure rather
+   than only in the JSON.
+2. Row 3 changes meaning. The published figure's row 3 was `correct, first
+   uncovers` against its matched control (+0.0344 Hz, p=0.032). Pooled to
+   `correct, exploring` the window effect is no longer significant (+0.0128,
+   p=0.243) although a cluster survives at +0.35..+0.55 s (p=0.031). Pooling
+   buys the interaction and costs the stillness-matched confirmation, as noted
+   in 2026-09-23 (b).
+
+Figure-convention fixes applied to both pairwise figures: forest rows carry a
+valence prefix (`corr:` / `err:`) because two rows otherwise read identically
+and were separated only by colour, and the interaction is drawn in neutral grey
+since it belongs to neither valence.
+
+## 2026-09-23 (c) — Ripple-LOCKING contrasts: regions survive, conditions do not
+
+SK asked precisely what the MedialFrontal-minus-control numbers are computed on,
+and pointed out that the claim in panels i/j is about LOCKING (the cluster in
+the time course), not about the peri-window magnitude. Both branches only ever
+clustered each side against its own shifted null, so "cluster here, none there"
+was never a test of a difference.
+
+New `scripts/swr_hfb_locking_contrasts.py`. Reads the saved `timecourses.npz`
+of both published runs — nothing re-extracted — rebuilds each per-session locked
+curve exactly as the two figure functions do (real minus shifted,
+flank-normalised to |t| in 250-750 ms, 100 ms Gaussian smooth), then takes the
+PAIRED difference on sessions having both sides and runs the same
+`swr_sakon.cluster_perm_time` (2000 sign-flips, seed 42). Holm within each
+family. Output in `derivatives/group/swr/hfb_locking_contrasts_2026-09-23/`.
+
+Validation: the per-side values reproduce the published ones exactly, including
+reward_explore +0.00747, t(50)=+2.73, p=0.0087, cluster -130..+10 ms p=0.038.
+
+### Regions (different-shaft, session unit)
+
+| contrast | n | peri Δ | t | p | Holm | cluster of the difference |
+|---|---|---|---|---|---|---|
+| MedialFrontal − TemporalLateral | 46 | +0.00582 | t(45)=+3.72 | 0.0005 | **0.0016** | **−130..+480 ms, p=0.0005** |
+| MedialFrontal − Auditory | 24 | +0.00647 | t(23)=+2.65 | 0.0143 | **0.029** | none |
+| MedialFrontal − Visual | 24 | +0.00476 | t(23)=+1.44 | 0.163 | 0.163 | none |
+
+### Conditions (medial frontal, explore phase, session unit)
+
+| contrast | n | peri Δ | t | p | Holm | cluster |
+|---|---|---|---|---|---|---|
+| reward_explore − error_explore | 51 | +0.00180 | t(50)=+0.56 | 0.577 | 1.000 | none |
+| reward_explore − move_explore | 49 | +0.00268 | t(48)=+0.59 | 0.556 | 1.000 | none |
+| error_explore − move_explore | 51 | +0.00069 | t(50)=+0.19 | 0.852 | 1.000 | none |
+
+### Reading
+
+1. The ANATOMICAL claim survives as a direct contrast, and now with a locking
+   cluster: medial frontal locks more than lateral temporal from -130 to +480 ms
+   (p=0.0005), and more than auditory in the peri window (Holm 0.029, no
+   cluster). Visual does not separate (p=0.163) — consistent with the earlier
+   finding that the Visual effect was carried by same-shaft contacts.
+2. The CONDITION claim does not survive in any form. All three differences are
+   ~0 with d<=0.08 and no cluster. `error_explore` having no cluster of its own
+   while `reward_explore` does is a power difference, not a difference between
+   them: their locking curves differ by +0.0018 z, p=0.58.
+3. So the sentence "after incorrect uncoverings ... was not locked to the
+   ripple" cannot be supported. Medial frontal HFB is ripple-locked during
+   exploration irrespective of what the ripple follows.
+
+### Note on the earlier region numbers
+
+The `_contrasts` values quoted from `ripple_locked_hfb_2026-09-18/result.json`
+(MF−TempLat t(45)=3.30, p=0.0019 etc.) are a DIFFERENT estimator: per-derivation
+peri-minus-non-peri, averaged per unit per ROI, real minus shifted, paired
+t across units, and uncorrected across the eight contrasts that function
+computes. The curve-based estimator above averages traces first and normalises
+by the flank; it gives the same sign and a slightly larger t. Either is
+defensible; they must not be mixed within one sentence.
+
+## 2026-09-23 (b) — "Bigger here than there": every pairwise stage contrast, and the HFB ones
+
+SK is removing interaction-fallacy claims from the main figure — wherever a
+panel says "significant here, not there", the DIFFERENCE has to be tested. Two
+families.
+
+### Ripple rate: all six pairwise stage contrasts (new `--scheme=three_stage`)
+
+`scripts/swr_stage_interaction.py` now carries two schemes; the three-stage one
+tests every pairwise stage comparison inside each valence. Output in
+`derivatives/group/swr/ripple_stage_interaction_three_stage_2026-09-23/`.
+Holm over the six. NO cluster survives for any of the six, on either reading.
+
+Own baseline (Sakon Eq. 2):
+
+| contrast | n | Δ (Hz) | t | p_perm | Holm |
+|---|---|---|---|---|---|
+| correct: first − learning | 61 | +0.0189 | +1.06 | 0.295 | 1.000 |
+| correct: first − known | 61 | +0.0308 | +2.18 | 0.029 | 0.172 |
+| correct: learning − known | 61 | +0.0119 | +0.98 | 0.331 | 1.000 |
+| error: first − learning | 43 | +0.0095 | +0.47 | 0.645 | 1.000 |
+| error: first − known | 52 | −0.0418 | −1.77 | 0.085 | 0.424 |
+| error: learning − known | 39 | −0.0233 | −0.85 | 0.402 | 1.000 |
+
+Stillness-matched:
+
+| contrast | n | Δ (Hz) | t | p_perm | Holm |
+|---|---|---|---|---|---|
+| correct: first − learning | 61 | +0.0221 | +1.29 | 0.204 | 0.614 |
+| correct: first − known | 61 | +0.0336 | +1.82 | 0.075 | 0.450 |
+| correct: learning − known | 61 | +0.0115 | +1.03 | 0.305 | 0.614 |
+| error: first − learning | 41 | +0.0268 | +1.47 | 0.153 | 0.614 |
+| error: first − known | 49 | −0.0085 | −0.41 | 0.692 | 0.692 |
+| error: learning − known | 36 | −0.0378 | −1.63 | 0.115 | 0.574 |
+
+Unsubtracted 0-0.5 s window (second family of six, own Holm):
+
+| contrast | Δ (Hz) | t | p_perm | Holm |
+|---|---|---|---|---|
+| correct: first − known | **+0.0340** | t(60)=+3.12 | **0.0022** | **0.013** |
+| correct: first − learning | +0.0246 | t(60)=+2.27 | 0.024 | 0.120 |
+| error: first − learning | +0.0283 | t(42)=+1.92 | 0.065 | 0.258 |
+| others | | | ≥0.11 | ≥0.33 |
+
+### Reading
+
+1. NOTHING survives Holm on the pre-specified baseline-subtracted test. Panels
+   e and f cannot claim the response is bigger at first uncovers than later —
+   the best is correct first − known, Holm 0.172.
+2. The ONE contrast that does survive correction is correct first − known on
+   the UNSUBTRACTED 0-0.5 s window (+0.0340 Hz, p=0.0022, Holm 0.013). It is
+   defensible there because the correct cells' baselines are statistically
+   identical (+0.0032, p=0.753), so subtraction only adds noise. But it was
+   chosen after the subtracted version failed, which is a forking path and must
+   be declared if used.
+3. The error baseline problem recurs in the three-stage split: error first −
+   known differs by +0.0276 Hz in the BASELINE window alone (p=0.059), the
+   largest baseline difference of the six, while the correct baselines differ by
+   <0.006 Hz (all p>0.65).
+
+### HFB: the contrasts already existed
+
+No new computation. `ripple_locked_hfb_2026-09-18/result.json`, different-shaft,
+real-minus-shifted, MedialFrontal minus each control region:
+
+| contrast | session | subject |
+|---|---|---|
+| − TemporalLateral | +0.0057, t(45)=3.30, p=0.0019 | +0.0055, t(28)=2.89, p=0.0074 |
+| − Auditory | +0.0068, t(23)=2.39, p=0.026 | +0.0056, t(15)=1.94, p=0.072 |
+| − Visual | +0.0044, t(23)=1.24, p=0.229 | +0.0068, t(14)=1.43, p=0.174 |
+
+`ripple_hfb_conditions_2026-09-21/result.json`, MedialFrontal, count-balanced:
+
+| condition | vs own shifted null | vs reward_explore |
+|---|---|---|
+| reward_explore | +0.0076, t(50)=2.73, p=0.0088 | — |
+| error_explore | +0.0058, t(52)=2.85, p=0.0063 | +0.0059, t(50)=1.49, p=0.142 |
+| move_explore | +0.0049, t(50)=1.34, p=0.186 | −0.0029, t(47)=−0.52, p=0.608 |
+
+**Panel j's framing does not survive.** `error_explore` is itself significantly
+ripple-locked (p=0.0063), and `move_explore` is numerically MORE locked than the
+target (difference −0.0029). Neither difference approaches significance on the
+count-balanced or unbalanced estimate. Medial frontal HFB is ripple-locked
+during exploration regardless of what the ripple follows; it is not specific to
+reward uncovers. Panel i survives against lateral temporal at both units and
+against auditory at session level only (subject p=0.072).
+
+### Not yet tested
+
+Panel i's finer claim that lateral temporal locks "only around the ripple peak"
+is a region x time-window claim, not a magnitude one, and has no test.
+
+## 2026-09-23 (a) — The ripple valence x phase interaction is partly inherited from its own baseline
+
+SK asked whether treating baseline-vs-window as a factor (a 2 x 2 with epoch)
+would give "an interaction" distinct from the difference-of-differences already
+reported. It would not: for a fully within-session 2 x 2 the epoch x phase
+interaction applies weights (+1,-1,-1,+1) to the four cell means per session,
+which is exactly `(window - baseline)_explore - (window - baseline)_known`.
+F(1,60) = t^2; same p, minus the sign-flip null. Restating it as an ANOVA buys
+nothing.
+
+But the question exposed something untested: baseline subtraction only removes a
+confound if the baselines are comparable, and nothing in the pipeline checks
+that. Added `baseline_window_block` to `scripts/swr_stage_interaction.py` — the
+same contrast family evaluated on the -1.6..-1.1 s window alone, nothing
+subtracted. Output in `derivatives/group/swr/ripple_stage_interaction_2026-09-23/`.
+
+### Baseline window alone (Hz, own rate, nothing subtracted)
+
+| cell | n | baseline rate |
+|---|---|---|
+| correct, exploring | 61 | 0.1756 ± 0.0055 |
+| correct, once known | 61 | 0.1780 ± 0.0059 |
+| error, exploring | 61 | **0.1918 ± 0.0064** |
+| error, once known | 52 | 0.1700 ± 0.0110 |
+
+| contrast | baseline window | test window, unsubtracted |
+|---|---|---|
+| correct: explore − known | −0.0024, t(60)=−0.28, p=0.784 | +0.0251, t(60)=+2.51, p=0.011 |
+| error: explore − known | +0.0243, t(51)=+1.74, p=0.089 | −0.0204, t(51)=−1.30, p=0.200 |
+| **INTERACTION** | **−0.0308, t(51)=−2.05, p=0.047** | **+0.0440, t(51)=+2.28, p=0.027** |
+
+### Reading
+
+1. There is a SIGNIFICANT valence x phase interaction in the baseline window
+   itself (−0.0308 Hz, p=0.047), of OPPOSITE sign to the post-event one. The
+   arithmetic is exactly additive: 0.0440 − (−0.0308) = 0.0748, the
+   baseline-subtracted interaction reported earlier. So roughly 40% of that
+   0.0748 is removal of a pre-existing baseline difference, not response.
+2. The interaction survives on the unsubtracted test window alone (+0.0440,
+   p=0.027), so it is not purely a baseline artefact — but 0.0748 overstates it
+   and should not be the quoted effect size.
+3. The correct cells' baselines are indistinguishable (0.1756 vs 0.1780,
+   p=0.784); the whole baseline interaction comes from the error cells, and
+   specifically from `error, exploring` having the highest baseline of the four
+   (0.1918). That is the same cell whose pre-event window is already depressed
+   (−0.0212 Hz, p=0.007, cluster −0.35..−0.05 s): its baseline is measured at
+   the top of a decline that continues through the event.
+4. Practical consequence: the -1.6..-1.1 s window is not a neutral reference
+   for `error, exploring`, which undercuts Sakon Eq. 2 for that cell. The
+   stillness-matched reading, which uses a matched control press instead of a
+   pre-event baseline, remains the cleaner design — and it gives p=0.152.
+
+### Caveats
+
+This baseline check is an additional test, outside the Holm family of three.
+Its p=0.047 is uncorrected and would not survive correction; it is reported as
+a diagnostic of the design, not as a result.
+
 ## 2026-09-21 (b) — The full phase x event-type grid: no selectivity anywhere
 
 Incorrect uncoverings were also only extracted for the explore phase — the same
@@ -195,6 +536,21 @@ Note the asymmetry: on the own-baseline reading the valence effect is carried
 entirely by the exploring column (p=0.0010); the once-known column is a
 non-significant reversal (p=0.218). So "less for late positive, more for late
 negative" overstates it — late positive is flat (+0.0015), not suppressed.
+
+### Correct uncovers alone — `correct_phase.png`
+
+The simple effect of phase inside one valence (not an interaction: with two
+phases it is a difference). Explore +0.0306 Hz, t(60)=+3.33, p=0.0009, cluster
++0.25..+0.65 s p=0.006; once known +0.0031 Hz, t(60)=+0.49, p=0.626, no cluster.
+Difference +0.0275 Hz [+0.0043,+0.0507], t(60)=+2.37, p_perm=0.019, Holm 0.038,
+d=0.30 — but NO cluster survives the window-free test, and stillness-matched it
+is +0.0120 Hz, t(60)=+1.00, p=0.323.
+
+Note the asymmetry between the two contrasts: the valence x phase interaction
+survives both the fixed 0-0.5 s window (p=0.008) and the window-free cluster
+test (+0.25..+0.75 s, p=0.010); the correct-only phase difference survives only
+the fixed window. Both tests share the same -1.6..-1.1 s baseline subtraction —
+they differ only in whether the post-event window is fixed or scanned.
 
 ### Reading
 
