@@ -51,6 +51,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import mc.analyse.swr_io as swr_io
+import mc.analyse.ripples as rip_mod
 import mc.analyse.swr_bundle as sb
 import mc.analyse.swr_behaviour as swb
 import mc.analyse.swr_windows as win
@@ -74,10 +75,24 @@ TARGET = "reward_explore"
 # collapsed one.
 CONDITIONS = [TARGET, "error_explore", "reward_plan", "error_plan",
               "reward_execute", "error_execute",
-              "move_explore", "move_plan", "move_execute", "still_explore"]
+              "move_explore", "move_plan", "move_execute",
+              "still_explore", "still_plan", "still_execute"]
+# Two ways of collapsing the three phases, both derived by relabelling the
+# fine conditions above:
+#   *_all    all three phases -- ignores phase entirely
+#   *_learn  explore + plan, the phases in which the rewards are still being
+#            discovered -- the "learning" half of the two-phase split, whose
+#            other half is the untouched *_execute condition.
+# A ripple still contributes to exactly one fine condition and at most one
+# condition from each collapse.
 COLLAPSED = {"reward_all": ("reward_explore", "reward_plan", "reward_execute"),
              "error_all": ("error_explore", "error_plan", "error_execute"),
-             "move_all": ("move_explore", "move_plan", "move_execute")}
+             "move_all": ("move_explore", "move_plan", "move_execute"),
+             "still_all": ("still_explore", "still_plan", "still_execute"),
+             "reward_learn": ("reward_explore", "reward_plan"),
+             "error_learn": ("error_explore", "error_plan"),
+             "move_learn": ("move_explore", "move_plan"),
+             "still_learn": ("still_explore", "still_plan")}
 ALL_CONDITIONS = CONDITIONS + list(COLLAPSED)
 # `mOFC` is not reliably medial -- 40% of the contacts carrying that label sit
 # beyond |MNI x| = 25 mm, i.e. in lateral orbitofrontal cortex, because they
@@ -114,6 +129,15 @@ VALENCE_C = {
     "reward_all":     "#448363",
     "move_all":       "#448363",
     "still_explore":  "#B9B9B9",
+    "still_plan":     "#CECECE",
+    "still_execute":  "#A3A3A3",
+    "still_all":      "#B9B9B9",
+    # The two-phase collapse reuses the hue of its phases and is separated by
+    # line style, exactly as *_all is.
+    "reward_learn":   "#0e3d3a",
+    "error_learn":    "#a30d6c",
+    "move_learn":     "#6E6E6E",
+    "still_learn":    "#B9B9B9",
 }
 
 # Line style carries CONDITION where colour carries region. The companion
@@ -131,6 +155,13 @@ COND_LS = {
     "move_explore": (0, (1.4, 1.2)),
     "move_execute": (0, (1.4, 1.2)),
     "still_explore": (0, (0.8, 1.4)),
+    "still_plan": (0, (0.8, 1.4)),
+    "still_execute": (0, (0.8, 1.4)),
+    "still_all": (0, (0.8, 1.4)),
+    "still_learn": (0, (0.8, 1.4)),
+    "reward_learn": "-",
+    "error_learn": (0, (4, 1.5)),
+    "move_learn": (0, (1.4, 1.2)),
 }
 
 # Display names. The internal keys stay machine-readable; these are what a
@@ -150,6 +181,13 @@ COND_LABEL = {
     "reward_all": "reward uncovers",
     "move_all": "navigation presses",
     "still_explore": "stillness, explore",
+    "still_plan": "stillness, planning",
+    "still_execute": "stillness, execution",
+    "still_all": "stillness",
+    "reward_learn": "reward uncovers, learning",
+    "error_learn": "incorrect uncovers, learning",
+    "move_learn": "navigation presses, learning",
+    "still_learn": "stillness, learning",
 }
 
 
@@ -162,16 +200,53 @@ def _clean_mask(rows, n, fs):
     return m
 
 
-def session_events(sess, data_root):
-    """Labelled behavioural events for one session: (time, condition)."""
+def session_events(sess, data_root, boundary="exclusive"):
+    """Labelled behavioural events for one session: (time, condition).
+
+    `boundary` says which side the first fully correct repeat falls on:
+      exclusive   the first correct repeat STARTS EXECUTION -> `execute`.
+                  encoding = rep < fs. THIS IS THE AGREED DEFINITION
+                  (fixed 2026-09-27) and the default. Same boundary as
+                  `swr_windows.add_phase3` and as `known_exc` in
+                  `mc.analyse.swr_phases`.
+      inclusive   the first correct repeat ENDS LEARNING -> `plan`.
+                  encoding = rep <= fs, i.e. `rip.stage_of_repeat`. Sensitivity
+                  only; the two disagree about 1432 repeats, 39% of encoding.
+    """
     try:
-        beh = win.add_phase3(swr_io.load_behaviour(sess, data_root=data_root))
+        beh = swr_io.load_behaviour(sess, data_root=data_root)
         unc = swb.uncover_events(sess, data_root=data_root)
     except Exception:
         return pd.DataFrame(columns=["t_s", "cond"])
     if not len(unc):
         return pd.DataFrame(columns=["t_s", "cond"])
-    ph = beh[["grid_no", "rep_overall", "phase3"]].drop_duplicates()
+    # PHASE BOUNDARY. `beh.phase3` (from `swr_windows.add_phase3`) puts the
+    # first error-free repeat in `execute`; `ripples.stage_of_repeat` -- the
+    # definition the ripple-rate branch uses and the one the project means --
+    # puts it in `while learning`, because that repeat is where the route is
+    # first demonstrated, not yet merely relied on. Those are 1432 repeats,
+    # 39% of the learning side, so the two branches were splitting the task in
+    # different places. Recompute here from `stage_of_repeat` and keep the
+    # explore/plan/execute names, so this branch and the ripple-rate branch
+    # mean the same thing by "learning".
+    STAGE_TO_PHASE = {"first uncovers": "explore", "while learning": "plan",
+                      "once known": "execute"}
+    stage_rows = []
+    for grid, g in beh.groupby("grid_no"):
+        if boundary == "inclusive":
+            st_of = rip_mod.stage_of_repeat(g)
+        else:
+            gg = g.sort_values("rep_overall")
+            reps = gg.rep_overall.to_numpy(int)
+            solved = reps[gg.correct.to_numpy(int) == 1]
+            fs = int(solved[0]) if solved.size else np.inf
+            st_of = {int(r): ("first uncovers" if r == reps[0]
+                              else "while learning" if r < fs else "once known")
+                     for r in reps}
+        for rep, st in st_of.items():
+            stage_rows.append((int(grid), int(rep), STAGE_TO_PHASE[st]))
+    ph = pd.DataFrame(stage_rows, columns=["grid_no", "rep_overall", "phase3"])
+    beh = beh.merge(ph, on=["grid_no", "rep_overall"], how="left")
     u = unc.merge(ph, on=["grid_no", "rep_overall"], how="left")
     rows = []
     # Every uncovering is an event, correct or not, in every phase. Dropping
@@ -205,19 +280,24 @@ def session_events(sess, data_root):
             mv = mv[(mv >= lo) & (mv <= hi)]
             press_t.extend(mv.tolist())
             rows.extend((x, f"move_{phase}") for x in mv)
-    expl = beh[beh.phase3 == "explore"]
-    # stillness: explore time at least POST_S from ANY press
+    # Stillness in EVERY phase, for the same reason movement presses are:
+    # a stillness control that exists only in explore cannot be used to ask
+    # whether an effect is phase-specific, because the comparison it licenses
+    # is missing from the other side of the contrast.
     allp = np.sort(np.r_[u.t_s.to_numpy(float), np.asarray(press_t, float)])
-    for grid, g in expl.groupby("grid_no"):
-        lo, hi = float(g.t_A.min()), float(g.t_D.max())
-        if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
-            continue
-        cand = np.arange(lo, hi, 0.5)
-        if allp.size:
-            j = np.clip(np.searchsorted(allp, cand), 1, len(allp) - 1)
-            near = np.minimum(np.abs(cand - allp[j - 1]), np.abs(cand - allp[j]))
-            cand = cand[near >= POST_S]
-        rows.extend((x, "still_explore") for x in cand)
+    for phase in ("explore", "plan", "execute"):
+        ph = beh[beh.phase3 == phase]
+        for grid, g in ph.groupby("grid_no"):
+            lo, hi = float(g.t_A.min()), float(g.t_D.max())
+            if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
+                continue
+            cand = np.arange(lo, hi, 0.5)
+            if allp.size:
+                j = np.clip(np.searchsorted(allp, cand), 1, len(allp) - 1)
+                near = np.minimum(np.abs(cand - allp[j - 1]),
+                                  np.abs(cand - allp[j]))
+                cand = cand[near >= POST_S]
+            rows.extend((x, f"still_{phase}") for x in cand)
     return pd.DataFrame(rows, columns=["t_s", "cond"]).sort_values("t_s")
 
 
@@ -235,7 +315,8 @@ def assign(ripple_t, ev, post_s=POST_S):
     return out
 
 
-def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None):
+def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True,
+        out_dir=None, boundary="exclusive"):
     b_dir = bundle or os.path.join(swr_io.derivatives_dir(swr_io.get_data_root()),
                                    "group", "swr", "bundle_v2")
     with open(os.path.join(b_dir, "swr_bundle.pkl"), "rb") as f:
@@ -267,7 +348,7 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
         cx = g[g.roi_family.isin(["mPFC", "mOFC"])]
         if not len(cx):
             continue
-        ev = session_events(int(sess), R)
+        ev = session_events(int(sess), R, boundary)
         if not len(ev):
             continue
         try:
@@ -438,7 +519,7 @@ def run(bundle=None, post_s=POST_S, n_shifts=6, seed=42, save=True, out_dir=None
                        "post_s": post_s, "peri_s": PERI_S,
                        "nonperi_s": list(NONPERI_S), "half_s": HALF_S,
                        "n_shifts": n_shifts, "seed": seed,
-                       "min_ripples": MIN_RIPPLES, "target": TARGET,
+                       "min_ripples": MIN_RIPPLES, "target": TARGET, "phase_boundary": boundary,
                        "unit": "session (primary)",
                        "created": datetime.now().isoformat(timespec="seconds"),
                        "results": res}, f, indent=2, default=str)
