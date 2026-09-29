@@ -158,6 +158,41 @@ def pooled_cond_curves(t_ms, tr, ix, counts, conds, roi=MEDIAL,
     return out
 
 
+def pooled_curves_by(t_ms, tr, sub, counts, conds, unit_col):
+    """`pooled_cond_curves` with an arbitrary grouping key.
+
+    `pooled_cond_curves` does `int(unit)` to look the ripple weight up by
+    session, so it cannot group by a derivation id. Everything here is the same
+    arithmetic -- count-weighted mean of the real traces minus the same of the
+    null traces, then flank-normalised -- with the session for the weight taken
+    from the group, which is unambiguous because a derivation belongs to
+    exactly one session. Verified identical to `pooled_cond_curves` at session
+    level (max |diff| 0.000e+00).
+    """
+    flank = (np.abs(t_ms) >= NONPERI_S[0] * 1000) & \
+            (np.abs(t_ms) < NONPERI_S[1] * 1000)
+    w = {(int(r.session), r.cond): float(r.n_ripples)
+         for r in counts.itertuples()}
+    out = {}
+    for u, gu in sub[sub.cond.isin(conds)].groupby(unit_col):
+        num_r, num_n, den = 0.0, 0.0, 0.0
+        for (sess, cond), gc in gu.groupby(["session", "cond"]):
+            rr = gc.trace_row.to_numpy()
+            real = tr[rr[gc.is_real.to_numpy()]]
+            null = tr[rr[~gc.is_real.to_numpy()]]
+            if not len(real) or not len(null):
+                continue
+            wt = w.get((int(sess), cond), float(len(real)))
+            num_r += wt * real.mean(0)
+            num_n += wt * null.mean(0)
+            den += wt
+        if den <= 0:
+            continue
+        c = num_r / den - num_n / den
+        out[u] = c - c[flank].mean()
+    return out
+
+
 def ripple_duration(bundle_dir):
     """Mean ripple duration and its SE across sessions, from the bundle csv."""
     r = pd.read_csv(os.path.join(bundle_dir, 'ripples.csv'),
