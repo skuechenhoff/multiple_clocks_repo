@@ -30,6 +30,14 @@ a Holm adjustment across it.
     python scripts/swr_stage_interaction.py --pad_s=0.25
 
 @author: Svenja Kuchenhoff
+
+STATUS
+    ✗ SUPERSEDED — DO NOT QUOTE. Its `explore_known` split puts the first
+    fully correct repeat on the ENCODING side; the agreed definition (fixed
+    2026-09-27) puts it on the EXECUTION side, and the two disagree about
+    1432 repeats, 39% of the encoding phase. The reported ripple-rate
+    numbers come from `swr_figure_phase_panels.py`. Kept only as the record
+    of how the phase question was first asked.
 """
 
 import os

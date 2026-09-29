@@ -1,5 +1,2250 @@
 # CHANGELOG
 
+## 2026-09-29 (r) — Deferring to the swr_main / swr_archive split
+
+SK had already built the consolidation in parallel: `scripts/swr_main.py` for
+the reported result and `scripts/exploratory/swr_archive.py` for everything
+archived, each a single entry point, with the HFB scripts already registered in
+both. My separate organisation was replaced by theirs.
+
+Corrections made to fit it:
+
+* **`swr_hfb_event_latency.py` returned to `exploratory/`.** I had promoted it
+  to `scripts/` as a reviewer check, which broke the `event_latency` entry in
+  `swr_archive.py` -- that dispatcher resolves modules as
+  `scripts.exploratory.<name>`. It is archived and reachable as
+  `python scripts/exploratory/swr_archive.py event_latency`.
+* **My `exploratory/README.md` deleted.** `swr_archive.py` already lists every
+  archived analysis with the question it asked and its outcome; two indexes
+  would drift apart.
+* **Archived sibling imports fixed.** Moving the scripts down a directory broke
+  six of them: they import both maintained siblings (in `scripts/`) and each
+  other (in `exploratory/`), and only the first directory was on the path. Both
+  are now inserted. Verified: **all 8 archived modules import, all 8 maintained
+  modules import.**
+
+The two reviewer checks stay where they are useful, as subcommands on the
+maintained partition script rather than as separate files:
+`swr_hfb_roi_partition.py distance` and `... estimators` -- reachable through
+`swr_main.py hfb_partition`.
+
+Answering the original question: no, these did not need to be independent
+scripts, and they no longer are -- two dispatchers cover 15 analyses, and
+`mc/analyse/` already holds the shared implementation (`swr_hfb.py` for the
+HFB computation, `swr_sakon.py` for the cluster test, `swr_stats.py`).
+
+## 2026-09-29 (q) — Reviewer checks promoted out of exploratory
+
+The six archived scripts stay archived -- they are frozen provenance and
+merging them would save headers and nothing else. But three of the questions
+they answer are ones a reviewer will ask, and two of those only existed as
+scratch files. Those are now maintained.
+
+### `swr_hfb_roi_partition.py distance`
+
+Coupling against median distance to the nearest hippocampal derivation,
+different-shaft only. Volume conduction predicts coupling FALLING with
+distance; it rises.
+
+| ROI | n | median mm | coupling | q |
+|---|---:|---:|---|---:|
+| ITG | 11 | 25.5 | +0.0030 | 0.674 |
+| Auditory | 56 | 28.7 | +0.0014 | 0.613 |
+| **MTG** | 105 | 31.2 | +0.0042 | **0.002** |
+| TemporalPole | 16 | 32.3 | -0.0002 | 0.899 |
+| STG | 132 | 33.3 | -0.0006 | 0.749 |
+| TempOcc_Fusiform | 58 | 34.7 | +0.0037 | 0.432 |
+| **lOFC** | 55 | 47.1 | +0.0093 | **0.002** |
+| FrontalPole | 25 | 56.0 | +0.0065 | 0.147 |
+| **MedialFrontal** | 179 | 60.7 | +0.0073 | **0.000** |
+| Occipital | 32 | 61.6 | +0.0051 | 0.448 |
+| Parietal | 11 | 63.8 | +0.0017 | 0.749 |
+
+Spearman(distance, coupling) = **+0.462, p = 0.112** -- positive, i.e. the
+opposite of the volume-conduction prediction, and the two most coupled regions
+are the two furthest from the hippocampus.
+
+### `swr_hfb_roi_partition.py estimators`
+
+MedialFrontal minus each ROI under three estimators. The concern is that
+these electrodes rarely co-occur, so a paired test discards most of the data.
+The three agree throughout:
+
+| ROI | paired | unpaired | mixed (per derivation) |
+|---|---|---|---|
+| STG | +0.0073 p=0.003 (36) | +0.0079 p<0.001 (53/42) | +0.0066 p<0.001 (311d) |
+| TemporalPole | +0.0092 p=0.034 (8) | +0.0075 p=0.002 (53/8) | +0.0079 p=0.012 (195d) |
+| Auditory | +0.0052 p=0.027 (22) | +0.0059 p=0.002 (53/25) | +0.0051 p=0.003 (235d) |
+| vlPFC_IFG | +0.0043 p=0.141 (21) | +0.0056 p=0.044 (53/21) | +0.0053 p=0.032 (203d) |
+| MTG | +0.0021 p=0.079 (30) | +0.0030 p=0.054 (53/33) | +0.0028 p=0.075 (284d) |
+| lOFC | -0.0013 p=0.634 (21) | -0.0020 p=0.407 (53/21) | -0.0004 p=0.849 (234d) |
+
+So the STG contrast quoted in the paragraph is not an artefact of the paired
+design, and lOFC is not different from MedialFrontal under any estimator.
+
+### `swr_hfb_event_latency.py` moved back to `scripts/`
+
+It answers "is the pre-ripple rise just the button press?" and is maintained.
+Its `PHASES`/`COND_KEYS` constants were moved from the archived
+`swr_hfb_roi_conditions` into `swr_hfb_roi_partition` as `PHASES_EVENT`, so no
+maintained script imports from `exploratory/`. Every script, kept and archived,
+verified to import.
+
+Five scripts remain archived: `swr_hfb_roi_conditions`, `swr_hfb_roi_compare`,
+`swr_hfb_ripple_count_control`, `swr_hfb_event_specificity`,
+`swr_hfb_ripple_vs_event`.
+
+## 2026-09-29 (f) — cleanup: reported vs exploratory, and one set of write-ups
+
+**Code.** The reported analysis had ended up inside the exploratory package
+while the main runner still produced the old headline. Fixed:
+
+- `mc/analyse/swr_explore/phase_contrast.py` -> `mc/analyse/swr_phase_contrast.py`
+  (it is the reported analysis, not an exploration).
+- `_labels` -> `mc.analyse.swr_content.phase_labels`. The encode/execute split
+  defines the reported contrast, so it belongs in the library; both the
+  reported module and `location_by_phase` now import it from there.
+- `swr_content_main.py` gained a `phase` step (the reported analysis) and its
+  `panel` step now regenerates fig20/fig21 as well. `timecourse` is retained
+  but labelled NOT REPORTED, and dropped from the default `all` sequence.
+- `timecourse_by_phase` docstring now says it is exploratory and why its
+  fixed-window numbers differ (offset-pooled normalisation).
+- Verified after the move: `--step=phase` reproduces bit-identically.
+
+**Write-ups.** Five Methods files and three Results files had accumulated.
+Consolidated to `METHODS.md` + `RESULTS.md` + `HOW_TO_RUN.md`; the six
+superseded drafts moved to `superseded/` with a README saying why each was
+replaced and warning that several report the confounded far-field control as
+positive.
+
+`SCRIPTS_GUIDE_swr_content.md` rewritten: reported vs exploratory, the library
+map, the write-up index, and a "things that will bite you" list (grid_id vs
+grid_num, the sqrt(n) term, first_traversal being a subset of encode, the
+far-field confound, the decoder gate, what non-finite evidence means, per-curve
+RNG seeding).
+
+## 2026-09-29 (p) — Single-beta GLM, the reported paragraph, and a repo cleanup
+
+### The regression, in two forms
+
+`swr_hfb_glm.py` now has three entry points. All fit the CONTINUOUS HFB per
+derivation, different-shaft only, with ripples / correct uncovers / incorrect
+uncovers / navigation presses competing for the same variance, plus intercept
+and 3rd-order Legendre drift.
+
+  `run`     FIR, 30 lags per event type over -500..+1000 ms. Good for WHEN.
+            Its partial R2 is useless for magnitude -- every block lands near
+            1e-3 in every region because each carries 30 degrees of freedom.
+            Its betas carry an unidentifiable level, so each is demeaned over
+            its own lags and only the shape is read.
+  `simple`  ONE regressor per event type: a boxcar over the response window
+            MINUS a -1500..-750 ms baseline arm. 4 parameters, no level
+            ambiguity, betas directly comparable. Three kernels fitted.
+
+**A plain boxcar without the baseline arm is confounded and was discarded.** It
+made the ripple beta positive in every region including STG (p = 0.025) and
+Auditory (p = 0.0005), where the shifted-null analyses find nothing. Not
+collinearity -- the regressors are orthogonal (ripple vs reward r ~ 0.003).
+The cause is that a boxcar beta is relative to the SESSION mean, so it inherits
+the behavioural state ripples occur in. The baseline arm removes it.
+
+### Differenced single-beta result (kernel -250..+500 ms, per session)
+
+| ROI | ripple | correct | incorrect | navigation |
+|---|---|---|---|---|
+| **MedialFrontal** | **+0.246 p<0.001** | +0.031 p=0.58 | -0.013 p=0.88 | +0.040 p=0.11 |
+| lOFC | +0.189 p<0.001 | **+0.150 p=0.040** | +0.025 p=0.84 | -0.064 p=0.23 |
+| MTG | +0.181 p<0.001 | -0.016 p=0.79 | -0.100 p=0.46 | +0.034 p=0.21 |
+| FrontalPole | +0.197 p=0.006 | +0.136 p=0.12 | +0.112 p=0.34 | -0.006 p=0.93 |
+| TempOcc_Fusiform | +0.152 p=0.001 | **+0.245 p=0.002** | +0.115 p=0.53 | -0.001 p=0.99 |
+| Auditory | +0.080 p=0.041 | +0.122 p=0.088 | +0.058 p=0.52 | +0.009 p=0.86 |
+| STG | +0.032 p=0.21 | -0.048 p=0.36 | -0.153 p=0.16 | +0.003 p=0.93 |
+
+Within-region contrasts, now legitimate:
+  MedialFrontal ripple - correct **+0.215, t(52) = +3.47, p = 0.0011**;
+                ripple - navigation +0.206, t(52) = +4.77, p < 0.0001
+  MTG           ripple - correct +0.197, t(32) = +3.13, p = 0.0037
+  lOFC          ripple - correct +0.039, t(20) = +0.61, **p = 0.55**
+Stable across all three kernels for MedialFrontal (ripple +0.246 / +0.164 /
++0.230, all p < 0.001; correct +0.031 / +0.015 / +0.012, all p > 0.58).
+
+So the regression separates the three coupled regions: **mPFC and MTG are
+ripple-only; lOFC is both; TempOcc_Fusiform is reward-not-ripple; STG is
+neither.**
+
+### Numbers fixed in the manuscript paragraph
+
+* medial frontal event-locked response corrected to **-0.0002 +- 0.0013 z,
+  t(52) = -0.20, p = 0.85** (0-500 ms post-uncovering, -1.5..-1.0 s baseline,
+  all-ROI extraction). The previously circulated +0.0037 / p = 0.44 came from
+  the frontal-only run with a -1.5..-0.75 s baseline.
+* control-area count corrected from 8 to **10** (13 ROIs, 3 coupled).
+* added the one surviving ROI contrast: medial frontal > STG, +0.0073,
+  q = 0.030, against a well-powered null (132 derivations, -0.0006 +- 0.0014).
+
+### Decision: the lOFC reward claim is NOT reported
+
+The existing event-locked test puts lOFC correct uncovers at +0.0046 +- 0.0026,
+t(20) = +1.75, **p = 0.095** -- a trend. Only the GLM makes it significant.
+Since the paragraph is about mPFC and adding the GLM costs a full methods
+section, lOFC is described as ripple-locked and the reward question is left
+alone. The GLM stands as an unreported robustness result.
+
+### Repo cleanup
+
+`scripts/exploratory/` created with a README stating, per script, what it
+answered and why it is not in the pipeline. Archived: `swr_hfb_roi_conditions`,
+`swr_hfb_roi_compare`, `swr_hfb_ripple_count_control`, `swr_hfb_event_latency`,
+`swr_hfb_event_specificity`, `swr_hfb_ripple_vs_event`.
+
+The derivation-level pooler `_pooled` was promoted out of the archived
+`swr_hfb_roi_compare` into `swr_hfb_locking_contrasts.pooled_curves_by`, so no
+maintained script depends on an exploratory file; the archived copy re-exports
+it. Path inserts in the moved files were adjusted for the extra directory
+level, and every script -- kept and archived -- was verified to import.
+
+Maintained for this branch: `swr_ripple_locked_hfb`, `swr_ripple_hfb_conditions`,
+`swr_hfb_roi_partition`, `swr_hfb_event_locked`, `swr_hfb_glm`,
+`swr_hfb_panels_2cm`, `swr_hfb_locking_contrasts`, `swr_hfb_coverage_figure`.
+
+## 2026-09-29 (o) — FIR GLM replaces the split-and-contrast designs
+
+`scripts/swr_hfb_glm.py`. SK called the epoch-splitting approach ridiculous and
+was right twice over.
+
+### Why the split designs could never work
+
+1. Events overlap in time by construction, so no labelling makes the epochs
+   independent.
+2. **The rip and clean labels overlapped by 41%.** Measured: of 29366 "ripple-
+   free" correct-uncover events, 12142 (41.3%) were ALSO in the `rip` group --
+   epochs clean out to +500 ms whose first ripple arrives between +0.5 and
+   +2 s. `clean` was defined on (-1.5, +0.5] and `rip` on (0, +2]; two windows,
+   one comparison. Same for error (43.3%) and move (41.4%). Every rip-vs-clean
+   p-value reported before this entry compared sets sharing ~40% of members.
+
+### The model
+
+FIR GLM on the continuous HFB, per derivation, different-shaft only:
+one regressor per event type per 50 ms lag over -500..+1000 ms (30 lags x 4
+event types = 120 columns), plus intercept and 3rd-order Legendre drift.
+3072 beta rows, 61 sessions, 400 pair labels. Event types are near-orthogonal
+(each block's R2 from the others ~= 0.003), so the design CAN separate them.
+
+### The level is not identifiable -- only the shape
+
+Diagnostics forced a change of estimand. Across sessions the ripple and reward
+LEVELS trade off: r = -0.63 (MedialFrontal), -0.71 (MTG), -0.57 (STG), all
+p < 1e-4, and no beta set returns to zero at the edges of the support. At this
+event density a constant can move between regressors almost freely. Each
+regressor's timecourse is therefore DEMEANED over its own lags before testing,
+and **absolute heights must not be compared across regressors**.
+
+### Result, demeaned shapes, cluster-corrected over lags
+
+| ROI | regressor | peak | at lag | clusters p<0.05 |
+|---|---|---|---:|---|
+| MedialFrontal | **ripple** | +0.0114 | 0 ms | **-200..+100 (0.0005)**; +400..+950 (0.0005) |
+| MedialFrontal | correct uncover | +0.0028 | -500 | none |
+| MedialFrontal | incorrect | -0.0054 | +400 | none |
+| MedialFrontal | navigation | -0.0019 | 0 | none |
+| lOFC | **ripple** | +0.0102 | -100 ms | **-250..+100 (0.0005)**; +300..+550 (0.005); +650..+750 (0.015) |
+| lOFC | correct uncover | +0.0057 | +800 | none |
+| lOFC | incorrect | +0.0145 | +200 | none |
+| MTG | **ripple** | +0.0073 | -50 ms | **-100..+50 (0.0005)**; +800..+900 (0.007) |
+| MTG | **correct uncover** | -0.0075 | +150 ms | **+0..+150 (0.0025)** |
+| STG | ripple | +0.0022 | -50 | **none** |
+| STG | navigation | -0.0027 | -100 | -100..+0 (0.034) |
+
+**The ripple regressor is the only one that survives in medial frontal and
+lOFC**, with a transient peaking at 0 and -100 ms respectively. Neither
+uncover regressor nor navigation clusters at all in those two regions, with
+every other event type partialled out at the same moment. STG -- the negative
+control -- has NO ripple cluster.
+
+MTG is the exception: it carries both a ripple transient AND a NEGATIVE
+correct-uncover transient at +0..+150 ms.
+
+This is the cleanest version of the result so far, and it is the one to build
+the paragraph on: the earlier event-locked contrasts were confounded by the
+41% label overlap and the overlapping epochs, and both are gone here.
+
+Output `hfb_glm_2026-09-29/` -- `betas.csv`, `glm_cluster_stats.csv`,
+`design_diagnostics.csv`, `glm_betas.{pdf,png}`.
+
+## 2026-09-29 (n) — (ripple in epoch) minus (ripple-free), correct and any uncover
+
+The contrast SK asked for, with CIs, Cohen's d and three post-event windows.
+Event-locked, baseline -1.5..-1.0 s, paired within session.
+
+### Correct uncovers
+
+| ROI | n | ripple | ripple-free | difference | 95% CI | d | p |
+|---|---:|---|---|---|---|---:|---:|
+| MedialFrontal | 53 | +0.0016 | -0.0025 | **+0.0041** | [+0.0006, +0.0077] | +0.32 | **0.023** |
+| lOFC | 21 | +0.0078 | +0.0041 | +0.0037 | [-0.0034, +0.0108] | +0.24 | 0.287 |
+| MTG | 33 | -0.0004 | -0.0041 | +0.0037 | [-0.0034, +0.0108] | +0.19 | 0.294 |
+
+**The three point estimates are the same** (+0.0037 to +0.0041). What differs is
+n -- 53 vs 21 vs 33 -- so only medial frontal reaches p < 0.05. This is a power
+difference, not a regional one, and it should not be written as "the effect is
+present in medial frontal and absent elsewhere".
+
+### Any uncover
+
+| ROI | n | ripple | ripple-free | difference | 95% CI | d | p |
+|---|---:|---|---|---|---|---:|---:|
+| MedialFrontal | 53 | -0.0004 | -0.0033 | +0.0029 | [-0.0001, +0.0059] | +0.27 | 0.055 |
+| lOFC | 21 | +0.0066 | +0.0049 | +0.0017 | [-0.0043, +0.0077] | +0.13 | 0.570 |
+| MTG | 33 | +0.0018 | -0.0053 | **+0.0071** | [+0.0010, +0.0132] | +0.41 | **0.024** |
+
+MTG has the largest effect here (d = 0.41) and pooling correct with incorrect
+HELPS it (+0.0037 -> +0.0071) while it hurts lOFC (+0.0037 -> +0.0017). So
+whatever MTG is doing is about the uncovering, not about the outcome; lOFC's is
+the reverse.
+
+### Robustness to the window
+
+MTG / any uncover is the only contrast stable across all three windows
+(+0.0071 p = 0.024, +0.0059 p = 0.037, +0.0058 p = 0.034). MedialFrontal /
+correct is significant only in 0-500 ms and fades (p = 0.071 at 0-750,
+p = 0.112 at 250-750), so it depends on the window choice.
+
+**Nothing survives BH** (min q = 0.072). Every statement above is a pattern.
+
+Output `hfb_event_specificity_2026-09-29/ripple_vs_clean.{pdf,png}` and
+`ripple_vs_clean_windows.csv`.
+
+## 2026-09-29 (m) — The ripple/event plane, and a sliding window over the event epoch
+
+`scripts/swr_hfb_ripple_vs_event.py`. Two quantities, drawn as a plane and
+never subtracted: x = ripple-locked coupling (peri +-250 ms minus non-peri),
+y = event-locked response in RIPPLE-FREE epochs (0-500 ms minus -1.5..-1.0 s).
+The windows have different shapes -- symmetric around a ripple, causal around
+an event -- so a difference between them would be a window artefact.
+
+### The plane, correct uncovers
+
+| ROI | ripple-locked | q | event, ripple-free | q |
+|---|---|---:|---|---:|
+| lOFC | +0.0093 | 0.001 | +0.0041 | 0.627 |
+| MedialFrontal | +0.0073 | 0.000 | -0.0025 | 0.363 |
+| FrontalPole | +0.0065 | 0.102 | +0.0027 | 0.756 |
+| MTG | +0.0042 | 0.001 | -0.0041 | 0.425 |
+| TempOcc_Fusiform | +0.0037 | 0.299 | **+0.0110** | 0.071 |
+| Auditory | +0.0014 | 0.424 | +0.0063 | 0.225 |
+| STG | -0.0006 | 0.672 | +0.0008 | 0.756 |
+
+**"Medial frontal is ripple-locked" is supported**: significant on x, flat and
+slightly negative on y. **"lOFC is reward-locked" is NOT**: lOFC is the most
+ripple-coupled region of all and its ripple-free event response is +0.0041,
+q = 0.63. It sits on the same axis as medial frontal, not the other one.
+
+The only regions leaning to the EVENT axis are TempOcc_Fusiform (+0.0110,
+q = 0.071) and Auditory (+0.0063, q = 0.225), neither ripple-coupled and
+neither significant. So the dissociation SK expected exists in the figure's
+geometry but not in these two regions.
+
+### Sliding window, 250 ms wide, 50 ms steps, BH within each sweep
+
+| ROI | condition | epochs | significant centres | peak |
+|---|---|---|---|---|
+| lOFC | correct uncovers | with ripple | -525..+625 ms | +0.0107 at +375 ms (q=0.030) |
+| MedialFrontal | navigation | ripple-free | +425..+625 ms | +0.0059 at +625 ms (q=0.004) |
+| lOFC | navigation | ripple-free | +525..+625 ms | +0.0081 at +625 ms (q=0.040) |
+| MTG | navigation | with ripple | -875..+625 ms | +0.0059 at **-825 ms** (q=0.038) |
+
+Two things the sweep exposes that the fixed window hid:
+
+  * **Three of the four peak in the LAST window (+625 ms).** The response is
+    still rising where the epoch ends, so 0-500 ms is not capturing it and
+    HALF_S = 1.5 s is too short on the post side. Any effect size quoted from
+    the 0-500 ms window is a lower bound.
+  * **MTG's navigation effect peaks at -825 ms, BEFORE the event**, and is
+    significant across almost the whole sweep. That is not an evoked response;
+    it is a sustained offset relative to the -1.5..-1.0 s baseline, and it
+    means the baseline window itself sits inside whatever is going on. MTG's
+    navigation number should not be read as event-evoked.
+
+Output `hfb_ripple_vs_event_2026-09-29/`.
+
+## 2026-09-29 (l) — Is MTG the same as medial frontal? Indistinguishable, but underpowered
+
+Direct paired tests rather than eyeballing two columns.
+
+### Ripple-locked coupling
+
+MedialFrontal +0.0059 vs MTG +0.0037 on the 30 sessions with both.
+Difference **+0.0021, 95% CI [-0.0003, +0.0045], t(29) = +1.82, p = 0.079**.
+MTG is 64% of MedialFrontal numerically.
+
+The CI is the point: it excludes a difference larger than 0.0045, but
+MedialFrontal's whole effect is 0.0059, so a difference of 76% of the effect is
+still inside it. This is a failure to reject, NOT equivalence.
+
+### Event-locked, MedialFrontal minus MTG, all four conditions x rip/clean
+
+**0 of 8 differ** (min q = 0.61). Largest gap: incorrect uncovers with a ripple,
+-0.0089, CI [-0.0205, +0.0027]. Every CI spans zero widely.
+
+### Proximity does NOT explain MTG
+
+MTG is the tissue the hippocampal electrodes pass through, so the obvious worry
+is volume conduction. Median distance to the nearest hippocampal derivation
+(different-shaft only): MTG 31.2 mm vs MedialFrontal 60.7 mm
+(Mann-Whitney p = 9.4e-21). But distance does not predict coupling:
+
+| ROI | median mm | coupling |
+|---|---:|---|
+| ITG | 25.5 | +0.0030 |
+| Auditory | 28.7 | +0.0014 |
+| **MTG** | **31.2** | **+0.0042** |
+| TemporalPole | 32.3 | -0.0002 |
+| STG | 33.3 | -0.0006 |
+| lOFC | 47.1 | +0.0093 |
+| **MedialFrontal** | **60.7** | **+0.0073** |
+| Occipital | 61.6 | +0.0051 |
+
+MTG's nearest neighbours in distance -- Auditory, TemporalPole, STG, all within
+3 mm of its median -- show NO coupling. The two most strongly coupled regions
+are the two furthest from the hippocampus. Volume conduction predicts the
+opposite ordering, so it does not explain MTG.
+
+### Correction to 2026-09-29 (k)
+
+That entry said "MTG's navigation response is the one clear event-driven signal
+that does not require a ripple". Not unique: MedialFrontal's ripple-free
+navigation response is also nominally positive (+0.0023, p = 0.041) alongside
+MTG's (+0.0038, p = 0.036) and lOFC's (+0.0034, p = 0.045). All three behave the
+same way, and none survives BH.
+
+### Verdict
+
+On every measure computed, MTG and MedialFrontal are statistically
+indistinguishable and qualitatively identical: both ripple-coupled, neither with
+a ripple-free uncover response, both with positive ripple-minus-clean for
+uncovers and none for navigation. Whether they are genuinely the same needs an
+equivalence test with a pre-specified margin, and n = 30 shared sessions will
+not support one at the current effect size.
+
+## 2026-09-29 (k) — Exclusive partition, all-ROI event-locking, and the specificity test
+
+Three corrections and one new extraction, all from SK's questions.
+
+### 1. MedialFrontal now excluded from every other ROI
+
+`swr_hfb_roi_partition.py run --exclude_medial=True`. The 179 MedialFrontal
+derivations are REMOVED from their atlas ROI, so every row is disjoint and the
+comparison panel is an independent test. Consequences: **mPFC and mOFC vanish
+entirely** (they lie 100% inside MedialFrontal, which is exactly why they
+looked like independent coupled regions and were not); lOFC drops 72 -> 55
+derivations.
+
+Session level, only THREE regions are significantly coupled:
+
+| ROI | sess | der | coupling | q |
+|---|---:|---:|---|---:|
+| lOFC | 21 | 55 | +0.0093 | 0.002 |
+| MedialFrontal | 53 | 179 | +0.0073 | 0.000 |
+| MTG | 57 | 105 | +0.0042 | 0.002 |
+
+FrontalPole +0.0065, p = 0.045 but q = 0.147. Still only one contrast survives:
+MedialFrontal > STG, +0.0073, q = 0.030. Output
+`hfb_roi_partition_exclusive_2026-09-29/`.
+
+### 2. MTG had event-locked data all along -- my restriction, not a data gap
+
+`swr_hfb_event_locked.py` inherited `roi_family.isin(["mPFC","mOFC"])` from
+`swr_ripple_hfb_conditions.py`, where it was a cost decision. Removed. The
+re-extraction covers all five cortical families: 768 derivations, 61 sessions.
+Output `hfb_event_locked_all_2026-09-29/`.
+
+Also per SK: baseline is now **-1.5 to -1.0 s** and the window **0 to +500 ms**,
+and a third ripple label was added --
+
+  rip     >=1 ripple in (0, +2 s]
+  norip   none in that window (says nothing about BEFORE the event)
+  clean   **no ripple anywhere in the epoch, -1.5 to +0.5 s** -- SK's reading,
+          and the right one: the measured window is guaranteed ripple-free.
+
+### 3. MTG is MIDDLE temporal gyrus, not medial temporal
+
+Audit: "Middle Temporal Gyrus, posterior division" (211 der), "anterior
+division" (61), A21c/A21r, ctx-*-middletemporal. Lateral temporal neocortex.
+Nothing to do with MTL, parahippocampal or entorhinal cortex.
+
+### The specificity result (`swr_hfb_event_specificity.py`)
+
+Event-locked, 0-500 ms vs -1.5..-1.0 s baseline, real minus shifted null,
+per session, phases pooled.
+
+WITH a ripple in the epoch:
+
+| ROI | condition | effect | p | q |
+|---|---|---|---:|---:|
+| lOFC | correct uncovers | +0.0078 | 0.011 | 0.060 |
+| lOFC | any uncover | +0.0066 | 0.016 | 0.060 |
+| MTG | navigation presses | +0.0047 | 0.0056 | 0.060 |
+| MTG | incorrect uncovers | +0.0079 | 0.054 | 0.131 |
+| MedialFrontal | navigation presses | +0.0020 | 0.020 | 0.060 |
+
+RIPPLE-FREE epochs -- nothing survives BH (all q >= 0.135). Navigation presses
+are nominally positive in all three (MedialFrontal +0.0023 p = 0.041, lOFC
++0.0034 p = 0.045, MTG +0.0038 p = 0.036); every uncover cell is n.s. and the
+uncover effects in MedialFrontal and MTG are NEGATIVE.
+
+Direct (ripple in epoch) MINUS (ripple-free), paired within session:
+
+| ROI | condition | with ripple | ripple-free | difference | p | q |
+|---|---|---|---|---|---:|---:|
+| MTG | incorrect uncovers | +0.0079 | -0.0083 | **+0.0161** | 0.010 | 0.096 |
+| MedialFrontal | correct uncovers | +0.0016 | -0.0025 | +0.0041 | 0.023 | 0.096 |
+| MTG | any uncover | +0.0018 | -0.0053 | +0.0071 | 0.024 | 0.096 |
+| MedialFrontal | any uncover | -0.0004 | -0.0033 | +0.0029 | 0.055 | 0.165 |
+| MTG | navigation | +0.0047 | +0.0038 | +0.0009 | 0.591 | 0.709 |
+| lOFC | correct uncovers | +0.0078 | +0.0041 | +0.0037 | 0.288 | 0.503 |
+
+Nothing survives BH (min q = 0.096), but the pattern is consistent and
+interpretable: for UNCOVERS the response needs a ripple in all three regions
+(all differences positive, three at p < 0.06); for NAVIGATION it does not
+(MTG +0.0009 p = 0.59; MedialFrontal -0.0003 p = 0.79). MTG's navigation
+response is the one clear event-driven signal that does not require a ripple.
+
+Output `hfb_event_specificity_2026-09-29/`.
+
+## 2026-09-29 (j) — What is actually special about medial frontal: two candidates, one bug
+
+### Bug: relabelling emptied mPFC and mOFC
+
+The event-locked ROI mapping did `ix.loc[in_MedialFrontal, "roi"] = "MedialFrontal"`.
+MedialFrontal contains 100% of the mPFC and mOFC derivations, so that RELABEL
+deleted both ROIs (they came back "too few"), and it also stripped lOFC of the
+24% of its derivations that fall inside |x| <= 20 mm. Fixed by appending a
+duplicate set of MedialFrontal rows instead of overwriting.
+
+Consequence: yesterday's lOFC no-ripple figure of **+0.0175, p = 0.047 is
+wrong**; on the full lOFC set it is **+0.0144, p = 0.055**, and all uncovers
++0.0247, p = 0.058.
+
+### Candidate 1: ripple-specificity. Suggestive, NOT significant
+
+Event-locked reward response, 0-500 ms post-uncovering, pre-event baseline,
+explore phase:
+
+| ROI | all uncovers | uncovers with NO ripple |
+|---|---|---|
+| **MedialFrontal** | **+0.0005, t(52)=+0.14, p=0.89** | **-0.0018, t(36)=-0.30, p=0.76** |
+| lOFC | +0.0247, t(20)=+2.01, p=0.058 | +0.0144, t(15)=+2.08, p=0.055 |
+| mOFC | -0.0031, t(17)=-0.28, p=0.78 | +0.0111, t(9)=+0.75, p=0.47 |
+| FrontalPole | -0.0060, t(15)=-0.51, p=0.62 | +0.0021, t(7)=+0.08, p=0.92 |
+| mPFC | -0.0018, t(34)=-0.39, p=0.70 | +0.0047, t(24)=+0.64, p=0.53 |
+
+Medial frontal is flat; lOFC is ~50x larger numerically but sits at p = 0.055.
+A trend, not a dissociation. MTG cannot be tested at all -- the conditions
+extraction covered frontal derivations only.
+
+### Candidate 2: response timing. Does NOT separate them
+
+Peak latency of the region curve, bootstrap CI over sessions:
+MedialFrontal -10 ms [-40, +10], lOFC -30 ms [-80, +10], mOFC -60 ms
+[-180, +220], mPFC +30 ms [-80, +140]. All overlapping; no timing claim.
+
+Cluster extents differ (MedialFrontal -190..+370 ms, lOFC -260..+150, mOFC
+-230..+60) but cluster EXTENT scales with power and MedialFrontal has 53
+sessions against lOFC's 21, so this is not a usable contrast either.
+
+### What is defensible
+
+Medial frontal is the most RELIABLY coupled region (t(52) = +6.53,
+p = 2.7e-8 -- the largest t of any ROI) and the only one with a flat
+event-locked reward response. The ripple-specificity contrast against lOFC is
+a trend. Making it decisive needs an event-locked extraction that covers the
+non-frontal ROIs, and a commensurable ripple-vs-event estimator -- the two
+currently use different baselines and windows and cannot be subtracted.
+
+## 2026-09-29 (i) — Cluster test vs window test: they disagree, and it matters
+
+SK was right and my summary was wrong. Two tests were being conflated:
+
+  WINDOW   mean of the curve over +-250 ms, one value per session, t vs 0.
+           Aggregates over 500 ms, so a small sustained offset passes.
+  CLUSTER  `swr_sakon.cluster_perm_time` on the timecourse, sign-flip null,
+           corrected over time. Needs a temporally CONCENTRATED effect.
+
+Ripple-locked, session level, first traversal:
+
+| ROI | condition | window | cluster |
+|---|---|---|---|
+| MedialFrontal | correct | t(50)=+2.66, p=0.0105 | **-130..+10 ms, p=0.038** |
+| MedialFrontal | incorrect | t(52)=+2.92, p=0.0051 | **NONE** |
+| MedialFrontal | navigation | t(50)=+1.38, p=0.175 | NONE |
+| lOFC | correct | t(18)=+2.77, p=0.0127 | **-190..+40 ms, p=0.018** |
+| lOFC | incorrect | t(20)=+0.66, p=0.514 | NONE |
+| lOFC | navigation | t(20)=+0.27, p=0.787 | NONE |
+| mPFC | correct | t(33)=+0.76, p=0.456 | NONE |
+
+So "a cluster at ripple time for correct uncovers but not for incorrect or
+navigation" is TRUE for both MedialFrontal and lOFC. My earlier note that
+incorrect uncovers "are significant" was the WINDOW test, which is a different
+claim: incorrect uncovers raise the mean over +-250 ms without producing a
+temporally localised cluster.
+
+Encoding phase, for completeness: MedialFrontal correct has no cluster there
+(window p = 0.054) but navigation does (+40..+280 ms, p = 0.006); lOFC correct
+does (-180..+30 ms, p = 0.044).
+
+### Which regions actually beat medial frontal: none
+
+Session level, MedialFrontal minus each partition ROI, paired. NINE ROIs have
+ZERO derivation overlap with MedialFrontal and are the genuine controls (MTG,
+STG, Auditory, TemporalPole, ITG, TempOcc_Fusiform, Occipital, Parietal,
+vlPFC_IFG); mPFC and mOFC overlap it 100% and are not independent; lOFC 24%,
+FrontalPole 11%.
+
+Only ONE survives BH: MedialFrontal > STG, +0.0073 +- 0.0022, t(35) = +3.26,
+p = 0.0025, q = 0.033. **No region is significantly higher than medial
+frontal**, lOFC included: lOFC - MedialFrontal = +0.0005 +- 0.0014,
+t(20) = +0.33, p = 0.74.
+
+### The defensible lOFC claim
+
+lOFC is the only 0%-or-low-overlap region that reproduces medial frontal's
+selectivity (cluster for correct uncovers only). But its HFB ALSO rises after
+correct uncoverings with no ripple within 2 s (+0.0175, p = 0.047, 0-500 ms
+post-event), where medial frontal's does not (-0.0018, p = 0.76). That is the
+reward-confound reading, and it is supported.
+
+## 2026-09-29 (h) — The event-locked window was wrong; SK caught it
+
+The 2026-09-29 (g) conclusion "without a ripple there is no response at all"
+was an artefact of measuring an EVOKED response in a window CENTRED on the
+event. A +-250 ms window spans 250 ms of pre-event baseline and 250 ms of a
+response that has barely begun, and the two cancel. SK pointed out that the
+event-locked trace is negative at +250 ms and rises at +500 ms, which is where
+a feedback-evoked frontal response belongs.
+
+### Window sweep, correct uncovers in explore, pre-event baseline
+
+lOFC, no ripple followed:
+
+| window | effect | p |
+|---|---|---:|
+| **sym +-250 ms** (what (g) used) | **+0.0014** | **0.83** |
+| post 0-500 ms | **+0.0175** | **0.047** |
+| post 0-750 ms | +0.0140 | 0.045 |
+| post 100-500 ms | +0.0167 | 0.083 |
+
+Same data, opposite conclusion. The 250 ms bin sweep shows why: lOFC no-ripple
+is -0.0111 in -250..0 ms and +0.0138 (p = 0.025) in 0..+250 ms.
+
+### Corrected result
+
+With a post-event window (0-500 ms), explore phase:
+
+| ROI | condition | ripple followed | no ripple | difference |
+|---|---|---|---|---|
+| MedialFrontal | correct | +0.0037 (p=0.44) | -0.0018 (p=0.76) | +0.0112 (p=0.24) |
+| MedialFrontal | navigation | +0.0001 (p=0.95) | -0.0025 (p=0.34) | +0.0026 (p=0.46) |
+| lOFC | correct | +0.0243 (p=0.11) | **+0.0175 (p=0.047)** | -0.0068 (p=0.51) |
+| lOFC | navigation | +0.0049 (p=0.35) | -0.0004 (p=0.93) | +0.0053 (p=0.45) |
+
+**RETRACTED from (g):** "every no-ripple cell is at or below zero" and "the
+ripple+ minus ripple- contrast is positive for correct uncovers in all three
+ROIs". Both were window artefacts. With a post-event window there is NO
+ripple/no-ripple difference anywhere (all p >= 0.22), and the MedialFrontal
+contrast that was p = 0.017 becomes p = 0.24.
+
+**What now stands, and it is a cleaner dissociation:**
+
+  * MEDIAL FRONTAL has no event-locked reward response in ANY window -- pooled,
+    ripple-followed or no-ripple, symmetric or post-event, every p >= 0.22. Its
+    HFB is ripple-locked and not reward-locked.
+  * lOFC DOES have an event-locked reward response, and it does NOT need a
+    ripple (+0.0175, p = 0.047 with no ripple within 2 s). lOFC is both
+    ripple-locked and reward-locked.
+
+Cluster test over the whole epoch finds only one surviving cluster in the whole
+event-locked set: lOFC, correct uncovers with a ripple, -50..+40 ms, p = 0.042.
+Nothing for medial frontal.
+
+### Lesson for the estimator
+
+A window centred on the lock is right for a ripple, where the response is
+symmetric, and wrong for an event, where it is causal. The two branches should
+not share a window just because they share an estimator.
+
+Output: window sweep and post-event contrasts in the scratch analysis; the
+extraction itself (`hfb_event_locked_2026-09-29/`) is unchanged and already
+stores both baselines, so no re-run was needed.
+
+## 2026-09-29 (e) — the reported analysis is now ripple-window only
+
+`mc/analyse/swr_explore/phase_contrast.py`
+(`scripts/swr_content_explore.py phase_contrast`), results in
+`swr/phase_contrast_2026-09-29/`.
+
+**Why.** The reported fixed-window numbers were being produced by the
+41-offset pipeline evaluated at offset 0, so each unit's counts were z-scored
+across ALL offsets pooled. Defensible, but an implementation detail with no
+scientific motivation: it forced the Methods to describe a sliding window that
+is no longer reported, and it made the drafted Methods paragraph subtly not
+match the code. The new module counts spikes in the ripple windows and their
+matched flanks and nowhere else, so the paragraph is literally true. It also
+brings all three reported tests into one place at 1000 permutations (the flank
+control was previously at 200 in `location_by_phase`).
+
+**Nothing of substance changed.** Every conclusion is identical:
+
+| test | pooled-offset | ripple window only |
+|---|---|---|
+| HC pooled encode | +0.576, P = 1.8e-4 | +0.566, P = 2.0e-4 |
+| HC pooled contrast | +0.455, P = 0.0085 | +0.462, P = 0.0079 |
+| aHP contrast | +0.367, P = 0.027 | +0.370, P = 0.026 |
+| mHP contrast | +0.439, P = 0.107 | +0.432, P = 0.112 |
+
+Known-phase values are slightly larger (pooled +0.21 vs +0.12) but stay n.s.
+Flank specificity at 1000 perms: pooled encode +0.233 (P = 0.115), aHP +0.230
+(P = 0.152), mHP -0.001 (P = 0.997) -- still null, as before.
+
+Figures 20/21 now read `phase_contrast_*` via `_phase_contrast()`, falling back
+to the old module so nothing breaks. `timecourse_by_phase` is kept for the
+descriptive time course only.
+
+## 2026-09-29 (d) — RETRACTED: the far-field specificity control is confounded
+
+The "surround" control (ripple minus the mean of the 14 offsets at
+|t| >= 350 ms) was reported yesterday as showing that the encoding-phase
+location signal is ripple-specific (pooled HC +0.37, P = 0.030). **That is
+withdrawn.** Every far-field window is scored for the square occupied AT THE
+RIPPLE, and measured across all sessions the subject is still on that square
+only:
+
+| offset | P(same square) |
+|---|---|
+| 0 ms | 100.0% |
+| +-250 ms | 70.1% |
+| +-350 ms | 60.6% |
+| +-500 ms | 49.1% |
+| **far field (14 offsets)** | **54.6%** |
+
+So ~45% of far-field windows are scored for a square the subject has left,
+their evidence is depressed for reasons unrelated to ripples, and the
+ripple-minus-far-field difference is inflated. This is the SAME failure that a
+fixed +-500 ms flank showed (53.7% same-square, CHANGELOG 2026-09-17 h) and
+that the occupancy-matched flank control was built to avoid. The far-field
+control silently reintroduced it.
+
+**The valid specificity control is the matched flank, and it is null:**
+pooled HC encoding +0.226 (t(50) = +1.56, P = 0.125); mHP +0.010 (P = 0.957);
+aHP +0.216 (P = 0.171); execution negative in all. Report specificity as
+tested-and-not-found.
+
+**Still valid:** the far-field version of the PHASE CONTRAST. Label expiry
+applies equally to both phases, so it cancels in a difference; that control
+asks whether the phase effect is localised to the ripple and it is, for pooled
+HC (+0.05, P = 0.81 in the far field vs +0.46 at the ripple). ⚠ Not for mHP
+(+0.41, P = 0.21).
+
+**Also corrected: which ROI to lead with.** Earlier text leant on aHP because
+its P values were smaller. That is a power difference (n = 44 vs 29), not a
+biological one. mHP has the larger effect (+0.57 vs +0.41) and the only
+significant cluster (P = 0.005 vs 0.158). Lead with pooled hippocampus.
+
+Corrected write-up in
+`data/final_results/ripple_analysis/RESULTS_ripple_content_FINAL.md`;
+Methods in `METHODS_ripple_content_FINAL.md`.
+
+## 2026-09-29 (g) — Reward-locked HFB: the rise is NOT a reward response (PARTLY RETRACTED by 2026-09-29 (h): the +-250 ms window was wrong for an evoked response)
+
+`scripts/swr_hfb_event_locked.py`. SK asked whether frontal HFB simply goes up
+after a rewarded uncovering, with the ripple incidental. New extraction over
+all 61 sessions, locked to the EVENT instead of the ripple, every condition
+split by whether a ripple followed within 2 s. 29525 traces, 53 sessions,
+148 cortical pair labels.
+
+Epochs are +-1.5 s and baselined to -1500..-750 ms, PRE-event. The ripple-locked
+convention (250-750 ms flanks) sits on top of the very response it would be
+baselining when the lock is an event, so it would subtract the effect. Both
+estimators are written out (`peri_pre`, `peri_flank`). Shifted null, seed and
+shift range unchanged; different-shaft derivations only.
+
+### There is essentially NO event-locked HFB response
+
+All correct uncovers pooled, pre-event baseline, real minus shifted null,
+per session:
+
+| ROI | phase | n | effect | p |
+|---|---|---:|---|---:|
+| MedialFrontal | explore | 53 | **-0.0008 +- 0.0035** | 0.83 |
+| MedialFrontal | execute | 53 | +0.0009 +- 0.0009 | 0.30 |
+| lOFC | explore | 21 | +0.0112 +- 0.0078 | 0.17 |
+| lOFC | execute | 21 | +0.0009 +- 0.0010 | 0.38 |
+| mPFC | explore | 35 | -0.0045 +- 0.0043 | 0.31 |
+
+**0 of 18 cells survive BH**, and the only p < 0.05 anywhere in the table is
+lOFC navigation in explore, which is NEGATIVE (-0.0065, p = 0.024). So HFB does
+not simply rise after a rewarded uncovering. The ripple-locked effect is not a
+reward-evoked response wearing a ripple costume.
+
+### Without a ripple there is no response at all
+
+Event-locked, split by whether a ripple followed:
+
+| ROI | kind | phase | ripple followed | no ripple |
+|---|---|---|---|---|
+| MedialFrontal | correct | explore | +0.0031 (p=0.50, n=49) | **-0.0096 (p=0.073, n=37)** |
+| lOFC | correct | explore | **+0.0189 (p=0.042, n=19)** | -0.0028 (p=0.64, n=16) |
+| mPFC | correct | explore | -0.0022 (p=0.71, n=33) | -0.0074 (p=0.28, n=25) |
+| MedialFrontal | correct | execute | +0.0015 (p=0.36) | -0.0014 (p=0.43) |
+
+Every `no ripple` cell is at or below zero. The ripple+ minus ripple- contrast
+is positive for correct uncovers in all three ROIs during explore
+(MedialFrontal +0.0187 p = 0.017; mPFC +0.0145 p = 0.095; lOFC +0.0147
+p = 0.152).
+
+### But the contrast does not survive, and depends on the baseline
+
+Across 25 ripple+ vs ripple- contrasts, **0 survive BH under either baseline**.
+MedialFrontal correct/explore is p = 0.017, q = 0.32 with the pre-event
+baseline and p = 0.052, q = 0.49 with the flank baseline. A result that moves
+that much with the baseline is not ready to be leaned on.
+
+⚠ And the comparison is quasi-experimental, not a manipulation. Whether a
+ripple follows is not randomly assigned: ripple rate rises with stillness
+(SWR_SUMMARY F1), so ripple+ events are plausibly in a different behavioural
+state from ripple- ones. "The response needs a ripple" and "the response needs
+the state that produces ripples" are not separated by this design.
+
+Figure `event_vs_ripple_explore.pdf`: ripple-locked, event-locked pooled, and
+event-locked split by ripple, for MedialFrontal and lOFC. Columns 1 and 2 use
+different baselines and epoch widths, so heights are not comparable across
+columns -- stated on the figure.
+
+Output `hfb_event_locked_2026-09-29/`.
+
+## 2026-09-29 (f) — Event-centred latency: the ripple-centred contrast was task structure
+
+`swr_hfb_event_latency.py first`. SK asked what happens if you take only the
+FIRST ripple after each uncover. It corrects yesterday's interpretation.
+
+### The two views, and why they differ
+
+RIPPLE-centred (`run`): each ripple takes its nearest preceding event, so one
+uncovering owns EVERY ripple in the next 2 s. EVENT-centred (`first`): each
+event contributes one number, the time to the next ripple, per hippocampal
+derivation. Events with no ripple in 2 s kept as censored rows.
+
+### Ripple timing does NOT depend on what just happened
+
+| phase | condition | n ev x probe | any ripple <2 s | median first ripple | IQR | median gap to next EVENT |
+|---|---|---:|---:|---:|---|---:|
+| first traversal | correct | 16742 | 0.28 | 833 ms | [423, 1404] | **1725 ms** |
+| first traversal | incorrect | 57101 | 0.28 | 935 ms | [452, 1443] | 575 ms |
+| first traversal | navigation | 66193 | 0.27 | 920 ms | [446, 1444] | **400 ms** |
+| encoding | correct | 26931 | 0.28 | 857 ms | [422, 1418] | 1325 ms |
+| encoding | navigation | 101485 | 0.27 | 919 ms | [441, 1437] | 450 ms |
+| after encoding | correct | 182148 | 0.29 | 907 ms | [429, 1424] | 525 ms |
+| after encoding | navigation | 264875 | 0.29 | 901 ms | [428, 1425] | 525 ms |
+
+The next ripple arrives ~830-935 ms later whatever the event was, with
+near-identical IQRs, and the probability of ANY ripple within 2 s is 0.27-0.29
+in every single cell. The distributions overlap almost exactly.
+
+### RETRACTION of 2026-09-29 (e)
+
+That entry reported "correct uncovers are the FURTHEST of the three conditions
+from their ripples (730 ms vs 266 ms for navigation)" and read it as a fact
+about ripple timing. **It is not.** It is event spacing: the median gap to the
+next event is 1725 ms after a correct uncover on the first traversal against
+400 ms after a navigation press, a factor of 4.3. A correct uncovering is
+followed by a pause, so it OWNS a long window and collects late ripples; a
+navigation press is overtaken by the next press within 400 ms and everything
+after that is relabelled. The `median (assigned)` column makes the mechanism
+explicit -- 665 ms for first-traversal correct against 251 ms for navigation,
+tracking the gaps, not the ripple process.
+
+### What survives, and what it now means
+
+The ripple-centred number is still the right one for the question it was asked
+for: FOR THE RIPPLES IN THE reward_explore CONDITION, the uncovering was a
+median 730 ms earlier. So the lOFC correct-uncover peak at about -50 ms is
+still ~680 ms after the median press and still cannot be the press response.
+That conclusion holds.
+
+What does NOT hold is any claim that ripples are timed differently after
+different event types. They are not. The conditions differ in BEHAVIOURAL
+STATE -- a post-reward pause is stiller, and SWR_SUMMARY F1 already records
+that ripple rate rises with stillness -- which is precisely why each condition
+carries its own shifted null rather than being compared raw.
+
+One small real timing effect remains visible in the figure: on the first
+traversal and in encoding, correct uncovers show a modest excess of first
+ripples around 400-500 ms and a deficit beyond 800 ms, while the other two
+conditions decline smoothly. Not tested, and not what the medians capture.
+
+Output `hfb_event_latency_2026-09-29/first_ripple.{csv,json,pdf,png}`.
+
+## 2026-09-29 (e) — How ripples get their condition, and when the press actually was (PARTLY RETRACTED by 2026-09-29 (f): the latency contrast is event spacing, not ripple timing)
+
+`scripts/swr_hfb_event_latency.py`, plus a press-latency row on every 2 cm
+condition panel.
+
+### The allocation rule, exactly
+
+`swr_ripple_hfb_conditions.session_events` lays down events: every UNCOVERING
+(correct or not, every phase) -> `reward_<phase>`/`error_<phase>`; every
+MOVEMENT PRESS (every phase, inside the grid's A..D window) -> `move_<phase>`;
+pseudo-events every 0.5 s with nothing within +-2 s -> `still_<phase>`. Then
+`.assign` gives each ripple the label of the single NEAREST PRECEDING event
+within POST_S = 2.0 s; ripples with nothing in the prior 2 s drop out. 77013
+ripples labelled over 61 sessions.
+
+So the event ALWAYS precedes the ripple, latency bounded to (0, 2] s. A
+pre-ripple HFB bump is exactly where a press response would land -- which is
+why the latency had to be measured rather than assumed.
+
+### Event-to-ripple latency, and it does NOT support a press-response account
+
+| phase | condition | n | median | IQR | <=250 ms | <=500 ms |
+|---|---|---:|---:|---|---:|---:|
+| first traversal | **correct** | 4263 | **730 ms** | [387, 1263] | 0.16 | 0.35 |
+| first traversal | incorrect | 6578 | 381 ms | [181, 701] | 0.34 | 0.62 |
+| first traversal | **navigation** | 5387 | **266 ms** | [127, 523] | 0.47 | 0.74 |
+| encoding | **correct** | 5740 | **676 ms** | [350, 1197] | 0.18 | 0.38 |
+| encoding | incorrect | 9028 | 406 ms | [189, 743] | 0.32 | 0.59 |
+| encoding | navigation | 10081 | 344 ms | [158, 683] | 0.39 | 0.64 |
+| after encoding | correct | 20991 | 422 ms | [185, 798] | 0.33 | 0.57 |
+| after encoding | navigation | 27670 | 356 ms | [159, 652] | 0.38 | 0.64 |
+
+**Correct uncovers are the FURTHEST of the three conditions from their
+ripples, and navigation presses the closest.** On the first traversal the
+median correct uncover is 730 ms before its ripple and only 16% are within
+250 ms, while the median navigation press is 266 ms before and 47% are within
+250 ms. The density figure shows correct uncovers nearly FLAT across the whole
+2 s window in the early phases, against a sharp pile-up near zero for the other
+two.
+
+That is the opposite of the confound. The lOFC correct-uncover HFB peaks at
+about -50 ms, roughly 680 ms AFTER the median press, so it cannot be the press
+response. The condition most at risk of being press-evoked is NAVIGATION, whose
+presses sit closest to the ripple -- and which is exactly the condition whose
+clusters the ripple-count control already flagged as possibly power-driven.
+
+### Panels now carry the press row
+
+`swr_hfb_panels_2cm.py` draws, per condition, the median (tick) and IQR (line)
+of the event time on the ripple-locked axis, i.e. at MINUS the latency. A
+median off the left edge is a CARET at -500 with the IQR clipped, never
+silently omitted -- omitting it would make the press look closer than it is.
+Row order under the traces: press times, ripple extent, then cluster bars.
+
+Output `hfb_event_latency_2026-09-29/`, `hfb_panels_2cm_2026-09-29/`.
+
+## 2026-09-29 (c) — the phase contrast becomes a fixed-window test
+
+`timecourse_by_phase` now also computes the contrast in a single **fixed
+window** with **1000 subsample draws**, which is what gets reported; the
+41-offset time course is kept as the descriptive figure only. Results in
+`swr/timecourse_by_phase_2026-09-29/` (`fixed_window_summary.csv`,
+`fixed_window_overview.json`), write-up in
+`data/final_results/ripple_analysis/RESULTS_phase_split.md` and
+`METHODS_ripple_content.md`.
+
+**Why the ripple window and not ±250 ms:** median occupancy dwell is 0.367 s,
+so across a ±250 ms span the subject has frequently left the square the window
+is labelled with. Both were computed and they agree, so nothing hinges on it
+(pooled contrast +0.455, P = 0.0085 at the ripple; +0.446, P = 0.005 over
+±250 ms).
+
+Pooled hippocampus, n = 51, ripple window, counts matched:
+
+| test | z | t(50) | P | 95% CI |
+|---|---|---|---|---|
+| encoding | +0.58 | +4.05 | 1.8e-4 | [+0.29, +0.86] |
+| once known | +0.12 | +1.16 | 0.25 | [-0.09, +0.33] |
+| encoding - once known | +0.46 | +2.74 | **0.0085** | [+0.12, +0.79] |
+| encoding - surround | +0.37 | +2.23 | **0.030** | [+0.04, +0.71] |
+| once known - surround | -0.03 | -0.28 | 0.78 | [-0.26, +0.20] |
+
+aHP: encoding +0.41 (P = 0.008), contrast +0.37 (P = 0.027), surround +0.36
+(P = 0.028). mHP: encoding +0.57 (P = 0.009), contrast +0.44 (P = 0.11),
+surround +0.09 (P = 0.69).
+
+**Draw count settled empirically.** 20 / 100 / 1000 draws give pooled +0.445
+(P = 0.012) / +0.462 (P = 0.008) / +0.455 (P = 0.008); aHP +0.406 (P = 0.015)
+/ +0.351 (P = 0.034) / +0.367 (P = 0.027). 20 reaches the same conclusion but
+the third decimal of P is unstable, because the within-session SD across draws
+(~0.67) puts the Monte-Carlo error at 20 draws (~0.15) on a par with the
+between-session s.e.m. (~0.17). Draws are applied as a
+(n_draws x n_ripples) selection matrix, so 1000 is one matmul -- use 1000.
+
+**Draws are now shared across windows**, so ripple-minus-surround is paired
+draw by draw rather than combining two independently subsampled analyses.
+
+**New control: the phase contrast is localised to the ripple.** Recomputed in
+the far field it vanishes in pooled HC (+0.05, P = 0.81) and aHP (-0.13,
+P = 0.45). ⚠ It does NOT vanish in mHP (+0.41, P = 0.21), so for mHP alone the
+contrast is not demonstrably ripple-localised. Say so.
+
+**⚠ The two specificity controls still disagree** (see 2026-09-29 (b)): the
+surround control is significant during encoding, the matched-flank control --
+which holds the occupied square fixed -- is not. The reported claim is "peaks
+at the ripple relative to the surrounding second".
+
+## 2026-09-29 (b) — phase split at 1000 permutations; the encoding signal IS
+## ripple-specific by the surround test
+
+Re-ran `timecourse_by_phase` with **N_PERM 200 -> 1000** and the cluster test at
+**10 000** sign-flip permutations. Results in
+`swr/timecourse_by_phase_2026-09-29/`, write-up in
+`data/final_results/ripple_analysis/RESULTS_phase_split.md`.
+
+Going 200 -> 1000 moved nothing (pooled encoding +0.558 -> +0.580; contrast
++0.462 -> +0.449), so the estimates were already permutation-stable.
+
+Pooled hippocampus, n = 51, ripple counts matched within session:
+
+| curve | z at ripple | t(50) | P | cluster | cluster P |
+|---|---|---|---|---|---|
+| encoding | +0.58 | 4.09 | 1.6e-4 | -75..+200 ms | **0.0003** |
+| once known | +0.13 | 1.25 | 0.22 | - | 0.38 |
+| encoding - once known | +0.45 | 2.70 | **0.0096** | -25..+50 ms | **0.041** |
+| encoding vs own surround | +0.47 | 3.57 | **8.0e-4** | -25..+50 ms | **0.010** |
+| once known vs own surround | +0.04 | 0.43 | 0.67 | - | 0.43 |
+
+**New and it corrects yesterday's caveat:** the surround control (ripple minus
+the session's own |t| >= 350 ms far field) was null with all ripples pooled
+(P = 0.19). Restricted to encoding it is **significant** (P = 0.0008, cluster
+P = 0.010) and flat once known. Pooling the phases was diluting it.
+
+**⚠ The two specificity controls disagree.** Surround says specific; the
+matched-flank control (duration-matched windows drawn from inside the ripple's
+own occupancy interval, so the square is held fixed) is null in encode too.
+The far field often falls in a different occupancy interval, so it partly
+rewards the signal for tracking where the subject is; the flank is the stricter
+test. Report both; claim "peaks at the ripple relative to the surrounding
+second", not "ripples carry it preferentially".
+
+**Reproducibility bug found and fixed.** `summarise` used one shared generator
+across the curve loop, so each curve's cluster p depended on which curves ran
+before it -- the pooled contrast came out 0.048, then 0.051, for identical
+data. Now seeded per (ROI, curve) with `default_rng([SEED, ri, ci])`; verified
+bit-identical across two consecutive runs. Anything quoted from the
+`timecourse_by_phase_2026-09-28` directory is superseded.
+
+Also refactored: offsets are streamed rather than stacked (the largest session
+has 7633 ripples, which at 1000 perms x 41 offsets would have been ~2.5 GB),
+and the cluster stats moved into `summarise(d)` so tests can be re-run or
+extended without repeating the spike-counting loop.
+
+## 2026-09-29 (d) — Do the phase comparisons need correcting for ripple count?
+
+`scripts/swr_hfb_ripple_count_control.py`. SK asked. Short answer: **no bias
+correction is needed, but the POWER asymmetry is real, large, and cuts in
+opposite directions for the two findings.**
+
+### The counts are very unequal
+
+| condition | first traversal | after first | ratio | encoding | after encoding | ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| correct | 3750 | 20069 | 0.19 | 5105 | 18714 | 0.27 |
+| incorrect | 5963 | 3244 | 1.64 | 8306 | 901 | 6.80 |
+| navigation | 4810 | 28838 | 0.17 | 9290 | 24358 | 0.32 |
+
+### 1. No bias. A mean over n ripples is unbiased in n, and that holds here
+
+Spearman(coupling, n_ripples) per ROI x phase x condition: **0 of 44 cells
+significant at q < 0.05** (smallest raw p = 0.062). The value does not track
+ripple count, so there is nothing to correct in the estimate itself.
+
+### 2. But the noise is almost entirely ripple count
+
+log(flank SD) ~ log(n_ripples), slope per ROI x condition:
+
+| ROI | correct | incorrect | navigation |
+|---|---|---|---|
+| MedialFrontal | -0.455±0.027 | -0.439±0.033 | -0.471±0.023 |
+| lOFC | -0.400±0.041 | -0.522±0.057 | -0.498±0.030 |
+| mPFC | -0.451±0.027 | -0.405±0.035 | -0.432±0.029 |
+
+All nine slopes sit on the -0.50 that pure sampling noise predicts, r between
+-0.69 and -0.86, every p < 1e-4. So a phase with a fifth of the ripples really
+does give a ~2.2x noisier per-session estimate, and every test on it is
+correspondingly weaker.
+
+### 3. Which way it cuts — this is the part that matters
+
+Of 17 phase contrasts, 12 have the effect pointing at the phase that ALSO has
+more ripples (counts could explain them) and 5 have it pointing the other way
+(counts work against them). The five that survive the concern:
+
+  * **lOFC correct, first traversal > after first** (ratio 0.19)
+  * **lOFC correct, encoding > after encoding** (ratio 0.27)
+  * MedialFrontal correct, first traversal > after first (ratio 0.19)
+  * lOFC incorrect, after first > first traversal (ratio 1.70)
+  * MedialFrontal incorrect... (ratio 1.64)
+
+**This changes how yesterday's cluster result should be read.** The claimed
+lOFC double dissociation was: correct uncovers cluster in both EARLY panels,
+navigation in both LATE panels. Those two halves are not equally safe:
+
+  * the lOFC correct clusters (first traversal p = 0.018, encoding p = 0.044)
+    occur in phases with 4-5x FEWER ripples than the late panels where they
+    are absent. Count differences make that harder to find, not easier;
+  * the lOFC navigation clusters (after first p = 0.0010, after encoding
+    p = 0.0035) occur in the phases with 6x and 3x MORE ripples. Those could
+    be power alone and should not be reported as a phase preference.
+
+Same for MedialFrontal: its navigation clusters are all in high-count phases.
+
+### 4. Controlling for count does not move the contrasts
+
+Count-matched subsets (sessions within 2x, n = 10-24) and the
+difference-at-equal-counts intercept from diff ~ log(count ratio) both leave
+every phase contrast non-significant, and mostly shift them by less than their
+own SEM. Nothing was being hidden by the count imbalance.
+
+### What this cannot do
+
+A true count-matched test would SUBSAMPLE ripples so both phases average over
+the same number. The saved traces are already per-condition means and the
+individual epochs are not in the bundle, so that needs a re-extraction with
+subsampling. Worth doing if any phase contrast becomes load-bearing; not worth
+it while none of them is significant.
+
+Output `hfb_ripple_count_control_2026-09-29/`.
+
+## 2026-09-29 — the peri-ripple location time course, split by phase
+
+`mc/analyse/swr_explore/timecourse_by_phase.py`, run via
+`scripts/swr_content_explore.py phase_timecourse`; figure 19; results in
+`swr/timecourse_by_phase_2026-09-28/`.
+
+The reported panel's estimator (41 offsets, -500..+500 ms, each ripple's own
+duration as the window, session as the unit of inference, cluster-corrected by
+sign-flipping whole session time courses) run separately inside `encode` and
+`execute`, with ripple counts matched within session between phases (20 draws,
+averaged) because z carries a sqrt(n) term and execute has ~2x the ripples.
+The same ripple set is used at every offset, so a change across the time course
+is a change in the signal and not in which ripples contributed.
+
+| ROI | curve | z at peak | P | cluster P |
+|---|---|---|---|---|
+| HC pooled | encode | +0.558 | 0.0004 | **0.003** |
+| HC pooled | execute | +0.096 | 0.37 | 0.36 |
+| HC pooled | encode - execute | +0.462 | **0.008** | **0.043** |
+| mHP | encode | +0.564 | 0.013 | **0.005** |
+| mHP | execute | +0.165 | 0.28 | 0.24 |
+| mHP | encode - execute | +0.399 | 0.16 | 0.30 |
+| aHP | encode | +0.400 | 0.008 | 0.14 |
+| aHP | execute | +0.072 | 0.47 | 0.44 |
+| aHP | encode - execute | +0.328 | 0.052 | 1.00 |
+
+So the phase difference is now significant **in the temporal frame too**, in
+pooled hippocampus, both at the ripple peak and cluster-corrected. This is the
+time-resolved counterpart of the count-matched contrast logged yesterday and
+agrees with it (+0.46 here vs +0.41 there).
+
+**Figure fix that affects every PDF this module has ever written:**
+`scripts/swr_content_figures.py` never set `pdf.fonttype`, so matplotlib
+embedded Type 3 fonts and Illustrator opened the text as outlines/garbage. Now
+set to 42 (TrueType) with `svg.fonttype: "none"`, verified: the PDFs carry
+`/FontFile2` and zero `/Type3`. Regenerate any panel that is still in use.
+
+**⚠ Figure 4h's legend is swapped.** Gold is `#CCB178` = HC_mid = mHP and is
+the curve carrying the significant cluster (P = 0.019); the panel labels it
+aHP. The Results text is right, the legend is not.
+
+**Draft-paragraph review** in
+`data/final_results/ripple_analysis/RESULTS_ripple_location_draft_review.md`:
+the numbers check out, but "these ripples contained the uncovered location" is
+a conjunction that was never tested and that the reward/non-reward split
+contradicts (mHP encode: reward +0.167 vs non-reward +0.675, difference
+-0.507, P = 0.066), and the null ripple-specificity control has to be stated.
+
+## 2026-09-28 (f) — the current-square result split by phase, and the count bias in z
+
+`mc/analyse/swr_explore/location_by_phase.py`, run via
+`scripts/swr_content_explore.py location_by_phase`; figure 18; results in
+`swr/location_by_phase_2026-09-28/`.
+
+**Phase definition** (SK's): `encode` = every traversal up to but *excluding*
+the first error-free ABCD loop; `execute` = from that loop onwards.
+`first_traversal` is reported as an extra view and is **99.95% contained in
+`encode`** (71% of it) — it is a subset, not a third phase, so the two are
+never pooled and the primary contrast is encode vs execute.
+
+**Result.** Location evidence in ripples (C0) is carried by encoding:
+HC_all +0.55 (P = 0.0003) in encode vs +0.22 (P = 0.13) in execute; same
+direction in HC_anterior and HC_mid. Ripple-specificity (C1, ripple minus its
+matched flank) is null in every phase, as everywhere else.
+
+**Count bias in z — this changed the conclusion.** `z` is
+(observed − mean(null)) / SD(null) and the null SD scales as 1/√n, so z carries
+a √n term and is **not comparable across subsets of different size**. Execute
+has ~2× the ripples per session (median 704 vs 331) purely because the phase is
+longer, which inflates its z. SK asked whether ripple *rate* biases this; the
+premise was backwards — rate is *lower* in encode (0.482 vs 0.510 Hz,
+p = 0.0009) — but the *count* bias is real and works against the effect.
+
+Sub-sampling both phases to the same ripple count (20 subsamples, seeded per
+session × ROI) made every contrast **larger**, as predicted:
+
+| ROI | contrast | unmatched | count-matched | P | 95% CI |
+|---|---|---|---|---|---|
+| HC_all | encode − execute | +0.333 | **+0.408** | 0.016 | [+0.08, +0.74] |
+| HC_all | first trav − execute | — | **+0.405** | 0.014 | [+0.08, +0.73] |
+| HC_anterior | encode − execute | +0.246 | **+0.364** | 0.025 | [+0.05, +0.68] |
+| HC_anterior | first trav − execute | — | **+0.358** | 0.012 | [+0.08, +0.63] |
+| HC_mid | encode − execute | +0.367 | +0.467 | 0.094 | [−0.09, +1.02] |
+
+All C1 (ripple-specific) contrasts stay null, P = 0.11–0.60.
+**Caveat:** the contrast family is 6 (3 ROIs × 2 measures; the two phase pairs
+are nested, not independent), so Bonferroni is 0.0083 and **none of these
+survive it**. Report as a nominally significant, directionally consistent
+phase difference, not as an established one.
+
+**Subtype splits are all null.** Reward vs non-reward and
+common-trajectory vs off-route separate nothing in any phase or ROI (the
+largest is HC_mid encode reward − nonreward, −0.507, P = 0.066, in the
+*opposite* direction to the obvious prediction). ⚠ Off-route ripples nearly
+vanish during execution (357 in total across all sessions, 7–10 sessions with
+any) — that cell is empty, not null, and must not be read as a negative result.
+
+
+## 2026-09-28 (e) — 2 cm panels for lOFC too, with clusters and the ripple bar
+
+`swr_hfb_panels_2cm.py` now takes `--rois` (default MedialFrontal + lOFC),
+marks cluster-corrected significance, and draws the mean ripple extent.
+Output goes to `<mode>_2cm/<ROI>/`, so `axes_2cm/lOFC/first_traversal.pdf`.
+
+  * the saved region index carries only `roi_family` plus the derived
+    MedialFrontal label, so lOFC did not exist there; both the region and the
+    condition index are now relabelled through
+    `hfb_roi_partition/derivation_assignment.csv`;
+  * clusters: `swr_sakon.cluster_perm_time`, the same function, sign-flip null,
+    n_perm = 2000, seed 42, tested against ZERO because the curve is already
+    real-minus-shifted-null;
+  * ripple extent: 67.8 ± 0.4 ms (100737 ripples, 61 sessions), drawn as peak
+    ± duration/2 with SE end caps;
+  * both annotations sit BELOW the traces and only conditions that actually
+    have a cluster get a row -- reserving a row per condition regardless cost
+    40% of a 2 cm panel to draw nothing.
+
+**Every surviving cluster:**
+
+| ROI | panel | condition | window | p | n |
+|---|---|---|---|---|---:|
+| MedialFrontal | region | — | −190 to +370 ms | 0.0005 | 53 |
+| MedialFrontal | first traversal | correct | −130 to +10 ms | 0.038 | 51 |
+| MedialFrontal | after first | correct | −120 to +100 ms | 0.0015 | 53 |
+| MedialFrontal | after first | navigation | −260 to +350 ms | 0.0005 | 53 |
+| MedialFrontal | encoding | navigation | +40 to +280 ms | 0.006 | 52 |
+| MedialFrontal | after encoding | correct | −130 to +110 ms | 0.0005 | 53 |
+| MedialFrontal | after encoding | navigation | −260 to +350 ms | 0.0005 | 53 |
+| **lOFC** | region | — | **−260 to +150 ms** | 0.0005 | 21 |
+| **lOFC** | first traversal | **correct** | **−190 to +40 ms** | **0.0175** | 19 |
+| lOFC | after first | navigation | −200 to +50 ms | 0.0010 | 21 |
+| **lOFC** | encoding | **correct** | **−180 to +30 ms** | **0.0435** | 19 |
+| lOFC | after encoding | navigation | −190 to +50 ms | 0.0035 | 21 |
+
+**The cluster test finds what the peri-window average could not.** lOFC correct
+uncovers clusters in BOTH early panels -- first traversal (p = 0.018) and
+encoding (p = 0.044) -- and in neither late panel, while lOFC navigation does
+the exact opposite: it clusters in both LATE panels and in neither early one.
+That is a double dissociation in the sign of the timing, and it is invisible in
+the +-250 ms mean because the lOFC reward rise starts ~190 ms BEFORE the ripple
+and is over by +40 ms, whereas the navigation cluster straddles it.
+
+Incorrect uncovers cluster nowhere, in either region.
+
+MedialFrontal shows no such split: correct uncovers cluster in three of four
+panels and navigation in three of four, with wide overlapping windows. Consistent
+with 2026-09-28 (d) -- medial frontal coupling is flat across task phase, lOFC's
+is not.
+
+⚠ These cluster p-values are per panel and are NOT corrected across the 12
+panels or across ROIs. Two of the lOFC clusters sit at p = 0.018 and p = 0.044;
+neither would survive a Bonferroni over 12.
+
+Output `hfb_panels_2cm_2026-09-28/`.
+
+## 2026-09-28 (d) — How the ROI magnitudes are compared: three estimators, noise, phase profile
+
+`scripts/swr_hfb_roi_compare.py`. SK asked why regions are being compared with a
+paired test when the electrodes rarely co-occur, whether lOFC's larger effect is
+just noise, and whether medial frontal coupling really is carried by the first
+traversal. Its `_pooled` reproduces the published `pooled_cond_curves` exactly at
+session level (max |diff| 0.000e+00) and adds a derivation-level grouping the
+imported one cannot do, because it looks the ripple weight up with `int(unit)`.
+
+### Coverage: the paired test was throwing away most of the data
+
+lOFC x mPFC co-occur in 15 of 41 sessions, 10 of 29 subjects. Pairwise session
+overlap: lOFC-mOFC 12, lOFC-vlPFC 13, mPFC-vlPFC 16, FrontalPole-vlPFC 6.
+
+### lOFC vs mPFC, correct uncovers, three estimators
+
+| phase | paired (n) | unpaired (n) | mixed, per-derivation (n) |
+|---|---|---|---|
+| all | -0.0018 p=0.671 (15) | -0.0026 p=0.460 (35/21) | -0.0009 p=0.751 (151d) |
+| first traversal | -0.0132 p=0.121 (13) | **-0.0126 p=0.059** (34/19) | -0.0075 p=0.159 (138d) |
+| after first | -0.0011 p=0.800 (15) | -0.0013 p=0.722 (35/21) | -0.0004 p=0.907 (151d) |
+| encoding | -0.0151 p=0.073 (13) | **-0.0127 p=0.059** (34/19) | -0.0071 p=0.136 (138d) |
+| after encoding | -0.0006 p=0.880 (15) | -0.0013 p=0.721 (35/21) | -0.0005 p=0.865 (151d) |
+
+All three agree in sign and roughly in size; none reaches p < 0.05 and none
+survives BH (smallest q by estimator: paired 0.472, unpaired 0.491, mixed
+0.100). Using all the data does NOT rescue the effect -- the unpaired estimate
+is slightly SMALLER than the paired one, and the mixed model, which is the
+honest pseudopopulation version, halves it again. The paired test was not what
+was hiding it.
+
+### Is lOFC just noisier? No, and it cannot be a sparseness artefact
+
+HFB is z-scored per sub-band per channel on artifact-free samples
+(`swr_extract_hfb`) before any of this, so a denser or larger raw
+high-frequency signal cannot inflate the number; the scale is removed per
+derivation. Correct uncovers, all phases:
+
+| ROI | sess | der | der/sess | mean | SD across sess | SEM | flank noise |
+|---|---:|---:|---:|---|---|---|---|
+| MedialFrontal | 53 | 179 | 3.38 | +0.0063 | 0.0093 | 0.0013 | 0.0167 |
+| mPFC | 35 | 79 | 2.26 | +0.0051 | 0.0110 | 0.0019 | 0.0181 |
+| lOFC | 21 | 72 | 3.43 | +0.0077 | 0.0131 | 0.0029 | 0.0164 |
+| mOFC | 18 | 23 | 1.28 | +0.0107 | 0.0174 | 0.0041 | 0.0266 |
+| FrontalPole | 16 | 28 | 1.75 | +0.0011 | 0.0127 | 0.0032 | 0.0237 |
+| vlPFC_IFG | 19 | 22 | 1.16 | +0.0054 | 0.0160 | 0.0037 | 0.0252 |
+
+lOFC's flank noise (0.0164) is the LOWEST of any ROI, slightly below medial
+frontal -- so it is not a noisier signal. Its SD across sessions is 19% higher
+than mPFC's (0.0131 vs 0.0110) and its n is 40% lower (21 vs 35); the SEM ratio
+follows almost entirely from n. lOFC fails on SAMPLE SIZE, not on noise and not
+on normalisation.
+
+### Medial frontal is NOT carried by the first traversal
+
+All six pairwise phase contrasts, correct uncovers, MedialFrontal:
+
+| A | B | A | B | A-B | p | q |
+|---|---|---|---|---|---|---|
+| first traversal | encoding | +0.0073 | +0.0050 | +0.0023 | 0.049 | 0.813 |
+| after first | after encoding | +0.0062 | +0.0066 | -0.0004 | 0.147 | 0.813 |
+| first traversal | after first | +0.0073 | +0.0058 | +0.0015 | 0.648 | 0.877 |
+| encoding | after encoding | +0.0050 | +0.0063 | -0.0013 | 0.652 | 0.877 |
+| first traversal | after encoding | +0.0073 | +0.0063 | +0.0011 | 0.742 | 0.924 |
+| after first | encoding | +0.0058 | +0.0050 | +0.0009 | 0.755 | 0.924 |
+
+The first traversal is numerically the largest, by 0.0011-0.0023 on a +0.0063
+baseline -- a 20-35% margin with p >= 0.049 and q >= 0.81. **Encoding is the
+LOWEST of the four phases**, and after-encoding (+0.0066) beats encoding
+(+0.0050), which is the opposite of a learning-driven account. Medial frontal
+correct-uncover coupling is flat across the task; it is significant in every
+phase because it is present in every phase, not because one phase carries it.
+
+lOFC's own profile is more graded (first traversal +0.0151, encoding +0.0131,
+after-first +0.0084, after-encoding +0.0091) but no contrast approaches
+significance (min p = 0.196).
+
+Output `hfb_roi_compare_2026-09-28/` — `roi_diagnostics.csv`,
+`roi_pair_three_estimators.csv`, `phase_contrasts_all_pairs.csv`,
+`three_estimators.pdf/png`.
+
+## 2026-09-28 (c) — 2 cm publication panels, exclusive-boundary re-run, ROI x condition
+
+### Exclusive phase boundary, re-extracted
+
+`swr_ripple_hfb_conditions.py run --boundary=exclusive` over all 61 sessions ->
+`ripple_hfb_conditions_exclusive_2026-09-28/`. SK's "encoding" means everything
+up to but EXCLUDING the first fully correct ABCD loop; `ripples.stage_of_repeat`
+-- the project default and what the 2026-09-21 run used -- puts that repeat on
+the LEARNING side (1432 repeats, 39% of that side). The two are not
+interchangeable, so the encoding panels needed their own extraction.
+
+### `swr_hfb_panels_2cm.py` — five panels at 2 x 2 cm, -500 to +500 ms
+
+medial_frontal (53 sessions), first_traversal, after_first, encoding,
+after_encoding. 7 pt type, 1.1 pt lines. CLAUDE.md's 9 pt minimum does not fit:
+at 9 pt the labels are wider than a 2 cm axis. Written in two conventions --
+`axes_2cm/` (axes box exactly 2 cm, labels outside) and `total_2cm/` (whole
+canvas 2 cm, data area ~1.1 cm) -- plus `_labelled` proofs and a standalone
+`legend_conditions`. Vector .pdf + 600 dpi .png.
+
+**A check caught a wrong assumption and it is worth keeping.** The code
+originally took first_traversal/after_first from the INCLUSIVE run, on the
+argument that the boundary only moves one repeat per grid between `plan` and
+`execute` and so cancels when they are pooled. An invariance check says
+otherwise: first_traversal is bit-identical (0.000e+00), after_first is NOT
+(max 1.77e-2). Two causes, both in `pooled_cond_curves`, neither in the
+boundary logic:
+  * it weights each derivation's trace by a SESSION-level ripple count, not by
+    the ripples that derivation contributed to that condition, so moving
+    ripples between plan and execute shifts the pooled mean (mean |diff| 5e-4
+    against a ~1.6e-2 signal; up to 1.3e-2 in one session);
+  * MIN_RIPPLES is per (derivation, condition), so a few error derivations
+    clear it under one boundary and not the other (error_plan 124 vs 126,
+    error_execute 83 vs 80).
+All four condition panels are therefore drawn from the EXCLUSIVE run. The check
+runs on every invocation and its numbers go into result.json.
+
+### `swr_hfb_roi_conditions.py` — is lOFC reward-linked, and does it differ from mPFC?
+
+Maps the conditions traces onto the partition ROIs and splits by condition and
+phase. Statistic identical to the coupling table (peri +-250 ms of the
+real-minus-null, flank-normalised curve), smoothing OFF.
+
+⚠ **Frontal only.** The conditions extraction covered 310 derivations, all in
+the mPFC/mOFC/MedialFrontal families. MTG, STG and Auditory have no condition
+traces at all -- a widened re-extraction, not a re-read.
+
+Coupling, all phases pooled, mean +- SEM over sessions (* q < 0.05 vs 0, BH):
+
+| ROI | correct | incorrect | navigation |
+|---|---|---|---|
+| mPFC (n35) | +0.0051±0.0019* | +0.0047±0.0030 | +0.0057±0.0014* |
+| lOFC (n21) | +0.0076±0.0029 | +0.0041±0.0046 | +0.0074±0.0025* |
+| mOFC (n18) | +0.0107±0.0041 | +0.0128±0.0044* | +0.0161±0.0053* |
+| FrontalPole (n16) | +0.0013±0.0032 | +0.0073±0.0043 | +0.0084±0.0029 |
+| vlPFC_IFG (n19) | +0.0054±0.0037 | +0.0096±0.0049 | +0.0021±0.0025 |
+
+**No, lOFC is not more reward-linked.** reward-minus-navigation in lOFC is
++0.0002 (all, p = 0.955), +0.0066 (encoding, p = 0.408), -0.0017 (after,
+p = 0.629). The INTERACTION against mPFC -- the only test that licenses the
+claim -- is -0.0003 (all, p = 0.957) and +0.0085 (encoding, p = 0.497); every
+interaction in the table has q >= 0.84. No phase contrast survives either
+(all q >= 0.62).
+
+**Navigation presses couple as strongly as rewards everywhere**, and are the
+significant cell in mPFC, lOFC and mOFC. Consistent with 2026-09-23: navigation
+is not a null control, and none of this coupling is reward-specific.
+
+The largest single cell is lOFC correct-uncovers during encoding
+(+0.0134±0.0058) against mPFC's +0.0003±0.0028, which is what prompted the
+question -- but the paired interaction has 13 shared sessions and p = 0.497.
+Underpowered, not absent; it is the one worth a pre-registered test.
+
+### Added: ROI-vs-ROI within condition, and the full answer to "what is bigger than what"
+
+The design was missing its fourth cell: "which region couples most to the same
+event" is an ROI x ROI contrast within a condition, not the within-ROI
+condition contrast and not the interaction. 80 pairs added.
+
+Five families of test, all BH-corrected within family:
+
+| family | n tests | survive q < 0.05 | min q | min raw p |
+|---|---:|---:|---:|---:|
+| vs ZERO | 45 | **10** | 0.008 | 0.0002 |
+| condition vs condition, within ROI | 39 | 0 | 0.917 | 0.082 |
+| ROI vs ROI, within condition | 80 | 0 | 0.579 | 0.0072 |
+| interaction vs mPFC | 20 | 0 | 0.844 | 0.183 |
+| encoding vs after-encoding | 12 | 0 | 0.619 | 0.103 |
+
+**Nothing is significantly bigger than anything else.** Every comparison of one
+cell against another fails correction; the only surviving effects are cells
+against zero.
+
+The ten that clear zero, and what they are:
+
+| ROI | phase | condition | n | coupling | q |
+|---|---|---|---:|---|---:|
+| mPFC | all | navigation | 35 | +0.0057±0.0014 | 0.008 |
+| mPFC | after | navigation | 35 | +0.0067±0.0017 | 0.008 |
+| mOFC | after | navigation | 18 | +0.0153±0.0043 | 0.034 |
+| lOFC | all | navigation | 21 | +0.0074±0.0025 | 0.042 |
+| lOFC | after | navigation | 21 | +0.0088±0.0029 | 0.042 |
+| FrontalPole | after | navigation | 16 | +0.0118±0.0036 | 0.042 |
+| mOFC | all | navigation | 18 | +0.0161±0.0053 | 0.042 |
+| mOFC | encoding | incorrect | 18 | +0.0145±0.0047 | 0.042 |
+| mPFC | all | correct | 35 | +0.0051±0.0019 | 0.044 |
+| mOFC | all | incorrect | 18 | +0.0128±0.0044 | 0.044 |
+
+**Seven of the ten are NAVIGATION PRESSES.** Only one correct-uncover cell
+survives (mPFC, all phases). The condition that most reliably shows
+ripple-locked frontal HFB is the one with no feedback in it at all. That is the
+2026-09-23 conclusion again, now per ROI: this coupling is not reward-specific,
+and navigation is not a null control.
+
+The largest raw ROI difference is lOFC > vlPFC_IFG for navigation (+0.0093,
+p = 0.0072, q = 0.579 over 80 tests) -- the only comparison anywhere under
+p = 0.01, and it is about key presses, not reward.
+
+### Corrected: the condition table was missing the first traversal AND MedialFrontal
+
+Two omissions SK caught from the figure, both mine, both changing conclusions:
+
+1. `PHASES` held only all / encoding / after_encoding. `first_traversal` and
+   `after_first` -- the very splits the 2 cm panels plot -- were never tested,
+   so the first-traversal effect visible in the figure had no number anywhere.
+2. `MedialFrontal` was absent. The 2 cm condition panels plot it (roi=MEDIAL in
+   `pooled_cond_curves`), and the table listed only partition ROIs, so figure
+   and statistics described different regions. It is now included, first,
+   separated by a dotted line and excluded from the ROI-vs-ROI contrasts
+   because it is a coordinate cut across mPFC+mOFC.
+
+The table is now 90 cells (was 45) and **32 survive BH vs zero (was 10)**.
+
+**Correct uncovers, the cells that now exist and survive:**
+
+| ROI | phase | n | coupling | q |
+|---|---|---:|---|---:|
+| lOFC | first traversal | 19 | +0.0151±0.0055 | 0.042 |
+| MedialFrontal | first traversal | 51 | +0.0073±0.0028 | 0.038 |
+| lOFC | all | 21 | +0.0077±0.0029 | 0.044 |
+| MedialFrontal | all | 53 | +0.0063±0.0013 | 0.0003 |
+| MedialFrontal | after encoding | 53 | +0.0066±0.0015 | 0.0007 |
+| MedialFrontal | after first | 53 | +0.0062±0.0015 | 0.002 |
+| lOFC | after encoding | 21 | +0.0072±0.0028 | 0.046 |
+| mPFC | after encoding | 35 | +0.0059±0.0023 | 0.044 |
+| mPFC | all | 35 | +0.0051±0.0019 | 0.036 |
+
+Just under threshold: mOFC first traversal +0.0175±0.0073 (q = 0.073), mOFC
+encoding +0.0163±0.0069 (q = 0.075), lOFC encoding +0.0131±0.0058 (q = 0.088).
+
+**The earlier "seven of ten are navigation" headline was an artefact of the
+missing phases.** With first_traversal in, correct uncovers carry 9 of the 32
+surviving cells, and the two largest correct-uncover effects anywhere are
+lOFC and mOFC on the FIRST TRAVERSAL.
+
+**Still nothing survives any comparison.** lOFC vs mPFC for correct uncovers:
+encoding -0.0151±0.0077 (p = 0.073, q = 0.731), first traversal -0.0132±0.0079
+(p = 0.121). Within lOFC, reward-minus-error at first traversal +0.0129±0.0074
+(p = 0.098). Interaction lOFC vs mPFC on (reward-error) at first traversal
++0.0169±0.0081 (p = 0.060, q = 0.957). All on 13-19 shared sessions: the
+pattern is consistent in sign and size across three independent framings and
+underpowered in each.
+
+Figure redrawn: 5 phases, MedialFrontal separated, * marking q < 0.05 vs zero,
+y-limits from the 2nd-98th percentile of mean±SEM so the 3-session error cells
+do not flatten everything else.
+
+Output `hfb_roi_conditions_2026-09-28/roi_vs_roi_within_condition.csv`.
+
+Output `hfb_panels_2cm_2026-09-28/`, `hfb_roi_conditions_2026-09-28/`.
+
+## 2026-09-28 (c) - Rate-map PAIR examples: making the per-lag consistency visible
+
+`scripts/plot_ratemap_pair_examples.py` (new). Visualisation only, no new
+statistic. Companion to `plot_ratemaps_from_per_lag_encoding.py`, which shows
+all 8 configurations at 2 lags; this shows 2 configurations at 3 lags so the
+eye can do the correlation itself.
+
+**The display trick.** Each 3x3 panel is the lag-shifted rate map converted to
+a dwell-weighted z-score, then affinely rescaled to its own [min, max], drawn
+on RdBu_r with the white point at 0.60 of that range. A Pearson r is exactly
+invariant to a per-map affine rescaling, so this cannot move any reported
+number -- it only removes the between-task differences in mean and scale that
+r already ignores and the eye does not. The lifted white point sends everything
+below the top of the range to blue, so a well-aligned pair reads as "the same
+one or two red squares, the rest blue".
+
+**BUG THAT COST TWO ROUNDS: the pairwise panels were stricter than the
+analysis.** The first version greyed out any location with shared dwell
+< MIN_DWELL_BINS = 25 in BOTH single tasks, which caps a task PAIR at 6 of 9
+locations anywhere in the dataset, and made every example look sparse. But the
+CV never correlates two single tasks: each fold correlates one held-out task
+against the dwell-weighted POOL of all the others, so the pooled side always
+has ample dwell and the 25-bin rule effectively binds on one task only. Checked
+directly: the real CV fold keeps mean 5.4 of 9, max 8. Thin locations are
+handled in this design by the min(dwell_a, dwell_b) WEIGHTS -- a 10-bin
+location contributes almost nothing -- not by exclusion. So pairwise panels now
+use a separate `PAIR_MIN_DWELL_BINS = 10`, printed in every figure footnote.
+Shared-location counts per task pair, measured over all 1259 pairs:
+
+| threshold | mean | max | pairs >=7 | >=8 | =9 |
+|---|---|---|---|---|---|
+| 25 bins (old) | 3.2 | 6 | 0 | 0 | 0 |
+| 15 bins | 4.5 | 9 | 89 | 15 | 4 |
+| 10 bins (now) | 5.0 | 9 | 211 | 54 | 16 |
+| 1 bin | 5.3 | 9 | 288 | 87 | 34 |
+
+**Selection is on a VISUAL-match score, not on r.** Pearson r does not care
+WHICH square is red and the eye does, so r alone picks pairs that look
+unconvincing (15_21: r = 0.80 but 3 red squares against 1, peaks in different
+places -- rejected on sight). Candidates are scored on: same peak square in
+both tasks, small overlapping red set (Jaccard above the colormap white point),
+high pairwise r, the peak MOVING at both the contrast and the control lag, and
+>= 7 of 9 locations filled. Searched exhaustively over every (cell x task-pair)
+across mPFC, HC_mid and HC_anterior -- 2610 combinations.
+
+**Chosen examples. All three are now individually significant**, which the
+6/9-capped search could not achieve:
+
+| panel | cell | tasks | cov | pair r at key lag | contrast | control 270 deg | cell CV r, p |
+|---|---|---|---|---|---|---|---|
+| a | 43_12-12-mRF2aCa03-ACC (mPFC) | cfg 6, 7 | 6/9 | 0.94 at 30 deg | -0.52 at 0 deg | -0.70 | 0.20, p = 0.108 |
+| b | 27_01-01-mLF2aCa03-ACC (mPFC) | cfg 1, 4 | 7/9 | 0.92 at 60 deg | -0.25 at 0 deg | +0.21 | 0.28, p = 0.013 |
+| c | 35_06-06-mRT2bHb06-HC (HC_mid) | cfg 2, 5 | 8/9 | 0.91 at 0 deg | -0.07 at 60 deg | -0.38 | 0.37, p = 0.011 |
+
+Panel b is the cell and the exact configuration pair the user had picked by eye
+before any of this ran, which is a decent sanity check on the visual score.
+**Panel a took three passes, and the third one found the bug in my own search.**
+The first pick (42_14 cfg 1/2, r = 0.67) read as the weak one of the three. A
+second pass over the >= 7/9 pool found nothing meeting the bar b and c meet
+(perfect red-set match, <= 2 red squares, r >= 0.75, both control rows quiet):
+zero hits, with or without the significance filter. Only 8 of the 676 pairs at
+>= 7/9 have a perfect red-set match at 30 deg at all, and EVERY one of them has
+an aligned control row too.
+
+That is structural, not bad luck, and per_lag_encoding's own docstring already
+says why: the location 30 deg ahead coincides with the CURRENT location on ~39%
+of bins (~3.5x chance), decaying to chance by +-90 deg. Measured here across all
+676 mPFC pairs:
+
+| lag | corr( r at that lag , r at 0 deg ) |
+|---|---|
+| 30 deg | **+0.243** |
+| 60 deg | +0.029 |
+| 90 deg | +0.142 |
+| 270 deg | +0.075 |
+
+Among pairs with a crisp red-set match at the key lag, 42% have r > +0.2 at
+0 deg for 30 deg, against 25% at 60 deg and 28% for HC at 0 deg. A crisp 30 deg
+key row drags the 0 deg row up with it. This is the same trajectory
+autocorrelation that makes the paper's claim rest on the SHAPE of the lag
+profile rather than on any single lag.
+
+**The third pass fixed my own error: I had excluded 6/9 pairs.** The >= 7/9
+filter was mine, not the data's, and it was hiding the only pairs that satisfy
+the red-square rule at 30 deg. Re-running the mPFC search at >= 6/9 gives 1492
+pairs instead of 676.
+
+**The fourth pass fixed the metric.** Jaccard on the red set still let through
+a pair (43_05 cfg 1/7, jac 0.67) whose secondary hot square sits middle-LEFT in
+one task and middle-RIGHT in the other -- it reads as MIRRORED even though
+r = 0.93. Two columns now measure that directly:
+
+* `disc` = number of squares that are red in one task but not the other. This
+  is what the eye calls mirroring; it must be **0**.
+* `rho`  = Spearman rank agreement over ALL contributing squares, so a swapped
+  secondary hot spot is penalised even when it sits below the red threshold.
+
+Applied to all 1492 mPFC pairs, exactly **two** have disc = 0, <= 2 red squares,
+both control rows quiet AND an individually significant cell:
+
+| cell | tasks | cov | r at 30 deg | reds | rho | r at 0 deg | r at 270 deg | cell p |
+|---|---|---|---|---|---|---|---|---|
+| 37_02-02-mRF3bC01-ACC | 6, 7 | 6/9 | 0.90 | 2 | 0.83 | -0.23 | +0.08 | 0.037 |
+| 08_01-01-mLF2aCa01-ACC | 1, 5 | 6/9 | 0.81 | 2 | 0.77 | -0.73 | -0.21 | 0.017 |
+
+Dropping the significance requirement adds one more, and it is the cleanest
+image of all three: **43_12-12-mRF2aCa03-ACC cfg 6/7** -- r = 0.94, disc = 0,
+a SINGLE red square in the same corner of both tasks, both controls strongly
+negative (-0.52 and -0.70), but cell p = 0.108. All three were rendered under
+`candidates/mPFC_30deg_final/` and the user picked this one, so panel a is NOT
+individually significant while b and c are (p = 0.013 and 0.011). The panel
+prints its own r and p under the title, as all panels do, and the trade-off is
+deliberate: at 30 deg, a non-mirrored key row with two dead control rows exists
+only here. The two significant alternatives above remain in CANDIDATES.
+
+Rejected at this step and worth not repeating: 43_05 cfg 1/7 (r = 0.93,
+p = 0.004) and 39_06 cfg 1/4 (r = 0.86, 7/9, p = 0.014) both have disc > 0 and
+read as mirrored; a high pairwise r does not prevent that, which is the whole
+reason `disc` exists.
+
+**Two backup panels, requested separately and kept in CANDIDATES.**
+
+*(d1) mPFC aligned at BOTH 0 and 30 deg, more strongly at 30.* The honest
+version of the 30/0 entanglement above: rather than hunting for a dead 0 deg
+row, show a cell that carries both and is clearly stronger for the next
+action. Criteria: r30 >= 0.70, r0 >= 0.30, gap >= 0.20, zero mirrored squares
+at 30 deg, cell significant at 30 deg.
+
+| cell | tasks | cov | r at 30 deg | r at 0 deg | gap | rho at 30 deg | r at 270 deg | cell p |
+|---|---|---|---|---|---|---|---|---|
+| 34_01-01-mLF1aCb02-ACC | 0, 6 | 7/9 | 0.91 | 0.53 | 0.38 | **0.93** | -0.11 | 0.022 |
+| 44_05-05-mLF2aCa06-ACC | 0, 3 | 6/9 | 0.91 | 0.48 | 0.43 | 0.83 | +0.14 | 0.013 |
+| 46_01-01-mLF2C02-ACC | 0, 5 | 6/9 | 0.86 | 0.44 | 0.42 | 0.60 | -0.58 | 0.032 |
+| 61_21-21-mRF2aC01-ACC | 2, 6 | 6/9 | 0.83 | 0.40 | 0.43 | 0.77 | -0.70 | 0.011 |
+
+*(d2) Hippocampus at 330 deg (= 30 deg in the PAST).* 330 is a PREDICTED
+hippocampal lag in per_lag_encoding (`ROI_PREDICTED_LAGS_DEG['HC_mid'] =
+(0, 330)`), so this panel tests a real prediction rather than an exploratory
+lag. Two consequences for its layout: the contrast row is a FUTURE lag (60)
+rather than 0 deg, because 0 and 330 are BOTH predicted for hippocampus and a
+cell may legitimately carry both; and the far control is 180 deg rather than
+270 deg, which sits only 60 deg from the key lag.
+
+| cell | roi | tasks | cov | r at 330 deg | r at 60 deg | r at 180 deg | cell p |
+|---|---|---|---|---|---|---|---|
+| 44_19-19-mRT2cHb02-HC | HC_mid | 1, 6 | 7/9 | **0.88** | +0.10 | -0.09 | **0.004** |
+| 43_20-20-mRT2cHb06-HC | HC_mid | 0, 7 | **8/9** | 0.79 | -0.61 | -0.20 | 0.024 |
+| 42_08-08-mLAHIP7-HC | HC_ant | 1, 5 | 8/9 | 0.93 | **+0.49** | +0.16 | 0.030 |
+| 63_11-11-mLT2aHaE06-EC | HC_ant | 3, 5 | 7/9 | 0.74 | +0.25 | -0.04 | 0.020 |
+
+44_19 cfg 1/6 is the pick: a single red square in the same place in both tasks,
+both control rows dead, the strongest cell of the set, and a lag profile that
+is a clean single spike at 330 deg.
+
+**Two traps found while assembling these, worth not falling into again:**
+- `disc = 0` is necessary but NOT sufficient. 39_13 cfg 5/7 has disc = 0 at
+  330 deg because both tasks have the same two squares above the white point --
+  but their INTENSITIES are swapped (dark red bottom-right vs bottom-left), so
+  it still reads as mirrored. Spearman `rho` catches this; the red-set
+  comparison alone does not.
+- A high pairwise r on a cell with a NEGATIVE cross-validated r is a lucky
+  pair, not an effect. 63_13 cfg 5/7 shows r = 0.87 at 330 deg while the cell's
+  own CV r at 330 deg is -0.28 (p = 0.97). Always read the cell-level r and p
+  printed under the panel title before believing a pair.
+
+**Control lag** fixed a priori at 270 deg (= -90 deg, a quarter trial in the
+PAST) for every panel, so the third row is not a per-cell search for the worst
+lag. Every panel prints its cell's own cross-validated r and permutation p, and
+carries the pair's r at all 12 lags as a profile strip, so the lags not chosen
+as rows stay visible.
+
+**Rejected** (kept so the trade-offs are not re-litigated):
+- Ranking on pairwise r alone. Produces high-r pairs whose red squares sit in
+  different places; they read as unaligned however large r is.
+- A shared colour scale across all 6 panels of a figure. The most extreme value
+  usually sits in a CONTROL row, which washes the key row out to pale pink.
+- 180 deg as the control lag (see above).
+- Keeping the 25-bin pairwise rule and accepting 6/9. Forced every example onto
+  cells that were positive but NOT individually significant (p = 0.15 / 0.35 /
+  0.16); the relaxed rule removed the trade-off entirely.
+- Under the relaxed rule, the earlier panel-a candidate 39_04 cfg 0/6 drops
+  from r = 0.81 to 0.49 -- the 7th location it gains does not match. It only
+  looked good because the harsher rule was hiding that location.
+
+Outputs (three standalone panels + a combined sheet, PDF and PNG, plus
+`settings.json`, plus `candidates/<roi>_<lag>/` holding the top 5 per ROI):
+`data/ephys_humans/derivatives/group/per_lag_encoding/2026-08-04_07-25-15_reload_from_2026-06-30_18-21-57_relabelled-final/ratemap_pair_examples_<stamp>/`
+
+## 2026-09-28 (b) — Ripple-HFB coupling by ROI, one ROI per derivation
+
+`scripts/swr_hfb_roi_partition.py`. Replaces `swr_hfb_roi_inventory.py`, which
+is DELETED along with its outputs: it built overlapping groups and reported a
+"31 of 61 sessions" caveat that applied only to a file it did not need.
+
+**All 61 sessions, 42 subject labels, 986 cortical derivations.** Read from the
+cluster-built bundle. The 31/61 figure came from `macro_contacts_all.csv`, a
+LOCAL rebuild that needs the raw recordings; nothing here touches it.
+
+**Partition.** Each derivation gets exactly one ROI from a three-rung ladder on
+its anchor -- Harvard-Oxford cortical (693), Brainnetome (76), FreeSurfer native
+(90) -- mapped by an ordered substring rule list. Disjointness is asserted in
+code and the audit sums to 986. `roi_label_audit.csv` lists every raw label
+next to the ROI it landed in; that audit caught two mapping bugs (MOrG "medial
+orbital gyrus" falling through to lOFC, and Unassigned rows carrying no reason).
+
+**Coupling, different-shaft pairs, subject-level, pad 0.25 s:**
+
+| ROI | sess | subj | der | der_ds | coupling | q | vs mPFC | q |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| lOFC | 21 | 14 | 72 | 72 | +0.0111 | 0.001 | +0.0094 | 0.213 |
+| mOFC | 18 | 11 | 23 | 23 | +0.0091 | 0.098 | +0.0019 | 0.741 |
+| FrontalPole | 16 | 11 | 28 | 28 | +0.0074 | 0.056 | -0.0042 | 0.562 |
+| mPFC | 35 | 25 | 79 | 79 | +0.0050 | 0.007 | — | — |
+| MTG | 57 | 40 | 289 | 105 | +0.0046 | 0.001 | -0.0013 | 0.741 |
+| Occipital | 9 | 6 | 32 | 32 | +0.0034 | 0.798 | | |
+| vlPFC_IFG | 21 | 14 | 24 | 24 | +0.0029 | 0.644 | -0.0022 | 0.753 |
+| TempOcc_Fusiform | 26 | 17 | 63 | 58 | +0.0024 | 0.746 | -0.0011 | 0.935 |
+| Auditory | 25 | 17 | 56 | 56 | +0.0017 | 0.644 | -0.0031 | 0.741 |
+| Parietal | 9 | 6 | 11 | 11 | +0.0015 | 0.872 | -0.0004 | 0.964 |
+| ITG | 16 | 10 | 19 | 11 | +0.0012 | 0.872 | | |
+| TemporalPole | 9 | 6 | 17 | 16 | +0.0004 | 0.872 | -0.0033 | 0.213 |
+| STG | 47 | 30 | 142 | 132 | -0.0003 | 0.872 | -0.0038 | 0.562 |
+
+Insula (3 sessions, 2 subjects) passes the session criterion but not the test
+criterion. dlPFC has ONE derivation. Parahippocampal and PCC/precuneus have
+none at all. Unassigned = 127 derivations whose anchor is white matter (81) or
+labelled Unknown (45); reported, never merged into a region.
+
+**Four ROIs couple at q < 0.05: lOFC, mPFC, MTG (and mOFC at q = 0.098).**
+Nothing differs from mPFC -- every paired contrast q >= 0.21. The ordering is
+orbitofrontal > medial frontal > lateral temporal > auditory/visual, and the
+strongest region is lOFC, not mPFC. With the mOFC label finally split by atlas
+rather than by the old neighbourhood rescue, medial OFC is 23 derivations and
+lateral OFC is 72 -- the old `mOFC` family was mostly lateral, which is what the
+|x| <= 20 mm MedialFrontal rule was working around.
+
+For orientation, the published coordinate-defined MedialFrontal group (179
+derivations, |x| <= 20 mm across the mPFC+mOFC families) is +0.0072, n = 35
+subjects. It is deliberately NOT a row above: it overlaps several of them.
+
+Note on coverage vs dual use: a probe may carry both a hippocampal and cortical
+derivations, but NO CONTACT is ever in two derivations -- the hippocampal
+montage runs first and consumes its contacts. `der` vs `der_ds` shows the cost:
+MTG has 289 derivations but only 105 different-shaft, because the hippocampal
+shafts pass through it.
+
+### Added: MedialFrontal comparison group and the explicit contrast
+
+The `*` in the coupling panel is a BH-corrected two-sided one-sample t against
+ZERO -- "is there coupling here" -- not a comparison with anything. It is now
+labelled that way on the figure, and a second panel carries the comparison.
+
+`MedialFrontal` (the collapsed |x| <= 20 mm rule across the mPFC+mOFC families,
+179 derivations, 53 sessions, 35 subjects, +0.0072, p = 4e-5) is drawn as a
+DIAMOND below a divider, not as a partition row: it overlaps mPFC (100% of
+mPFC's derivations), mOFC (100%), lOFC (24%) and FrontalPole (11%).
+
+**MedialFrontal minus each ROI, paired on the subjects with both, positive =
+MedialFrontal couples more. NOTHING survives correction -- every q >= 0.15.**
+
+| ROI | paired | ovl% | MF − ROI | p | q |
+|---|---:|---:|---:|---:|---:|
+| ITG | 4 | 0 | +0.0124 | 0.343 | 0.558 |
+| TempOcc_Fusiform | 10 | 0 | +0.0072 | 0.328 | 0.558 |
+| TemporalPole | 5 | 0 | +0.0065 | 0.106 | 0.344 |
+| STG | 23 | 0 | +0.0061 | 0.012 | 0.151 |
+| Parietal | 5 | 0 | +0.0049 | 0.488 | 0.634 |
+| Auditory | 15 | 0 | +0.0047 | 0.075 | 0.325 |
+| Occipital | 4 | 0 | +0.0027 | 0.704 | 0.742 |
+| vlPFC_IFG | 14 | 0 | +0.0020 | 0.548 | 0.647 |
+| MTG | 20 | 0 | +0.0019 | 0.149 | 0.389 |
+| FrontalPole | 11 | 11 | +0.0010 | 0.742 | 0.742 |
+| mPFC | 25 | 100 | +0.0007 | 0.433 | 0.626 |
+| mOFC | 11 | 100 | −0.0019 | 0.312 | 0.558 |
+| lOFC | 14 | 24 | −0.0051 | 0.069 | 0.325 |
+
+STG is the closest (uncorrected p = 0.012, q = 0.151) and would be the one to
+pre-register. Overlapping contrasts are drawn hollow on the figure; the mPFC
+and mOFC rows are MedialFrontal against groups that contain it and are not
+tests. Contrast table in `medialfrontal_vs_roi.csv`.
+
+### Added: averaged traces per ROI (`traces` subcommand)
+
+Look-at-it figures, .jpeg, left open on screen. Per-unit curve is
+real-minus-shifted-null baselined to the non-peri band -- the same baseline the
+peri/non-peri statistic uses, so the bump height at t = 0 IS the coupling
+number. 50 ms smoothing, cosmetic only.
+
+  `roi_traces_<unit>_overlay.jpeg`  all ROIs on one axis, thin lines, opacity
+                                    scaled to n so a 2-subject curve cannot be
+                                    mistaken for a 35-subject one
+  `roi_traces_<unit>_grid.jpeg`     one small panel per ROI, own y-scale, thin
+                                    single-unit lines behind mean +- SEM
+
+Written for subject- and session-level. `Unassigned` gets no trace (it is a
+bookkeeping bucket, not a region). Grid y-limits are the 2nd-98th percentile of
+the single-unit curves: one MedialFrontal subject reaches 0.2, ten times the
+mean, and otherwise sets the panel scale and flattens the average to a line.
+Nothing is excluded from any average.
+
+The overlay shows what the table says: lOFC and MedialFrontal peak together at
+~+0.017 right at the ripple, mPFC about half that, and the temporal/auditory
+regions sit in the noise.
+
+Output `derivatives/group/swr/hfb_roi_partition_2026-09-28/`.
+
+## 2026-09-28 — ROI inventory redone as a DISJOINT set (SUPERSEDED by 2026-09-28 (b): script deleted, rebuilt as a true partition)
+
+The 2026-09-27 table was wrong in framing, not in arithmetic: it grouped the
+same derivations by an atlas label without removing the ones already claimed by
+a region in the analysis, so it reproduced MedialFrontal under other names --
+"Paracingulate Gyrus" (100% the same derivations), "Frontal Medial Cortex"
+(100%), A13 (100%), A10m (100%) -- and listed them as candidates. Those areas
+are what MedialFrontal is MADE of. `swr_hfb_roi_inventory.py` now claims first
+and builds candidates only from the remainder, so every row is disjoint and the
+composition of each existing region is reported instead.
+
+Claiming order: MedialFrontal, TemporalLateral, Auditory, Visual. mPFC/mOFC are
+deliberately NOT claimants -- they are the raw families MedialFrontal was carved
+from by |x| <= 20 mm, and letting them claim leaves nothing over and hides the
+lateral frontal remainder. A24 is excluded as a post-hoc overlapping band.
+
+Of 768 different-shaft cortical derivations (all 61 sessions, pad 0.25 s):
+MedialFrontal 179, TemporalLateral 242, Auditory 63, Visual 153, **pool 131**.
+
+**New disjoint candidates (>= 3 sessions), reference MedialFrontal +0.0072
++- 0.0013 (n = 35 subjects):**
+
+| scheme | ROI | sess | subj | der | effect | q | vs ref | q |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| ho | Frontal Pole | 15 | 10 | 25 | +0.0070 | 0.044 | -0.0014 | 0.686 |
+| ho | Frontal Orbital Cortex | 9 | 8 | 17 | +0.0067 | 0.044 | +0.0015 | 0.686 |
+| bn | A11l (lateral OFC) | 22 | 16 | 37 | +0.0098 | 0.002 | +0.0035 | 0.619 |
+| bn | A45r | 14 | 9 | 16 | +0.0048 | 0.401 | -0.0012 | 0.841 |
+| bn | A44op | 9 | 7 | 12 | +0.0007 | 0.878 | -0.0048 | 0.619 |
+
+Plus four under-powered ones (n < 5 subjects): Insular Cortex, IFG pars tri.,
+A12/47o, A12/47l.
+
+**Nothing differs from MedialFrontal.** Every candidate contrast has q >= 0.62.
+The lateral frontal remainder -- Frontal Pole / Frontal Orbital / A11l, the same
+tissue under two atlases -- locks to ripples about as strongly as medial frontal
+does, which is the one substantive result here: the effect is not medial-specific
+within frontal cortex. A11l is the best-powered version and the one to
+pre-register.
+
+**Never extracted (needs one cluster re-run of the HFB stage,
+`--cortical_rois=[...]`, not new patients).** Now split by whether the area
+already feeds an ROI above. Genuinely new territory, biggest first: Middle
+Frontal Gyrus (24 sessions, 56 grey contacts), Superior Frontal Gyrus (15/27),
+Frontal Operculum (8/8), Parahippocampal Gyrus ant (8/6) + post (6/8), IFG pars
+opercularis (6/10), Precentral (6/18), PCC (5/1), Postcentral (5/20). Insular
+Cortex (19/64) and Frontal Pole (27/111) would DEEPEN candidates that already
+exist rather than add a region.
+
+⚠ Those session counts, and only those, are a LOWER BOUND: they come from the
+local `macro_contacts_all.csv`, which covers 31 of the 61 sessions, so the true
+values are roughly double. Every other table in this analysis is all 61 sessions.
+
+Output `derivatives/group/swr/hfb_roi_inventory_2026-09-28/` — `ROI_INVENTORY.md`,
+`roi_inventory.csv`, `roi_composition.csv`, `roi_not_extracted.csv`,
+`result.json`, `roi_inventory_{ho,bn}.pdf/png`.
+
+## 2026-09-28 — Effect-size versions of the two main timecourse panels
+
+SK asked what the main panels look like as effect sizes with standard errors.
+`*_loso_results.json` already stores `mean` and `sem` (the across-subject mean
+and SE of the held-out per-subject readout), so nothing is recomputed: the
+one-sample t plotted so far **is** `mean / sem`. `load_trace` now asserts that
+identity rather than assuming it, so the two versions cannot silently diverge.
+
+`plot_instr_dir_unord_timecourse.py` draws every panel twice — `<name>_3p5cm`
+(group t, unchanged) and `<name>_effect_3p5cm` (mean +- SEM). The p_FWE rails
+are identical in both: the sign-flip null is on the subject-level readout, not
+on the summary statistic. Run: `instr_dir_unord_timecourse_figure_2026-09-28`.
+
+| panel, k=100 | peak epoch | mean | SEM | t | p_FWE |
+|---|---|---|---|---|---|
+| mPFC plan (`ABCD_REW-..._unord_vs_exe_dir_across`) | `see-D-first` | .0432 | .0134 | 3.21 | .0097 |
+| `MTL_left` memory (demeaned) | `see-C-first` | .0147 | .0058 | 2.55 | .035 |
+| `MTL_right` memory (demeaned) | `see-B-first` | .0205 | .0078 | 2.62 | .034 |
+| mPFC memory (raw, the null control) | `see-D-second` | -.0178 | .0086 | -1.78 | .16 |
+
+Betas are ~1e-2, so y is scaled to 1e-3 units (`EFFECT_SCALE`); the scaling hits
+mean and SEM alike, so the ratio still reads as the t. Ticks use `MaxNLocator`
+in effect mode — `integer_yticks` steps by ceil(range/3) and on the wider scaled
+range produced ticks like -17/-1/15. The SEM is drawn as a shaded band
+(alpha .22) rather than as error bars: at 3.5 cm two sets of bars collide
+wherever the L and R traces cross, and the band keeps the line the salient mark.
+
+What the effect panels add over the t panels: the mPFC plan effect is ~3x the
+size of the MTL memory effect in the same beta units (.043 vs .015), which the t
+panels hide because the mPFC SEM is over twice as large (.013 vs .006). The
+memory trace in mPFC sits just below zero across the whole period with SEMs that
+cover zero for the first four epochs — visibly a null, not a weak negative.
+
+Also in this run: `figure_stats.json` now records `mean`/`sem` per trace and a
+`files` map per panel ({t, effect} -> pdf) in place of the single `file` key.
+
+
+## 2026-09-27 — Every candidate comparison ROI for ripple-locked HFB (SUPERSEDED by 2026-09-28: candidates overlapped the existing regions)
+
+New `scripts/swr_hfb_roi_inventory.py`. It does NOT re-extract anything: it
+re-groups the existing `per_pair.csv` rows under a different ROI label and
+applies the run's own `_effect` (imported, not reimplemented) to each group, so
+candidates and the `MedialFrontal` reference are computed by the same function
+on the same rows. Different-shaft pairs, native pad 0.25 s, subject-level.
+
+Reference: MedialFrontal +0.0072 +- 0.0013, n = 35 subjects.
+
+**Three tiers of "possible ROI":**
+
+1. *Estimable now* — 22 Harvard-Oxford cortical labels and 35 Brainnetome
+   labels (hemispheres collapsed) reach >= 3 sessions. Full tables in
+   `derivatives/group/swr/hfb_roi_inventory_2026-09-27/`.
+2. *Traces exist, no usable estimate* — 1 HO label (Intracalcarine Cortex),
+   3 BN labels (cpSTS, A38m, A7r): too few clean peri-ripple epochs.
+3. *Contacts exist, never extracted* — 26 HO labels with >= 3 sessions have
+   macro contacts but no HFB derivation, because the bundle only built
+   derivations for `contact_anatomy.CORTICAL_ROIS` (five regions). Biggest:
+   Frontal Pole (27 sessions, 111 grey contacts), Middle Frontal Gyrus (24/56),
+   Insular Cortex (19/64), Superior Frontal Gyrus (15/27), Parahippocampal
+   Gyrus ant+post (8+6). These need ONE cluster re-run of the HFB stage
+   (`--cortical_rois=[...]`), not new patients. ⚠ Those session counts are a
+   LOWER BOUND: read from the local `macro_contacts_all.csv`, which covers 31
+   of 61 sessions, so the true counts are roughly double.
+
+**Nothing beats medial frontal.** Every candidate's paired contrast vs
+MedialFrontal has q >= 0.22 (HO) / q >= 0.56 (BN). The only q < 0.05 contrast
+anywhere is `family`: TemporalLateral -0.0058 below MedialFrontal, q = 0.018.
+Positive effects at q < 0.05 in their own right: Paracingulate Gyrus +0.0073
+(q = 0.023, but 100% overlap with MedialFrontal, so it IS the reference),
+A11l +0.0113 (q = 0.001, 16% overlap) and A10m +0.0086 (q = 0.037, 100%
+overlap). A11l is lateral OFC by Brainnetome and is the one genuinely new
+region worth a pre-registered test.
+
+Screen over ~25 regions per scheme; every p is reported with a BH q within its
+scheme and the q is the column to read. Contrasts against the reference are
+suppressed where the candidate overlaps it by more than 50% of its derivations
+-- a paired test against a group that contains you is not a test.
+
+## 2026-09-27 — Fig 1d showed a mask no reported statistic came from
+
+SK asked why the MTL memory panel showed no significance marker when the text
+reports p_FWE = .035. Cause: the panel and the sentence were different masks.
+
+`plot_instr_dir_unord_timecourse.py` drew `memory_HC_LR_*` from
+`hippocampus_left/right_bin50` (run `..._DEMEANED_2026-09-17`), while the
+reported statistic is the **left Garvert MTL half** from the later run
+`..._DEMEANED_UNILATERAL_2026-09-21`. The unilateral Garvert masks did not exist
+when the figure folder was written on 09-20, so no panel had ever been drawn for
+the test being reported. Both numbers were individually correct:
+
+| k=100, `see-C-first` | t | p_FWE | passes? |
+|---|---|---|---|
+| `MTL_left` (quoted in the text) | 2.55 | **.035** | yes |
+| `HC_left` (what the panel plotted) | 2.35 | .057 | no, t_crit = 2.41 |
+
+The panel was honest about its own data — HC_left misses the epoch-corrected
+threshold by 0.06 — it was simply not the analysis the caption claimed.
+
+### Fix
+
+`memory_HC_LR_*` panels replaced by `memory_MTL_LR_*` (`Garvert_MTL_2mm_L/R`,
+the bilateral mask split at x = 0) in
+`instr_dir_unord_timecourse_figure_2026-09-27`. The hippocampus-only panels were
+dropped rather than kept alongside: they tested a tighter mask that nothing in
+the manuscript reports, and the effect is better described as surviving in the
+larger a-priori ROI. `hippocampus_*_bin50` now appears in no figure.
+
+Both hemispheres carry a significance rail in the new panel, at different
+epochs, which the old panel did not show:
+
+| trace | peak epoch | t | p_FWE |
+|---|---|---|---|
+| `MTL_left`  | `see-C-first` | 2.55 | .035 |
+| `MTL_right` | `see-B-first` | 2.62 | .034 |
+
+Also fixed: `figure_stats.json` labelled the new unilateral panels `"betas":
+"raw"`, because the demeaned check was `panel["svc"] is SVC_DEMEAN` and the
+unilateral run is a second folder. Now tests both.
+
+### Consequences for the text
+
+- "peak effect in left hippocampus" must become left MTL — the *test* is the
+  MTL half; the 73%-in-hippocampus figure is a post-hoc localisation of the
+  selected voxels, not the mask the p-value was computed in.
+- The right-hemisphere peak is now visible on the figure and needs stating. It
+  is at `see-B-first`, one epoch earlier than the left, so the two halves are
+  not one bilateral effect (consistent with the bilateral test, p = .077).
+- "remained high until the last reward presentation" is not supported by either
+  trace: `MTL_left` decays monotonically after C (1.84, 1.26, 0.94, 0.86, 1.00,
+  0.79). It is elevated through `see-D-first` at most.
+- k = 100 is the fixed readout for every LOSO panel in the figure, including
+  mPFC, so it is not per-mask selection. But the mPFC plan effect holds at all
+  three k (p = .028/.0097/.0016) whereas `MTL_left` holds only at k = 100
+  (.141/.035/.068). That asymmetry should not be hidden.
+
+
+## 2026-09-24 (d) — REPRODUCIBILITY BUG + the balance result, properly tested
+
+**Bug: the permutation seed was not reproducible.** The per-cell seed was
+`abs(hash((sub, neuron, tag))) & 0xFFFFFFFF`. Python 3 salts str hashing per
+process unless PYTHONHASHSEED is set, so EVERY RUN DREW DIFFERENT
+PERMUTATIONS. Measured: the same tuple gave 3855842339, 44291736 and
+2509367741 in three consecutive interpreters. Material consequence — the
+planned EC-vs-rest Fisher test read P = 0.054, then P = 0.023, on the
+identical 924 cells. Every permutation p ever quoted from this script before
+today carries that noise. Fixed: `cell_seed()` uses blake2b (verified
+identical across processes). N_PERMUTATIONS 1,000 -> 10,000, because the
+per-cell p is thresholded at .05 and then COUNTED across cells, so MC error
+(~.007 at 1,000 draws) flips borderline cells. The RSA script was unaffected
+(explicit seed=42).
+
+**Canonical run: `2026-09-24_18-35-23`** (924 cells, 10,000 perms, blake2b
+seed, current ROI labels, full recompute — not a relabelled reload).
+
+**BALANCE = r_state - r_interaction per cell** (phase-invariant minus
+phase-modulated held-out generalisation), new in the pipeline with its p-value
+from the permutation distribution OF THE DIFFERENCE, built from the same
+circular shifts already shared by both components.
+
+| ROI | balance | q_FDR | FWE |
+|---|---|---|---|
+| EC | +0.0196 | 0.026 | 0.079 |
+| mOFC | +0.0142 | **0.0098** | **0.0098** |
+| mPFC | +0.0105 | 0.025 | **0.049** |
+| HC_anterior | -0.0005 | 0.66 | 1.0 |
+| HC_mid | -0.0068 | 0.81 | 1.0 |
+| PCC | -0.0101 | 0.81 | 1.0 |
+
+**Permutation omnibus** (shuffle ROI labels, recompute Kruskal-Wallis H,
+10,000 draws): H = 15.29, **P = 0.0079** (null mean H = 4.99). Null-centred
+variant H = 15.37, P = 0.0077 — identical conclusion.
+
+**The block-size bias concern is dead.** Permutation-null means:
+r_state -0.000013, r_interaction +0.000002, difference -0.000016. Both sit on
+zero, and `mean_balance` matches `mean_balance_null_centred` to 4-5 decimals
+in every ROI. The 4-column vs 8-column worry was unfounded.
+
+**Sustained fractions (reproducible):** EC 12/35 = 34.3%, mPFC 38/158 = 24.1%,
+mOFC 33/142 = 23.2%, HC_mid 42/233 = 18.0%, HC_anterior 51/295 = 17.3%,
+PCC 8/61 = 13.1%. Planned Fisher EC-vs-rest **P = 0.031, OR = 2.17**;
+six-region omnibus chi2(5) = 10.78, P = 0.056.
+
+**Phase-modulated component:** EC q_FDR = 0.079 is the ONLY region failing
+FDR; all others q <= 0.0052. Omnibus P = 0.021.
+
+**New figure 13_balance**: the two components side by side with each one's
+permutation-null mean drawn as a dotted reference (so the bias is visible, not
+asserted), then the difference with a bootstrap CI and the permutation
+omnibus.
+
+⚠ STILL UNTESTED: reproducible is not the same as stable. A seed-sensitivity
+check (re-run with a different global seed offset and confirm the Fisher p and
+the cell counts hold) has NOT been done. Given the test previously wandered
+0.054 <-> 0.023 at 1,000 draws, this matters before P = 0.031 is quoted.
+
+**Convergence with the RSA is partial.** The sustained-state RSA
+(`DSR_RSA_simple_ROI/2026-09-24_18-17-28`, state + state_phase, no phase
+residualisation) leaves state significant in all five ROIs, largest in mOFC
+(0.0977 -> 0.0785, -20%). mOFC agrees with the balance ranking; mPFC does not
+(2nd on balance, last on surviving state beta, -37%). EC is absent from the
+RSA entirely — too few cells for the pseudo-population — so the RSA can never
+corroborate the EC half of the claim.
+
+## 2026-09-24 (c) — NEGATIVE RESULT: state_phase control does not make the cell RSA state effect selective
+
+**Hypothesis (mine), now falsified.** The fMRI `state` model is a one-hot over
+A-D that is IDENTICAL for a state's path and reward bins, so the fMRI GLM can
+only see the phase-invariant part of the position code. The cell RSA has 12
+conditions (4 states x 3 equal-time thirds) and no such constraint, so I
+predicted that phase-locked position selectivity leaks into `state`, and that
+adding a `state_phase` RDM regressor would make the cell effect selective —
+surviving in EC/mOFC/mPFC and collapsing in HC_mid/PCC.
+
+**It does not.** Run `2026-09-24_17-09-09`, split_halves_z, state sub-model:
+
+| ROI | fmri_matched_state | + ctrl state_phase | delta |
+|---|---|---|---|
+| mPFC | 0.0658 | 0.0554 | -0.010 |
+| mOFC | 0.0997 | 0.0931 | -0.007 |
+| HC_anterior | 0.0639 | 0.0745 | **+0.011** |
+| HC_mid | 0.1070 | 0.1008 | -0.006 |
+| PCC | 0.0515 | 0.0548 | **+0.003** |
+
+All ten still significant (p_perm <= 0.003, q_FDR <= 0.003). No ROI loses its
+state effect; two go UP. And `state_phase` itself is ~zero everywhere and
+significant nowhere (beta -0.018 to +0.017; p_perm 0.16-0.83).
+
+Likely why: `PHASE_RESIDUALISE='cosine'` already removes phase at the DATA
+level before RDMs are built, so there is little state x phase variance left
+for the regressor to absorb. Cosine residualisation removes the phase MAIN
+effect and not state x phase, which is what motivated the test — but
+empirically the residual state x phase structure the RDM can see is
+negligible. Testing this properly would need a run with
+PHASE_RESIDUALISE=None; not done.
+
+**Also: the control stack barely matters at all.** `fmri_matched_state`
+(state + location + l2_norm + dsr_fmri + reward_path, no buttons) reproduces
+the previous `ctrl_fMRI-state_dsrFULL` (which had buttons, no reward_path) to
+3-4 decimals: mPFC .0658/.0661, mOFC .0997/.1001, HC_anterior .0639/.0641,
+HC_mid .1070/.1073, PCC .0515/.0515. The cell state effect is remarkably
+robust to which controls are fitted, which is consistent with the user's
+recollection that implementing the fMRI controls "didn't really improve
+things".
+
+**What this does NOT overturn:** the cell-level encoding result stands — the
+per-cell balance r_state - r_interaction differs across ROIs (Kruskal-Wallis
+H = 15.29, P = 0.0092; ANOVA F(5,918) = 4.17, P = 0.00095), EC/mOFC/mPFC
+phase-invariant-dominant, HC/PCC phase-locked-dominant. That is a different
+analysis on different quantities. The RSA-vs-fMRI discrepancy remains
+unexplained by the model's control set; remaining candidates are the
+condition definition (cells cut each state into 3 equal-TIME thirds; fMRI
+splits path vs reward SEMANTICALLY from behaviour) and voxel-level spatial
+clustering.
+
+**Also found while running this.** The script had no `matplotlib.use('Agg')`
+and the macOS default backend is interactive; the `plt.show()` after the
+phase-mask diagnostic blocked a background run for 38 minutes at 0.0% CPU
+(55 s CPU total), looking exactly like slow permutations. Added a guard that
+falls back to Agg only when stdout is not a tty, so interactive runs are
+unchanged.
+
+## 2026-09-24 (b) — Main-result figure, caption-width bug, RSA pointer
+
+New `fig12_main_result` (`12_main_result.pdf/.png`), built to carry the
+rewritten headline at both levels of analysis:
+- **a** per-ROI fraction of cells classified sustained (filled) vs phasic-only
+  (hatched), with **Wilson 95% CIs** and the 5% chance line. The CIs are the
+  point: EC's 31.4% is 11/35 cells, CI 19-48%, which is why the planned Fisher
+  contrast sits at P = 0.054. The old fig 8b showed bare bars and invited
+  over-reading.
+- **b** population-shift **effect size** (matched-pairs rank-biserial of
+  per-cell perm-p against 0.5, percentile bootstrap CI over cells, 2,000 draws,
+  seed 42) for the sustained statistic and the phase-modulated component, same
+  ROI order, connector lines per ROI. Replaces plotting p-values as data.
+
+EC is the only region whose phase-driven marker is n.s. in both panels; PCC is
+its mirror image. ROIs ordered by sustained fraction (stated in the caption).
+era_brewer Showgirl2 ROI colours per project convention; Arial 11/10/9;
+16.5 x 6.5 cm, PDF + 300 dpi PNG.
+
+**Caption bug fixed (affected every figure in this script).** `_add_caption`
+relied on matplotlib's `wrap=True`, which wraps at draw time while
+`bbox_inches='tight'` re-measures the UNWRAPPED extent. Every captioned figure
+was saved many times wider than its axes — fig 11 was 20,647 x 1,645 px for a
+6 cm heatmap, fig 05 10,067 px. Captions are now hard-wrapped with `textwrap`
+to the figure width. All figures now export at sane sizes (fig 11: 1,263 x
+2,433). `_add_caption(..., draw=False)` records to captions.md without burning
+the caption into the vector file; used for the publication figure.
+
+**RSA companion pointer updated** to `DSR_RSA_simple_ROI/2026-08-31_17-57-30`
+(postdates the ROI-label update) with combo `ctrl_fMRI-state_dsrFULL`. The old
+`ctrl_dsrFULL` no longer exists; the new combo adds `bttn_next` and `l2_norm`,
+which is what the chapter prose already describes. State betas: mPFC 0.066,
+mOFC 0.100, HC_anterior 0.064, HC_mid 0.107, PCC 0.052; all p_perm <= 0.002, so
+q_FDR = 0.0012 as before. No EC (insufficient coverage for the pseudo-
+population), so that cell of the heatmap stays blank.
+
+⚠ `_roi_palette()` still returns `STATE_COLORS` repeated, i.e. state colours
+used where ROI is the categorical variable, against the project convention.
+`fig12` uses `ROI_COLOURS`; the older figures that call `_roi_palette` do not.
+
+## 2026-09-24 — Sustained position-in-sequence: re-run on the updated ROI labels
+
+`neurons_with_ROI_labels.csv` was updated 2026-08-28 12:20; the canonical
+sustained run `2026-08-17_08-41-10` predates it, so every cell-level number in
+the chapter draft was computed on stale labels.
+
+**The cell set is identical** (924 cells, 0 added, 0 dropped), so per-cell
+statistics are unchanged and the reload+relabel path is exactly equivalent to a
+full re-run. 30 of 924 cells changed region: mOFC→HC_anterior 16, mOFC→mPFC 6,
+EC→HC_anterior 3, mPFC→mOFC 3, mOFC→HC_mid 2. Counts EC 38→35, mOFC 163→142,
+HC_anterior 276→295, mPFC 155→158, HC_mid 231→233, PCC 61→61.
+
+New run: `group/encoding_state_sustained_cv/
+2026-08-17_08-41-10_relabelled_2026-09-24_15-22-10/`
+
+**What changed in the inference.** The planned EC-vs-rest Fisher test on the
+sustained fraction moved from p = 0.043 to **p = 0.054**. The effect size did
+not move (31.6%→31.4% EC, 18.6%→18.7% rest, OR 2.02→2.00); losing 1 sustained
+cell of 38 shifted a discrete small-sample test across 0.05. Do not report this
+as significant.
+
+Three results moved the other way and now support the "EC is purely sustained"
+claim better than the fraction test did:
+- EC's phase-modulation component no longer survives FDR (q 0.046 → **0.098**);
+  it is the only region where it fails. Others q ≤ 0.0053 (FWE ≤ 0.026).
+- EC's phasic-only fraction is no longer above the 5% chance rate
+  (5/38, p = 0.040 → **4/35 = 11.4%, p = 0.096**).
+- EC's sustained population shift still survives FDR (q 0.035 → 0.040,
+  FWE 0.176 → 0.202).
+
+Unchanged: sustained above chance in every region (all binomial p ≤ 0.011);
+main position component significant everywhere except PCC (q = 0.094); no
+regional difference in that component (χ²(5) = 2.50, p = 0.776); regions do
+differ in phase modulation (χ²(5) = 13.20, p = 0.0216); sustained omnibus null
+(χ²(5) = 8.89, p = 0.114).
+
+**Script fixes.** (1) `config.json` was describing a model that was never
+fitted — it listed a standalone phase main effect (there is no such column; it
+lies in the span of the sum-coded interaction block) and described `r_state` as
+a nested-model comparison against a reduced model, when it is a direct
+correlation. Replaced with the actual design, input-trace provenance and CV
+scheme. (2) `fig11` crashed on the undefined `RSA_STATE_RUN_DATE` (commented
+out at L156) so Fig 5d was not being regenerated. (3) `roi_inference.json` now
+persists the χ² statistic, dof, Fisher odds ratio and per-ROI k/n, which the
+manuscript quotes but nothing stored.
+
+⚠ **The RSA companion column of Fig 5d is still stale.** `RSA_STATE_RUN_DIR`
+points at `DSR_RSA_simple_ROI/2026-07-30_15-58-51-fixed_cells-fixed_perms`
+(pre-relabel). Newer runs exist; `2026-08-31_17-57-30` postdates the table
+update. Its state betas barely move (mOFC 0.094→0.100, HC_mid 0.109→0.107,
+mPFC 0.066→0.066, PCC 0.052→0.052, HC_anterior 0.066→0.064; all p_perm ≤ 0.002,
+so q_FDR = 0.0012 is unchanged). But the combo was renamed and redefined:
+`ctrl_dsrFULL` = [state, location, bttn_curr, dsr_fmri] no longer exists; the
+new `ctrl_fMRI-state_dsrFULL` adds `bttn_next` and `l2_norm`. The chapter prose
+("controlling for current and future location, as well as current and future
+actions") describes the NEW control set, not the one the figure is drawing.
+Neither RSA config records the ROI table path, so which table the Aug-31 run
+used cannot be verified from the config alone — worth adding.
+
+
 ## 2026-09-23 (f) — Coverage figure: temporal control contacts added
 
 `swr_hfb_coverage_figure.py` now draws the two temporal control regions beside
@@ -10233,3 +12478,205 @@ abstains rather than making the window unscorable. Measured: **100% of the 36
 conditions are observed in every leave-one-out template**, and the true
 condition is no more likely to be observed than any other, so `both` is not
 measuring observedness.
+
+## 2026-09-27 — Robustness grid: phase split × baseline window × stillness control
+
+**Question.** Do the four reported results survive (a) 3 vs 2 phases,
+(b) a −1.5…−1.0 s baseline instead of −1.6…−1.1 s, (c) the stillness control?
+
+**New scripts.** `scripts/swr_robustness_grid.py` (ripple rate; 3 phase schemes ×
+5 readings, every number through `fin.window_stats` / `fin.cluster_test`),
+`scripts/swr_hfb_phase_robustness.py` (HFB branch).
+`scripts/swr_ripple_hfb_conditions.py`: stillness events now generated in EVERY
+phase (were explore-only, so no phase-specific stillness control existed), and
+the two-phase `*_learn` (explore+plan) collapse added beside `*_all`.
+
+**Provenance finding (the important one).** All three reported ripple-rate values
+come from the **own-baseline** reading, i.e. WITHOUT the stillness-matched
+control, although `swr_final_ripple_analysis.py` documents the matched reading as
+primary and the own-baseline one as "inflated here". The draft also mixes phase
+splits: R1 uses `first uncovers`, R2/R3 use `exploring` (first + while learning).
+
+**Results** (`swr/ripple_robustness_grid_2026-09-27/`, bundle_v2, pad 0.25, n=61
+sessions, 0–0.5 s window):
+
+| claim | (a) phase split | (b) baseline B | (c) stillness control |
+|---|---|---|---|
+| R1 rate rises at correct uncovers | holds for *first uncovers* (+0.0344); fails if pooled with *while learning* (+0.0128, p=0.24) | stronger (p 0.0068→0.0010) | **survives**: +0.0344, t(60)=2.15, p=0.032, cluster +0.35…+0.75 s p=0.003 |
+| R2 early > late | 0.029 / 0.075 / 0.019 across the three splits | flips first/later 0.075→0.020 | **fails**: p = 0.075 / 0.149 / 0.323 |
+| R3 valence × phase | significant in all three splits | invariant (0.008→0.009) | **fails**: p = 0.121 / 0.385 / 0.152 |
+| R4 HFB specific to correct uncovers | fails under every split | n/a (no pre-event baseline) | untestable, n=5–19 sessions |
+
+**Not previously reported and more robust than R2/R3:** `correct − incorrect`
+within the exploring phase is significant in all five readings (matched raw
++0.0229 p=0.038; matched base A +0.0491 p=0.0011 Holm 0.005; own base B +0.0528
+p=0.0003), because it is a main effect on 61 sessions rather than a difference
+of differences on 49–52. The interaction's `once known` half contributes almost
+nothing and `error, once known` exists in only 52 sessions.
+
+**Caveat on the matched design.** `correct, first uncovers` has median post-press
+stillness 1.05 s vs ~0.50 s elsewhere, and only 57% of its events find a matched
+control (89–95% for every other cell). The matched R1 is therefore the 57% with
+the shortest pauses.
+
+**HFB (`swr/ripple_hfb_conditions_2026-09-27/hfb_phase_robustness.json`).**
+No event-type contrast is significant in any phase under any split. Stillness
+events with ≥15 clean ripples exist in only 14/53 sessions (explore), 7 (plan),
+7 (known), 17 (learning); correct uncovers − stillness in explore is
+−0.0001, t(13)=−0.02, p=0.98, and stillness alone is the numerically largest
+explore effect (+0.0079, n=14). Collapsing explore+plan REMOVES the correct-
+uncover effect (+0.0024, p=0.39) because `reward_plan` is ~0 (n=23) — and this
+disagrees with `hfb_locking_contrasts_2026-09-23` (+0.0050, p=0.048), which
+pools the saved traces instead of at extraction. Do not report a pooled
+learning-phase HFB reward effect.
+
+## 2026-09-27b — Phase definition FIXED; two branches were splitting the task differently
+
+**Decision (user, 2026-09-27).** Two phases, per grid, with `fs` = the first
+fully correct repeat:
+  learning   `rep <  fs`   every traversal before the first correct one
+  execution  `rep >= fs`   the first correct traversal and all that follow
+Baseline window **−1.5 to −1.0 s**. Stillness-matched values reported wherever
+they survive, and explicitly reported where they do not.
+
+**Bug found.** `rip.stage_of_repeat` (ripple-rate branch) puts the first fully
+correct repeat in `while learning` (`rep <= fs`); `swr_windows.add_phase3`
+(HFB branch) puts it in `execute` (`rep < fs`). 1432 repeats — **39% of the
+learning side**, 8.1% of all repeats — sat on opposite sides in the two
+branches. The agreed definition is the `add_phase3` one. `session_events` in
+`swr_ripple_hfb_conditions.py` now takes `--boundary` (inclusive/exclusive) and
+records it in `result.json`. `add_phase3` itself is UNCHANGED, so
+`swr_probes.py`, `swr_units.py`, the `phase3` window design and their consumers
+(`swr_ripple_tests.py`, `swr_explore.py`, `swr_ripple_triggered_units.py`) are
+untouched and still carry their original boundary.
+
+**New scripts.** `swr_robustness_grid.py` rewritten as a full sweep: 2
+boundaries × 3 groupings × 5 references, 51 unique tests computed once and
+shared, with a markdown report. `swr_stillness_by_phase.py` (behavioural).
+`swr_figure_phase_panels.py` (Fig 4f/4g at the agreed split, both references,
+with a profile cache for fast redraws).
+
+**Ripple rate at the agreed split** (`swr/figure4_panels_2026-09-27/`, n=61):
+
+| test | own baseline −1.5…−1.0 | stillness-matched |
+|---|---|---|
+| correct, learning | +0.0394, t(60)=+3.71, p=0.0002; cl +0.25…+0.65 s p=0.010 | +0.0311, t(60)=+2.03, p=0.043; cl +0.35…+0.65 s p=0.006 |
+| correct, execution | +0.0036, t(60)=+0.58, p=0.559 | +0.0067, t(60)=+0.70, p=0.487 |
+| valence \| learning | +0.0558, t(60)=+4.10, p=0.0002, Holm 0.001; cl +0.15…+0.75 s p=0.004 | +0.0410, t(60)=+2.77, p=0.0067, Holm 0.033; cl +0.25…+0.65 s p=0.006 |
+| phase \| correct | +0.0358, t(60)=+2.75, p=0.0057; **no cluster** | +0.0243, t(60)=+1.49, p=0.146 |
+| INTERACTION | +0.0771, t(51)=+2.74, p=0.0083; cl +0.15…+0.75 s p=0.007 | +0.0495, t(48)=+1.96, **p=0.053**, no cluster |
+
+**Survives stillness matching:** the learning-phase increase, and the
+correct-vs-incorrect difference within learning. **Does not:** the phase
+contrast and the interaction. `phase | correct` has no surviving cluster even
+under the own baseline, so it is a window-test result only.
+
+**Why the interaction fails the control** (`swr/stillness_by_phase_2026-09-27/`):
+post-uncover stillness has a valence × phase crossover of its own, ~20x larger
+than the neural one. Correct − incorrect stillness is **+0.953 ± 0.098 s**
+(t(60)=+9.71, p=6.3e-14) in learning and **−0.474 ± 0.179 s** (t(51)=−2.65,
+p=0.011) in execution. The draft sentence "subjects are not stationary for
+longer during correct vs incorrect uncovers in the learning phase" is false.
+Correct uncovers also speed up monotonically across the task (1.36 → 0.45 s)
+while incorrect ones slow down (0.48 → 0.66 s). The boundary choice alone moves
+the learning cell's median stillness from 0.775 s (inclusive) to 1.237 s
+(exclusive).
+
+**HFB at the agreed split** (`swr/ripple_hfb_conditions_2026-09-27/`): the
+pooled learning cell is NOT significant (+0.0024 ± 0.0027, t(51)=+0.87,
+p=0.39). The effect lives entirely in the first traversal (+0.0076, t(50)=+2.73,
+p=0.0088, cl −130…+10 ms p=0.038); the rest of learning is +0.0002 (n=23,
+p=0.97). Under the inclusive boundary it would be +0.0050, p=0.032, so the
+claim is boundary-sensitive and must be made about the first traversal.
+No condition contrast is significant in either phase; navigation is
+numerically larger than correct uncovers in both.
+
+**Failed/abandoned.** `ripple_robustness_grid_2026-09-27` and
+`ripple_hfb_conditions_2026-09-27` (first version) used the old three-scheme
+layout and a `first vs later` grouping that is not the agreed split; superseded.
+
+## 2026-09-29 — Cleanup pass: status banners, inventory, canonical methods/results
+
+No new analysis. Housekeeping so the branch can be handed over:
+
+- **STATUS banners** in the module docstring of `swr_figure_phase_panels.py`
+  (★ KEY), `swr_stillness_by_phase.py` (◆ SUPPORTING), `swr_robustness_grid.py`
+  and `swr_hfb_phase_robustness.py` (⚠ EXPLORATORY), and
+  `swr_stage_interaction.py` (✗ SUPERSEDED — wrong side of the phase boundary).
+- **`ANALYSIS_INVENTORY.md`** (data/final_results/ripple_analysis/): every SWR
+  script classified KEY / SUPPORTING / EXPLORATORY / SUPERSEDED with what it
+  feeds, plus which output directories are superseded.
+- **`HOW_TO_RUN.md` §6b**: the reported ripple-rate result, the fixed phase
+  definition, the two references and what each zero means, and the redraw path.
+- **`manuscript/methods_07_ripple_rate_by_phase.md`**: canonical methods.
+  Adds what was missing — the 0–0.5 s window test itself (10,000 sign-flips),
+  the session as unit and the 10-event floor that explains the varying df, the
+  matching caliper max(0.15 s, 10%) and the resulting 58%/89% match rates, how
+  contrasts are formed, Holm, the cluster p formula, and that correction is
+  across window positions within a condition only. Also fixes: zero means the
+  pre-event window for the own-baseline reading but the matched control for the
+  stillness-matched reading — these are different tests.
+- **`manuscript/results_ripple_rate_FINAL.md`**: canonical results paragraph
+  (narrative form) plus the full value table and a "things not to write" list.
+- `SUPERSEDED.md` dropped into seven stale output directories.
+- **`mc/analyse/swr_phases.py`** (new): the phase definitions, `PHASE_Q`,
+  `GROUPINGS`, `add_exclusive_stage`, `base`, `holm`. Extracted because the
+  REPORTED script was importing the EXPLORATORY one — `swr_figure_phase_panels`
+  imported `swr_robustness_grid`. Both now import from `mc/analyse/`.
+- **Moved to `scripts/exploratory/`**: `swr_robustness_grid.py`,
+  `swr_hfb_phase_robustness.py`, matching the convention already set for the
+  HFB branch. Registered in `scripts/exploratory/README.md`.
+- **`SCRIPTS_GUIDE_swr_ripple_rate.md`** (new, repo root), matching
+  `SCRIPTS_GUIDE_swr_content.md`: one rule, `swr_figure_phase_panels.py` is the
+  reported result. `ANALYSIS_INVENTORY.md` was trimmed to output-directory
+  provenance only so the script classification lives in one place.
+- Verified after the move: both scripts import and run, and the sweep's report
+  reproduces the same numbers (interaction +0.0771, p=0.0083 own-baseline;
+  +0.0495, p=0.053 stillness-matched).
+
+**Still open.** (1) The HFB key result is spread over four scripts
+(`swr_ripple_locked_hfb`, `swr_hfb_locking_contrasts`,
+`swr_ripple_hfb_conditions`, `swr_hfb_panels_2cm`) and was not consolidated —
+they are recent and restructuring them was not agreed. (2) The outcome column
+for the eleven exploratory HFB scripts in the inventory is unfilled; their
+results have not been read. (3) `add_phase3` is unchanged, so `swr_probes.py`,
+`swr_units.py` and the `phase3` window design still carry the original boundary.
+
+## 2026-09-29b — Two entry points, and a wrong default caught
+
+**`scripts/swr_main.py`** — the reported result, one entry point. Lists the 11
+steps with what each produces and which figure it is; runs one by name or `all`
+in order. Two steps consume an upstream directory (`hfb_contrasts`,
+`hfb_panels`); the dispatcher resolves those to the newest matching directory
+that does **not** carry a `SUPERSEDED.md`, so a stale run cannot be wired in
+silently.
+
+**`scripts/exploratory/swr_archive.py`** — the archived work, one entry point,
+mirroring `swr_content_explore.py`. Eight analyses, each with the question it
+answered and what came of it.
+
+Neither merges code: the steps keep their own `SEED`, `MIN_RIPPLES`, `N_PERM`
+and smoothing constants, which differ deliberately, and one namespace would let
+them redefine each other.
+
+**⚠ BUG FOUND AND FIXED — wrong phase boundary by default.**
+`swr_ripple_hfb_conditions.py` defaulted to `--boundary=inclusive`, which puts
+the first fully correct repeat in the LEARNING phase. The agreed definition
+(2026-09-27) puts it in EXECUTION, i.e. `exclusive`. The default was set on
+2026-09-27, before the definition was agreed, and was then wrongly described in
+`HOW_TO_RUN.md` and `SCRIPTS_GUIDE_swr_ripple_rate.md` as "the agreed one".
+
+* default changed to `exclusive` in `session_events` and `run`
+* the docstring now says which is agreed and which is sensitivity
+* `HOW_TO_RUN.md` and the guide corrected, both carrying the warning that **any
+  conditions run made between 2026-09-27 and 2026-09-29 without an explicit
+  `--boundary` is on the wrong split**
+
+Effect of the default, session 4: `reward_plan` 12 events (exclusive, correct)
+vs 102 (inclusive), `reward_execute` 1017 vs 927.
+
+The existing runs are unaffected — `ripple_hfb_conditions_2026-09-27/` predates
+the flag and used `phase3` (= exclusive), and
+`ripple_hfb_conditions_exclusive_2026-09-28/` passed it explicitly. Only
+`ripple_hfb_conditions_incl_2026-09-27/` is on the inclusive split, and it is
+labelled as the sensitivity run.
