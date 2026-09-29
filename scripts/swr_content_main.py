@@ -6,16 +6,18 @@ Location information in and around hippocampal ripples -- the reported result.
     python scripts/swr_content_main.py            # everything, in order
     python scripts/swr_content_main.py --step=timecourse
 
-THE CLAIM THIS SCRIPT SUPPORTS, and nothing more: hippocampal population
-activity carries the square the participant is standing on, this is measurable
-inside a ripple window, and it is NOT specific to ripples -- a window matched on
-square, dwell and width, taken from the same visit, carries just as much.
+THE CLAIM THIS SCRIPT SUPPORTS, and nothing more: during ENCODING, hippocampal
+ripples carry the square the participant is standing on; once the sequence is
+known this is no longer detectable; the difference between phases survives
+matching the number of ripples. The signal is NOT specific to ripples -- a
+window matched on square, dwell and width, taken from the same visit, carries
+just as much.
 
 Everything exploratory -- reward locations, the walked route, error squares,
-pseudo-populations, decoders -- is in `swr_content_explore.py` and is not part
-of the reported result.
+pseudo-populations, decoders, the peri-ripple time course -- is in
+`swr_content_explore.py` and is NOT part of the reported result.
 
-FOUR STEPS, in dependency order:
+FIVE STEPS, in dependency order:
 
   timeline    real-time location from `trial_vars`, cached once. Everything
               downstream needs it and nothing else provides it: the time-warped
@@ -25,10 +27,19 @@ FOUR STEPS, in dependency order:
   control     the positive control. The same estimator on ordinary navigation
               windows >= 1 s from any ripple, swept over window width. If this
               is null the ripple numbers mean nothing.
-  contrast    ripple versus matched flank (Stage 3). The confirmatory test of
-              ripple-specificity.
-  timecourse  the same estimator at 41 offsets from -500 to +500 ms, cluster
-              corrected. Produces the reported panel.
+  contrast    ripple versus matched flank, all ripples pooled. Supporting: it
+              establishes the estimator on the full dataset and gives the
+              ripple-specificity null.
+  phase       THE REPORTED ANALYSIS. Location content in the ripple window,
+              encode vs execute, ripple counts matched within session.
+              (`mc/analyse/swr_phase_contrast.py`)
+  panel       the reported figure, regenerated LAST so it cannot drift from
+              the numbers.
+
+  timecourse  RETAINED BUT NOT REPORTED -- the 41-offset time course. Kept
+              because it is the only place the cluster result lives; see
+              `swr_content_explore.py phase_timecourse` for the phase-split
+              version.
 
 ESTIMATOR, once, since all four steps share it. For every unit, a place
 template: firing rate at each of the nine squares, z-scored across squares so a
@@ -458,21 +469,30 @@ def timecourse():
 
 # ── step 5 ─────────────────────────────────────────────────────────────
 
+def phase():
+    """THE REPORTED ANALYSIS -- see `mc/analyse/swr_phase_contrast.py`."""
+    import mc.analyse.swr_phase_contrast as pc
+    pc.main()
+
+
 def panel():
-    """The reported figure. Regenerated LAST so it cannot drift from the numbers."""
+    """The reported figures. Regenerated LAST so they cannot drift from the numbers."""
     import scripts.swr_content_figures as fig
     d = fig.fig_dir()
-    fig.figure15(d)
-    fig.figure15(d, compact=True)
+    fig.figure21_compact(d)                       # 2.5 cm reported panel
+    fig.figure21_compact(d, with_pooled=True, size_cm=4)
+    fig.figure21(d)                               # larger version
+    fig.figure20(d)                               # bars + per-session points
+    fig.figure15(d, compact=True)                 # all-ripple time course
     print(f"-> {d}")
 
 
 def run(step="all", rebuild_timeline=False):
     steps = {"timeline": lambda: timeline(rebuild_timeline),
-             "control": control, "contrast": contrast,
+             "control": control, "contrast": contrast, "phase": phase,
              "timecourse": timecourse, "panel": panel}
     if step == "all":
-        for name in ("timeline", "control", "contrast", "timecourse", "panel"):
+        for name in ("timeline", "control", "contrast", "phase", "panel"):
             print(f"\n{'=' * 70}\n{name.upper()}\n{'=' * 70}")
             steps[name]()
     elif step in steps:
@@ -484,7 +504,7 @@ def run(step="all", rebuild_timeline=False):
 if __name__ == "__main__":
     if fire is not None and len(sys.argv) > 1:
         fire.Fire({"run": run, "timeline": timeline, "control": control,
-                   "contrast": contrast, "timecourse": timecourse,
-                   "panel": panel})
+                   "contrast": contrast, "phase": phase,
+                   "timecourse": timecourse, "panel": panel})
     else:
         run("all")

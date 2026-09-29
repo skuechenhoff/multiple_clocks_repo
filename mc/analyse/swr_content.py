@@ -542,3 +542,47 @@ def detrend_on(y, t):
     else:
         out[ok] = Y - fit.ravel()
     return out
+
+
+def phase_labels(steps_s, occ):
+    """Per occupancy interval: phase, first-traversal, is-reward, on-common-route.
+
+    `encode` = every traversal of a configuration up to but EXCLUDING its first
+    error-free A-B-C-D loop; `execute` = from that loop onwards. This is the
+    split the reported phase contrast uses, which is why it lives here and not
+    in an exploratory module.
+
+    ⚠ `first_traversal` is a SUBSET of `encode` (99.95% of its intervals fall
+    inside it, 71% of it), not a third phase. Never pool the two.
+    """
+    st = steps_s.sort_values("t_s").reset_index(drop=True)
+    k = occ.step_idx.to_numpy()
+    loc = occ["loc"].to_numpy().astype(int)
+    grid_num = st.grid_num.to_numpy(float)[k]
+    trial_n = st.trial_num_in_grid.to_numpy(float)[k]
+    first = st.first_trial.to_numpy(float)[k] == 1
+    rew = st[["rew_A", "rew_B", "rew_C", "rew_D"]].to_numpy(float)[k]
+    is_rew = (rew == loc[:, None]).any(axis=1)
+
+    phase = np.full(len(occ), "", dtype=object)
+    common = np.zeros(len(occ), bool)
+    for gn in np.unique(grid_num):
+        m_all = st.grid_num.to_numpy(float) == gn
+        tr = (pd.Series(st.trial_correct.to_numpy(float)[m_all],
+                        index=st.trial_num_in_grid.to_numpy(float)[m_all])
+              .groupby(level=0).first())
+        ok = tr[tr == 1]
+        cut = ok.index.min() if len(ok) else np.inf
+        rows = grid_num == gn
+        phase[rows & (trial_n < cut)] = "encode"
+        phase[rows & (trial_n >= cut)] = "execute"
+        # squares on at least 0.5 of the error-free traversals
+        good = m_all & (st.trial_correct.to_numpy(float) == 1)
+        if good.any():
+            tn = st.trial_num_in_grid.to_numpy(float)[good]
+            lc = st["loc"].to_numpy(float)[good]
+            n_tr = len(np.unique(tn))
+            frac = np.array([len(np.unique(tn[lc == L])) / n_tr
+                             for L in range(1, 10)])
+            common[rows] = frac[loc[rows] - 1] >= 0.5
+    return phase, first, is_rew, common

@@ -7,12 +7,16 @@ Every exploratory ripple-content analysis. One entry point.
     python scripts/swr_content_explore.py i11
     python scripts/swr_content_explore.py roles
 
-⚠ NONE OF THIS IS IN THE REPORTED RESULT. That is `swr_content_main.py`, which
-supports one claim: location information is present in and around hippocampal
-ripples and is not ripple-specific. Everything here was run to find out whether
-ripples carry anything MORE than that. With one exception they did not, and the
-exception failed a robustness check -- the verdicts are in the table below and
-the detail is in `data/final_results/ripple_analysis/`.
+⚠ NONE OF THIS IS IN THE REPORTED RESULT. That is `swr_content_main.py --step=phase`
+(`mc/analyse/swr_phase_contrast.py`), which supports one claim: during ENCODING
+hippocampal ripples carry the current square, this is not detectable once the
+sequence is known, the phase difference survives matching ripple counts, and
+the signal is NOT ripple-specific against a matched flank.
+
+Everything here was run to find out whether ripples carry anything MORE than
+that. With one exception they did not, and the exception failed a robustness
+check -- the verdicts are in the table below, the numbers in
+`data/final_results/ripple_analysis/RESULTS.md`.
 
 The analyses live in `mc/analyse/swr_explore/`, one module each, rather than
 merged into this file. They were written separately, have their own constants
@@ -80,6 +84,15 @@ ANALYSES = {
         "compositional",
         "ordered state structure across consecutive ripples; does HC lead mPFC?",
         "see output -- the two compositional tests this dataset can support"),
+    "phase_splits": (
+        "location_by_phase",
+        "location in ripples split by encode/execute and by what the square is",
+        "see output -- C0 and C1 per phase and subtype"),
+    "phase_timecourse": (
+        "timecourse_by_phase",
+        "peri-ripple location TIME COURSE, encode vs execute (descriptive)",
+        "mHP encode cluster -100..+75 ms p=0.005; see swr_content_main for the "
+        "reported contrast"),
     "location_timecourse": (
         "location_timecourse",
         "arrival-locked location time course",

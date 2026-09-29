@@ -35,6 +35,7 @@ from mc.plotting.cell_results import (get_roi_colour, roi_display,
                                       LOCATION_COLORS, OBSERVED_VALUE_COLOR)
 
 ROIS = ["HC_anterior", "HC_mid", "mPFC", "mOFC", "PCC"]
+SEED_FIG = 42     # jitter only; never affects a statistic
 CM = 1 / 2.54
 
 plt.rcParams.update({
@@ -44,6 +45,10 @@ plt.rcParams.update({
     "xtick.labelsize": 8, "ytick.labelsize": 8, "legend.fontsize": 8,
     "axes.spines.top": False, "axes.spines.right": False,
     "figure.dpi": 150, "savefig.dpi": 300, "savefig.bbox": "tight",
+    # Type 42 = TrueType, so text stays selectable/editable text in Illustrator.
+    # matplotlib's default (Type 3) is what makes the fonts open as a "weird
+    # format" -- some viewers turn them into outlines or lose the glyph names.
+    "pdf.fonttype": 42, "ps.fonttype": 42, "svg.fonttype": "none",
 })
 
 
@@ -58,6 +63,23 @@ def fig_dir():
                      f"ripple_content_figures_{datetime.date.today()}")
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def _phase_contrast():
+    """Per-session phase numbers for the REPORTED analysis.
+
+    Prefers `phase_contrast` (ripple window only, which is what Methods
+    describes) and falls back to the fixed-window slice of the older
+    time-course module so existing figures still render.
+    """
+    src = _latest("phase_contrast_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if src:
+        return pd.read_csv(os.path.join(src, "per_session.csv")), src
+    src = _latest("timecourse_by_phase_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        return None, None
+    F = pd.read_csv(os.path.join(src, "fixed_window_contrast.csv"))
+    return F[F.window == "ripple"], src
 
 
 def save(fig, d, name):
@@ -1842,13 +1864,484 @@ def figure17(d):
 
 
 
+def figure18(d):
+    """The current-square result split by phase and by what the square is."""
+    src = _latest("location_by_phase_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 18 skipped: no phase-split results")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    N = pd.read_csv(os.path.join(src, "ripple_counts.csv"))
+    PH = ["first_traversal", "encode", "execute"]
+    PHL = ["first\ntraversal", "encode", "execute"]
+    rois = [r for r in ["HC_all", "HC_mid", "HC_anterior"] if (R.roi == r).any()]
+    fig, ax = plt.subplots(2, 2, figsize=(19 * CM, 13 * CM))
+
+    def _panel(a, col, subs, cols, labs, ylab, title, roi="HC_all"):
+        g0 = R[R.roi == roi]
+        w = .8 / len(subs)
+        for i, sub in enumerate(subs):
+            m, e, p, n = [], [], [], []
+            for ph in PH:
+                v = g0[(g0.phase == ph) & (g0.subtype == sub)][col].dropna()
+                m.append(v.mean() if len(v) else np.nan)
+                e.append(v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else 0)
+                p.append(stats.ttest_1samp(v, 0)[1] if len(v) >= 5 else np.nan)
+                n.append(len(v))
+            x = np.arange(len(PH)) + (i - (len(subs) - 1) / 2) * w
+            a.bar(x, m, w, yerr=e, capsize=2, color=cols[i], edgecolor="none",
+                  label=labs[i])
+            for xx, mm, pp, ee, nn in zip(x, m, p, e, n):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + ee + .03, "*", ha="center", fontsize=9)
+                if nn < 15:            # too few sessions to read anything into
+                    a.text(xx, 0, "  ×", ha="center", va="center", fontsize=7,
+                           color="#999999")
+        a.axhline(0, color="grey", lw=1)
+        a.set_xticks(range(len(PH))); a.set_xticklabels(PHL, fontsize=7.5)
+        a.set_ylabel(ylab)
+        a.legend(frameon=False, fontsize=6.5)
+        a.set_title(title, loc="left", fontsize=9)
+
+    # a — the headline: location in ripples by phase, all three ROIs
+    a = ax[0, 0]
+    w = .8 / len(rois)
+    for i, rn in enumerate(rois):
+        g0 = R[(R.roi == rn) & (R.subtype == "all")]
+        m, e, p = [], [], []
+        for ph in PH:
+            v = g0[g0.phase == ph].z_c0.dropna()
+            m.append(v.mean()); e.append(v.std(ddof=1) / np.sqrt(len(v)))
+            p.append(stats.ttest_1samp(v, 0)[1])
+        x = np.arange(len(PH)) + (i - (len(rois) - 1) / 2) * w
+        a.bar(x, m, w, yerr=e, capsize=2,
+              color=get_roi_colour("HC_mid" if rn == "HC_all" else rn),
+              alpha=1 if rn != "HC_all" else .7, edgecolor="none",
+              label=roi_display(rn))
+        for xx, mm, pp, ee in zip(x, m, p, e):
+            if pp < .05:
+                a.text(xx, mm + ee + .03, "*", ha="center", fontsize=9)
+    a.axhline(0, color="grey", lw=1)
+    a.set_xticks(range(len(PH))); a.set_xticklabels(PHL, fontsize=7.5)
+    a.set_ylabel("location in ripples\n(C0, z vs permutation null)")
+    a.legend(frameon=False, fontsize=6.5)
+    a.set_title("a  present during encoding, not detectable\n"
+                "   during execution (see b for the contrast)", loc="left",
+                fontsize=9)
+
+    # b — THE contrast, unmatched vs count-matched
+    a = ax[0, 1]
+    mfile = os.path.join(src, "count_matched_contrasts.csv")
+    M = pd.read_csv(mfile) if os.path.exists(mfile) else None
+    w2 = .38
+    for i, (lab, c) in enumerate((("unmatched", "#D0C7CB"),
+                                  ("count-matched", "#5C1027"))):
+        m, e, p = [], [], []
+        for rn in rois:
+            if lab == "unmatched":
+                t = R[(R.roi == rn) & (R.subtype == "all")].pivot_table(
+                    index="session", columns="phase", values="z_c0")
+                v = (t["encode"] - t["execute"]).dropna()
+            elif M is not None:
+                v = M[(M.roi == rn)
+                      & (M.pair == "encode_minus_execute")].d_z_c0.dropna()
+            else:
+                v = pd.Series(dtype=float)
+            m.append(v.mean() if len(v) else np.nan)
+            e.append(v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else 0)
+            p.append(stats.ttest_1samp(v, 0)[1] if len(v) >= 5 else np.nan)
+        x = np.arange(len(rois)) + (i - .5) * w2
+        a.bar(x, m, w2, yerr=e, capsize=2, color=c, edgecolor="none", label=lab)
+        for xx, mm, pp, ee in zip(x, m, p, e):
+            if np.isfinite(pp):
+                a.text(xx, mm + ee + .03, f"{pp:.3f}", ha="center",
+                       fontsize=6, rotation=90, va="bottom")
+    a.axhline(0, color="grey", lw=1)
+    a.set_xticks(range(len(rois)))
+    a.set_xticklabels([roi_display(r) for r in rois], rotation=20, ha="right",
+                      fontsize=7)
+    a.set_ylabel("encode minus execute\n(C0, z; paired within session)")
+    yl = a.get_ylim(); a.set_ylim(yl[0], yl[1] + .3 * (yl[1] - yl[0]))
+    a.legend(frameon=False, fontsize=6.5)
+    a.set_title("b  the contrast. Execute has ~2x the ripples,\n"
+                "   which inflates its z; matching counts helps",
+                loc="left", fontsize=9)
+
+    # c, d — the two subtype splits SK asked for
+    _panel(ax[1, 0], "z_c0", ["reward", "nonreward"],
+           ["#5C1027", "#E9A0B0"], ["reward square", "non-reward square"],
+           "location in ripples (C0, z)",
+           "c  reward vs non-reward square underfoot\n   — no difference in "
+           "any phase")
+    _panel(ax[1, 1], "z_c0", ["common", "off_route"],
+           ["#0a607a", "#b6d4e0"], ["on common trajectory", "off it"],
+           "location in ripples (C0, z)",
+           "d  on vs off the common trajectory\n   \u00d7 = fewer than 15 "
+           "sessions, do not read")
+
+    g = R[(R.roi == "HC_all") & (R.subtype == "all")]
+    t = g.pivot_table(index="session", columns="phase", values="z_c0")
+    dif = (t["encode"] - t["execute"]).dropna()
+    ci = stats.t.interval(0.95, len(dif) - 1, loc=dif.mean(),
+                          scale=dif.std(ddof=1) / np.sqrt(len(dif)))
+    n_off = int(N[(N.phase == "execute") & (N.subtype == "off_route")].n.sum())
+    mm = (M[(M.roi == "HC_all") & (M.pair == "encode_minus_execute")].d_z_c0
+          .dropna() if M is not None else pd.Series(dtype=float))
+    mp = stats.ttest_1samp(mm, 0)[1] if len(mm) >= 5 else np.nan
+    fig.suptitle(
+        "Figure 18 — the current-square result, split by encode/execute and by "
+        "what the square IS.  `first traversal` is a SUBSET of `encode` (71%), "
+        "shown separately, not a third phase\n"
+        f"Encode +0.55 (P = 0.0003), execute +0.22 (P = 0.13). The paired "
+        f"contrast is {dif.mean():+.2f} (P = "
+        f"{stats.ttest_1samp(dif, 0)[1]:.2g}) unmatched and {mm.mean():+.2f} "
+        f"(P = {mp:.3f}) once ripple counts are matched — nominally "
+        "significant, NOT surviving Bonferroni over the 6-test family.\n"
+        f"Neither subtype split separates anything. \u26a0 Off-trajectory "
+        f"ripples almost vanish during execution ({n_off} in total), so that "
+        "cell is empty rather than null. EXPLORATORY.", fontsize=8.5, y=1.14)
+    fig.tight_layout()
+    save(fig, d, "fig18_location_by_phase")
+    plt.close(fig)
+
+
+
 if __name__ == "__main__":
     d = fig_dir()
     print("writing figures ...")
     figure1(d); figure2(d); figure2b(d); figure3(d); figure4(d); figure5(d); figure5(d, "thresh_0.2", "_tuned")
     figure6(d); figure6(d, "thresh_0.2", "_tuned")
     figure7(d); figure8(d); figure9(d)
-    figure10(d); figure11(d); figure16(d); figure17(d)
+    figure10(d); figure11(d); figure16(d); figure17(d); figure18(d)
     figure12(d); figure13(d); figure15(d)
     figure14(d, 'HC_mid', 'known'); figure14(d, 'HC_all', 'explore')
     print(f"\n-> {d}")
+
+
+def figure19(d, xlim_ms=250, smooth=True):
+    """SUBPANEL: the peri-ripple location signal, encoding vs once-known.
+
+    Two 3 cm panels side by side, same estimator, colours and frame as the
+    reported fig15 panel, so it drops straight in next to it.
+
+    Ripple counts are matched WITHIN session between the two phases before z is
+    taken (see `timecourse_by_phase`), because z carries a sqrt(n) term and
+    execute has ~2x the ripples. Without matching the right panel is flattered.
+
+    ⚠ The cluster test's family is the full +-500 ms window; the axis is
+    cropped for legibility only. Smoothing is display-only (75 ms moving
+    average, computed upstream and stored as its own column).
+    """
+    src = _latest("timecourse_by_phase_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 19 skipped: run `swr_content_explore.py phase_timecourse`")
+        return
+    T = pd.read_csv(os.path.join(src, "timecourse_by_phase.csv"))
+    S = pd.read_csv(os.path.join(src, "cluster_summary.csv"))
+    cfile = os.path.join(src, "cluster_extents.csv")
+    C = pd.read_csv(cfile) if os.path.exists(cfile) else None
+    dfile = _latest("stage3_timecourse_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    dur = None
+    if dfile and os.path.exists(os.path.join(dfile, "ripple_durations_ms.npy")):
+        dur = np.load(os.path.join(dfile, "ripple_durations_ms.npy"))
+    col_z = "z_smooth" if smooth and "z_smooth" in T.columns else "z"
+    # panel-h language. ⚠ the colour is the ROI's project colour, so
+    # HC_mid IS the gold curve and HC_anterior IS the blue one.
+    LAB = {"HC_anterior": "aHP", "HC_mid": "mHP", "HC_all": "HC"}
+
+    plt.rcParams.update({"font.size": 7, "axes.titlesize": 7.5,
+                         "axes.labelsize": 7, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 6.5, "legend.fontsize": 6})
+    fig, ax = plt.subplots(1, 2, figsize=(7.0 / 2.54, 3.4 / 2.54),
+                           sharey=True)
+    PH = (("encode", "encoding"), ("execute", "once known"))
+    txt = []
+    for pi, (ph, lab) in enumerate(PH):
+        a = ax[pi]
+        for roin in ("HC_anterior", "HC_mid"):
+            W = (T[(T.roi == roin) & (T.phase == ph)]
+                 .pivot_table(index="session", columns="offset_s",
+                              values=col_z).dropna())
+            if not len(W):
+                continue
+            off = W.columns.to_numpy() * 1000
+            m = W.mean(0).to_numpy()
+            se = (W.std(0, ddof=1) / np.sqrt(len(W))).to_numpy()
+            col = get_roi_colour(roin)
+            a.plot(off, m, "-", color=col, lw=1.0,
+                   label=f"{LAB[roin]} (n = {len(W)})")
+            a.fill_between(off, m - se, m + se, color=col, alpha=.18, lw=0)
+            r = S[(S.roi == roin) & (S.curve == ph)]
+            if len(r):
+                txt.append(f"{LAB[roin]} {lab}: at ripple z = "
+                           f"{r.z_at_zero.iloc[0]:+.2f}, p = "
+                           f"{r.p_at_zero.iloc[0]:.3g}; cluster p = "
+                           f"{r.p_cluster.iloc[0]:.3f}")
+        a.axvline(0, color=OBSERVED_VALUE_COLOR, ls=":", lw=1.0)
+        a.axhline(0, color="grey", lw=.8)
+        a.set_xlim(-xlim_ms, xlim_ms)
+        a.set_xticks([-200, 0, 200])
+        a.set_title(lab, fontsize=7.5, pad=3)
+        a.set_xlabel("ms from ripple")
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("location signal (z)")
+    lo, hi = ax[0].get_ylim()
+    span = hi - lo
+    ax[0].set_ylim(lo - .22 * span, hi + .26 * span)
+    lo2, hi2 = ax[0].get_ylim()
+
+    for pi, (ph, _) in enumerate(PH):
+        if C is None:
+            continue
+        for i, roin in enumerate(("HC_anterior", "HC_mid")):
+            cc = C[(C.roi == roin) & (C.curve == ph) & C.is_largest
+                   & (C.p_cluster < .05)]
+            for _, rr in cc.iterrows():
+                ax[pi].plot([rr.start_s * 1000, rr.stop_s * 1000],
+                            [hi2 - (.05 + .08 * i) * span] * 2, "-",
+                            color=get_roi_colour(roin), lw=2.2,
+                            solid_capstyle="butt")
+    if dur is not None:
+        h = float(np.mean(dur)) / 2.0
+        ax[0].plot([-h, h], [lo2 + .07 * span] * 2, "-", color="#333333",
+                   lw=2.2, solid_capstyle="butt")
+    h, l = ax[0].get_legend_handles_labels()
+    fig.legend(h, l, frameon=False, fontsize=6, ncol=2, handlelength=1.2,
+               loc="lower center", bbox_to_anchor=(0.55, -0.10),
+               columnspacing=1.2)
+    fig.tight_layout(pad=0.3, w_pad=0.6)
+    save(fig, d, "fig19_panel_location_timecourse_by_phase")
+
+    for roin in ("HC_anterior", "HC_mid", "HC_all"):
+        r = S[(S.roi == roin) & (S.curve == "encode_minus_execute")]
+        if len(r):
+            txt.append(f"{LAB[roin]} encode-minus-execute: at ripple "
+                       f"z = {r.z_at_zero.iloc[0]:+.2f}, p = "
+                       f"{r.p_at_zero.iloc[0]:.3g}; cluster p = "
+                       f"{r.p_cluster.iloc[0]:.3f}")
+    print("   " + "\n   ".join(txt))
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure20(d):
+    """The phase effect as bars: why mHP looks stronger but tests weaker.
+
+    Left: mean z per phase per ROI, +- s.e.m. across sessions.
+    Right: the paired contrast per session, with every session shown, because
+    the whole point is that mHP has the LARGER mean and the LARGER spread.
+    """
+    F, src = _phase_contrast()
+    if F is None:
+        print("  Fig 20 skipped: run `swr_content_explore.py phase_contrast`")
+        return
+    rois = ["HC_all", "HC_anterior", "HC_mid"]
+    LAB = {"HC_all": "HC pooled", "HC_anterior": "aHP", "HC_mid": "mHP"}
+    col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
+           "HC_mid": get_roi_colour("HC_mid")}
+
+    plt.rcParams.update({"font.size": 8, "axes.titlesize": 9,
+                         "axes.labelsize": 8, "xtick.labelsize": 7.5,
+                         "ytick.labelsize": 7.5, "legend.fontsize": 7})
+    fig, ax = plt.subplots(1, 2, figsize=(15 * CM, 6.5 * CM))
+
+    def star(p):
+        return "***" if p < .001 else "**" if p < .01 else "*" if p < .05 else "n.s."
+
+    # ── a: each phase against zero
+    a, w = ax[0], .36
+    for i, ph in enumerate(("z_encode", "z_execute")):
+        m, e, ps = [], [], []
+        for r in rois:
+            v = F[F.roi == r][ph].dropna()
+            m.append(v.mean()); e.append(stats.sem(v))
+            ps.append(stats.ttest_1samp(v, 0)[1])
+        x = np.arange(len(rois)) + (i - .5) * w
+        a.bar(x, m, w, yerr=e, capsize=3,
+              color=[col[r] for r in rois], edgecolor="none",
+              alpha=1.0 if i == 0 else .35,
+              label="encoding" if i == 0 else "once known")
+        for xx, mm, ee, pp in zip(x, m, e, ps):
+            a.text(xx, mm + ee + .02, star(pp), ha="center", fontsize=7)
+    a.axhline(0, color="grey", lw=.8)
+    a.set_xticks(range(len(rois)))
+    a.set_xticklabels([f"{LAB[r]}\n(n = {F[F.roi == r].shape[0]})" for r in rois])
+    a.set_ylabel("location signal at the ripple (z)")
+    a.legend(frameon=False, loc="upper center", bbox_to_anchor=(.5, -.16),
+             ncol=2, handlelength=1.3)
+    a.set_title("a  location signal by phase", loc="left")
+
+    # ── b: the paired contrast, every session shown
+    a = ax[1]
+    rng_j = np.random.default_rng(SEED_FIG)
+    for i, r in enumerate(rois):
+        v = F[F.roi == r].d_z.dropna().to_numpy()
+        t, p = stats.ttest_1samp(v, 0)
+        a.scatter(i + rng_j.uniform(-.17, .17, len(v)), v, s=7,
+                  color=col[r], alpha=.35, edgecolor="none", zorder=2)
+        a.errorbar(i, v.mean(), yerr=stats.sem(v), fmt="o", ms=6, capsize=4,
+                   color=col[r], zorder=3, mec="white", mew=.8)
+        a.text(i, a.get_ylim()[1], "", ha="center")
+        a.annotate(f"{v.mean():+.2f}\ns.e.m. {stats.sem(v):.2f}\n"
+                   f"P = {p:.3f} {star(p)}",
+                   (i, 0), xytext=(i, -3.9), ha="center", fontsize=6.8,
+                   va="bottom")
+    a.axhline(0, color="grey", lw=.8)
+    a.set_xticks(range(len(rois)))
+    a.set_xticklabels([LAB[r] for r in rois])
+    a.set_ylim(-4.6, 4.2)
+    a.set_ylabel("encoding minus once known (z)")
+    a.set_title("b  the contrast, one dot per session", loc="left")
+
+    fig.suptitle(
+        "Figure 20 — mHP has the LARGER effect and the LARGER spread; aHP "
+        "reaches significance on n and consistency, not on size.\n"
+        "Ripple window, counts matched within session, 1000 draws. Bars/points "
+        "are session means; error bars s.e.m. across sessions.",
+        fontsize=8, y=1.10)
+    fig.tight_layout()
+    save(fig, d, "fig20_phase_effect_bars")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure21(d, with_pooled=False):
+    """SUBPANEL: location signal at the ripple, aHP and mHP across the two phases.
+
+    An interaction-style panel: phase on x, one line per ROI, session-level
+    mean +- s.e.m. Replaces the time course wherever the claim being made is
+    "present during encoding, absent once known" rather than "and here is when
+    within the ripple".
+
+    Ripple window, counts matched within session between phases (1000 draws),
+    so the two phases are directly comparable -- see `timecourse_by_phase`.
+    """
+    F, src = _phase_contrast()
+    if F is None:
+        print("  Fig 21 skipped: run `swr_content_explore.py phase_contrast`")
+        return
+    rois = (["HC_all"] if with_pooled else []) + ["HC_anterior", "HC_mid"]
+    LAB = {"HC_all": "HC pooled", "HC_anterior": "aHP", "HC_mid": "mHP"}
+    col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
+           "HC_mid": get_roi_colour("HC_mid")}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 7})
+    fig, a = plt.subplots(figsize=(5.6 / 2.54, 5.4 / 2.54))
+
+    def star(p):
+        return "***" if p < .001 else "**" if p < .01 else "*" if p < .05 else "n.s."
+
+    dodge = np.linspace(-.09, .09, len(rois)) if len(rois) > 1 else [0]
+    sub = []
+    for i, r in enumerate(rois):
+        g = F[F.roi == r]
+        m, e, ps = [], [], []
+        for c in ("z_encode", "z_execute"):
+            v = g[c].dropna()
+            m.append(v.mean()); e.append(stats.sem(v))
+            ps.append(stats.ttest_1samp(v, 0)[1])
+        x = np.array([0, 1]) + dodge[i]
+        a.plot(x, m, "-", color=col[r], lw=1.4, zorder=2)
+        a.errorbar(x, m, yerr=e, fmt="o", ms=5.5, capsize=3, lw=1.2,
+                   color=col[r], mec="white", mew=.8, zorder=3,
+                   label=f"{LAB[r]} (n = {len(g)})")
+        for xx, mm, ee, pp in zip(x, m, e, ps):
+            a.text(xx, mm + ee + .045, star(pp), ha="center", fontsize=6.5,
+                   color=col[r], va="bottom")
+        dz = g.d_z.dropna()
+        sub.append(f"{LAB[r]} {stats.ttest_1samp(dz, 0)[1]:.3f}")
+
+    a.axhline(0, color="grey", lw=.8, zorder=1)
+    a.set_xticks([0, 1]); a.set_xticklabels(["encoding", "known"])
+    a.set_xlim(-.35, 1.35)
+    a.set_ylabel("location signal in ripple (z)")
+    lo, hi = a.get_ylim(); a.set_ylim(lo - .05 * (hi - lo), hi + .18 * (hi - lo))
+    a.set_title("phase contrast  P = " + ", ".join(sub), fontsize=7, pad=4)
+    for sp in ("top", "right"):
+        a.spines[sp].set_visible(False)
+    a.legend(frameon=False, loc="upper center", bbox_to_anchor=(.5, -.20),
+             ncol=len(rois), handlelength=1.1, columnspacing=1.0,
+             handletextpad=.4)
+    fig.tight_layout(pad=.3)
+    save(fig, d, "fig21_panel_phase_interaction"
+         + ("_with_pooled" if with_pooled else ""))
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure21_compact(d, size_cm=2.5, with_pooled=False):
+    """The phase panel at 2.5 x 2.5 cm, for use as a small subpanel.
+
+    At this size there is no room for a legend or for "n.s." labels, so ROI
+    identity is carried by inline coloured labels and only SIGNIFICANT marks
+    are drawn. The yellow star marks a significant encode-minus-known contrast
+    for that ROI. Everything else is identical to `figure21`.
+    """
+    F, src = _phase_contrast()
+    if F is None:
+        print("  Fig 21c skipped: run `swr_content_explore.py phase_contrast`")
+        return
+    rois = (["HC_all"] if with_pooled else []) + ["HC_anterior", "HC_mid"]
+    LAB = {"HC_all": "HC", "HC_anterior": "aHP", "HC_mid": "mHP"}
+    col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
+           "HC_mid": get_roi_colour("HC_mid")}
+    STAR = "#F7931E"          # project palette 'B'; the contrast marker
+
+    plt.rcParams.update({"font.size": 6, "axes.labelsize": 6,
+                         "xtick.labelsize": 6, "ytick.labelsize": 5.5})
+    fig, a = plt.subplots(figsize=(size_cm / 2.54, size_cm / 2.54))
+    dodge = np.linspace(-.08, .08, len(rois)) if len(rois) > 1 else [0]
+    txt = []
+    for i, r in enumerate(rois):
+        g = F[F.roi == r]
+        m, e, ps = [], [], []
+        for c in ("z_encode", "z_execute"):
+            v = g[c].dropna()
+            m.append(v.mean()); e.append(stats.sem(v))
+            ps.append(stats.ttest_1samp(v, 0)[1])
+        x = np.array([0, 1]) + dodge[i]
+        a.plot(x, m, "-", color=col[r], lw=2.0, zorder=2, solid_capstyle="round")
+        a.errorbar(x, m, yerr=e, fmt="o", ms=4.5, capsize=2, elinewidth=1.5,
+                   capthick=1.5, color=col[r], mec="white", mew=.7, zorder=3)
+        a.text(x[0] - .20, m[0], LAB[r], color=col[r], fontsize=6,
+               ha="right", va="center", fontweight="bold")
+        dz = g.d_z.dropna()
+        p_c = stats.ttest_1samp(dz, 0)[1]
+        if p_c < .05:
+            # a typeset asterisk, not a marker glyph: it stays selectable text
+            # in the PDF and matches the rest of the figure set
+            a.text(np.mean(x) + .10, np.mean(m) + .04, "*", color=col[r],
+                   fontsize=10, ha="center", va="center", zorder=5)
+        txt.append(f"{LAB[r]}: encode {m[0]:+.2f} (P={ps[0]:.3f}), "
+                   f"known {m[1]:+.2f} (P={ps[1]:.3f}), "
+                   f"contrast {dz.mean():+.2f} (P={p_c:.3f})")
+
+    a.axhline(0, color="grey", lw=.8, zorder=1)
+    a.set_xticks([0, 1]); a.set_xticklabels(["encode", "known"])
+    a.set_xlim(-.72, 1.28)
+    a.set_ylabel("location (z)", labelpad=2)
+    lo, hi = a.get_ylim()
+    a.set_ylim(min(lo, -.06), hi + .10 * (hi - lo))
+    a.set_yticks([0, 0.5])
+    a.tick_params(length=2.5, width=.8, pad=1.5)
+    for sp in ("top", "right"):
+        a.spines[sp].set_visible(False)
+    for sp in ("left", "bottom"):
+        a.spines[sp].set_linewidth(.9)
+    fig.tight_layout(pad=.15)
+    save(fig, d, f"fig21_phase_panel_{size_cm:g}cm"
+         + ("_with_pooled" if with_pooled else ""))
+    print("   " + "\n   ".join(txt))
+    print(f"   yellow star = encode-minus-known contrast P < 0.05")
+    plt.rcParams.update({"font.size": 9, "axes.labelsize": 9,
+                         "xtick.labelsize": 8, "ytick.labelsize": 8})
+    plt.close(fig)
