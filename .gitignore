@@ -16,3 +16,9 @@ __pycache__/
 
 # macOS Finder metadata. Noise everywhere, and meaningless on the cluster.
 .DS_Store
+
+# Editor settings. Per-machine and per-person -- paths, interpreters and window
+# state differ between the laptop and the cluster, so committing them only
+# creates conflicts.
+.vscode/
+.idea/
