@@ -113,6 +113,7 @@ OUTPUTS (in OUT_BASE/<run_tag>/)
 """
 
 import os
+import glob
 import sys
 import io
 import json
@@ -121,6 +122,18 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from scipy import stats
+# Interactive-backend guard. The default backend on macOS is 'MacOSX', and
+# this script calls plt.show() in several places (deliberately -- the
+# non-publication figures are meant to be looked at during an interactive
+# run). In a BACKGROUND / redirected run there is nobody to close those
+# windows, so plt.show() blocks forever: a run launched here sat for 38
+# minutes on the plt.show() after the phase-mask diagnostic, having used 55 s
+# of CPU, looking exactly like slow permutations. Fall back to the headless
+# backend only when stdout is not a terminal, so interactive use is
+# unchanged, and always respect an explicit MPLBACKEND.
+import matplotlib as _mpl
+if not os.environ.get('MPLBACKEND') and not sys.stdout.isatty():
+    _mpl.use('Agg')
 from matplotlib import pyplot as plt
 sys.path.insert(0, '/Users/xpsy1114/Documents/projects/multiple_clocks/multiple_clocks_repo')
 import era_brewer
@@ -203,12 +216,23 @@ LINK_REUSED_PERMS = True   # False → copy instead of symlink (safer on weird F
 # RSA_REPLOT_PUB_FIG3_ONLY=1 to read the saved run configs below and rewrite
 # only OUT_BASE/<run>/pub_figures/fig3_human_model_schematics.{pdf,jpg}.
 # This deliberately does not load neurons, build data RDMs, or run RSA.
-REPLOT_PUB_FIG3_RUNS = ['2026-08-27_19-18-20']
+REPLOT_PUB_FIG3_RUNS = ['2026-09-24_17-32-11']
     
 #     '2026-06-26_11-30-30-final-State',
 #     '2026-06-22_16-17-15-final-DSR',
 # ]
 REPLOT_PUB_FIG3_MATRIX_CM = 2.0
+# Columns in the model-schematic grid. Set so the panel count divides
+# evenly (6 models -> 3 gives a tidy 3x2; the old default of 4 left a
+# ragged 4+2).
+REPLOT_PUB_FIG3_MAX_COLS = 3
+# Example task for the model schematics. None = pick automatically, as the
+# config whose mode path is most uniform across states (see
+# `_pick_smoothest_config`). A schematic should show the mechanism, not a
+# subject's messiest route; the criterion and full ranking are printed so
+# the choice is reproducible rather than hand-picked. Set a config string
+# here to override.
+REPLOT_PUB_FIG3_EXAMPLE_CONFIG = None
 REPLOT_PUB_FIG3_EXAMPLE_REPEAT = 8
 
 # import pdb; pdb.set_trace()
@@ -258,7 +282,13 @@ PHASE_MASK_MODE = 'full'
 #     firing rate that's predicted by a continuous phase basis, more
 #     conservative.
 # Options: None / 'cosine' / 'cosine_2h' / 'categorical'.
-PHASE_RESIDUALISE = 'cosine' # None
+# 2026-09-24: None for the fMRI-matched state round. The fMRI pipeline does
+# NOT residualise anything -- it puts `path_rew` in the GLM as a regressor.
+# Residualising phase out of the cells at the data level is therefore an
+# extra step with no fMRI counterpart, and it is why the previous round
+# found state_phase ~ 0 everywhere: the variance had already been removed
+# before the RDMs were built. Handle phase with a REGRESSOR, as fMRI does.
+PHASE_RESIDUALISE = None  # was 'cosine'
 
 # Per-cell repeat-correct residualisation. Loads the per-cell-residualised
 # files produced by scripts/residualise_data_by_repeat.py (regressing each
@@ -311,7 +341,11 @@ PLOT_GLASSBRAINS = True
 # DSR model. Reduced-lag splits dsr_fmri_lag01 / lag012 / lag0123 keep
 # only the first K of 12 lag-windows so we can test the
 # spatial-peaks +30/+60 prediction at the RDM level.
-models = [
+# 2026-09-24 STATE ROUND: single-model sweep trimmed to the two models this
+# round reports; the full DSR-round list is restored by deleting the two
+# lines below this comment block.
+models = ['state', 'phase', 'reward_path', 'state_phase']
+_models_full_dsr_round = [
     # DSR variants of interest (3 only)
     'dsr_fmri',           # full DSR  (control)
     'dsr_fmri_fut',       # drop lag 0 (control)
@@ -341,23 +375,49 @@ models = [
 # without l2_norm -> .015 p=.223 with it). '-noL2' is the stack the published
 # Fig 3g caption describes, so both can now be reported side by side.
 _CTRLS_FINAL = ['location', 'bttn_curr', 'bttn_next']
+# 2026-09-24 STATE ROUND. Original DSR-round combos are preserved below,
+# commented out; restore them for the DSR analyses.
+#   'ctrl_fMRI_dsrFULL':            _CTRLS_FINAL + ['dsr_fmri', 'l2_norm'],
+#   'ctrl_fMRI-state_dsrFULL':      _CTRLS_FINAL + ['state', 'dsr_fmri', 'l2_norm'],
+#   'ctrl_fMRI-state_dsrFULL-noL2': _CTRLS_FINAL + ['state', 'dsr_fmri'],
+#   'ctrl_dsrFUT':                  _CTRLS_FINAL + ['dsr_fmri_fut', 'l2_norm'],
+#
+# `fmri_matched_state` mirrors the fMRI Abstract-task GLM in
+# create_fMRI_model_RDMs_on_clean_beh.py:
+#     state + location + l2_norm + A-state + DSR + path_rew + duration
+# Cell-side equivalents exist for 5 of the 7: state, location, l2_norm,
+# dsr_fmri (= DSR), reward_path (= path_rew). NOT matched:
+#   * A-state — an fMRI-only visual control marking the A_reward bin, i.e.
+#     the reward-feedback screen. No cell-side equivalent is built.
+#   * duration — the fMRI bins vary in length; the cell traces are already
+#     time-warped to 90 bins per state, so duration is constant by
+#     construction and the regressor would be degenerate.
+# Note the fMRI abstract-task GLM has NO button regressors (those belong to
+# the DSR GLM), so _CTRLS_FINAL is deliberately not used here.
+#
+# `..._ctrlStatePhase` adds the state x phase RDM. This is the RSA analogue
+# of what the fMRI model does by construction: the fMRI `state` model is a
+# one-hot over A-D that is IDENTICAL for the path and reward bins of a
+# state, so the fMRI GLM can only ever see the phase-invariant part of the
+# position code. The cell model has 3 phases per state and no such
+# constraint, so a cell whose position selectivity is phase-locked still
+# loads on `state`. PHASE_RESIDUALISE='cosine' removes the phase MAIN
+# effect at the data level but leaves state x phase untouched.
 combo_models = {
-    'ctrl_fMRI_dsrFULL': _CTRLS_FINAL + ['dsr_fmri', 'l2_norm'],
-    'ctrl_fMRI-state_dsrFULL': _CTRLS_FINAL + ['state', 'dsr_fmri', 'l2_norm'],
-    'ctrl_fMRI-state_dsrFULL-noL2': _CTRLS_FINAL + ['state', 'dsr_fmri'],
-    'ctrl_dsrFUT': _CTRLS_FINAL + ['dsr_fmri_fut', 'l2_norm']
-    # 'fmri_ctrl_dsrFULL': _CTRLS_FINAL + ['dsr_fmri', 'l2_norm', 'bttn_next'],
-    # 'ctrl_dsrFUT': _CTRLS_FINAL + ['dsr_fmri_fut'],
-    # 'ctrl_dsrInformed': _CTRLS_FINAL + ['dsr_fmri_informed'],
-    # Quartered DSR: same controls as ctrl_dsrFULL, but the full DSR
-    # regressor is replaced by 4 non-overlapping state-quarters of the
-    # rolled trajectory. One joint OLS => per-quarter β per ROI.
-    # 'ctrl_dsrQUARTERS': _CTRLS_FINAL + [
-    #     'curr_quarter', 'next_quarter', 'next2_quarter', 'next3_quarter'],
-    # 'fmri_dsrQUARTERS': ['uncover', 'l2_norm', 'bttn_next', 'bttn_curr', 'bttn_prev',
-    #     'curr_quarter', 'next_quarter', 'next2_quarter', 'next3_quarter'],
-    # 'fmri_min_but_dsrQUARTERS': ['uncover', 'l2_norm','bttn_curr',
-    #     'curr_quarter', 'next_quarter', 'next2_quarter', 'next3_quarter'],
+    # 2026-09-25 ROUND: isolate how position, goal progress and their
+    # conjunction share variance, with and without the sensory/action controls.
+    # `state_phase` is the 12-way conjunction and correlates r = 0.62 with
+    # `state` and r = 0.37 with `phase` on the model RDMs, so these are
+    # deliberately collinear fits -- read them as a variance partition, not as
+    # independent effects.
+    'SxP_S_P':      ['state_phase', 'state', 'phase'],
+    'SxP_S_P_ctrl': ['state_phase', 'state', 'phase',
+                      'location', 'l2_norm', 'dsr_fmri'],
+    'S_P_ctrl':     ['state', 'phase',
+                      'location', 'l2_norm', 'dsr_fmri'],
+    # Previous round kept for reference:
+    #   'fmri_matched_state':               ['state','location','l2_norm','dsr_fmri','reward_path'],
+    #   'fmri_matched_state_ctrlStatePhase': [... , 'state_phase'],
 }
 assert all(len(set(sm)) == len(sm) for sm in combo_models.values()), \
     f"Duplicate sub-model in combo_models: {combo_models}"
@@ -416,13 +476,15 @@ FDR_TEST      = 'split_halves_z'    # primary variant. Data RDM is built
 # consistent with the publication panel (encoding_publication_panels.py).
 
 # settings for state.
-# FDR_COMBOS    = ['ctrl_dsrFULL', 'ctrl_dsrFULL_phase', 'ctrl_dsrFULL_state-phase']         
+# FDR_COMBOS    = ['SxP_S_P', 'SxP_S_P_ctrl', 'S_P_ctrl']         
 # FDR_SUBMODELS = ['state']       
 # settings for DSR.
-FDR_COMBOS    = ['ctrl_fMRI_dsrFULL', 'ctrl_fMRI-state_dsrFULL',
-                 'ctrl_fMRI-state_dsrFULL-noL2', 'ctrl_dsrFUT']
-# DSR + bttn + location (+ l2_norm) (+ state); -noL2 drops l2_norm only.
-FDR_SUBMODELS = ['dsr_fmri']       
+# 2026-09-24 STATE ROUND (DSR-round setting kept below for restoring):
+#   FDR_COMBOS    = ['ctrl_fMRI_dsrFULL', 'ctrl_fMRI-state_dsrFULL',
+#                    'ctrl_fMRI-state_dsrFULL-noL2', 'ctrl_dsrFUT']
+#   FDR_SUBMODELS = ['dsr_fmri']
+FDR_COMBOS    = ['SxP_S_P', 'SxP_S_P_ctrl', 'S_P_ctrl']
+FDR_SUBMODELS = ['state']       
 
 FDR_ALPHA     = 0.05
 MIN_RSA_SUBJECTS = 3   # drop ROIs with fewer RSA-eligible subjects than this
@@ -976,9 +1038,9 @@ MODEL_FIG3_LABELS = {
     'dsr_fmri': 'DSR\nfull',
     'dsr_fmri_fut': 'DSR\nfuture only',
     'dsr_fmri_informed': 'DSR\ninformed',
-    'state': 'Abstract\nstate',
-    'state_phase': 'State x\nphase',
-    'phase': 'Subgoal\nphase',
+    'state': 'Position\nin sequence',
+    'state_phase': 'Position x\ngoal progress',
+    'phase': 'Goal\nprogress',
     'location': 'Physical\nlocation',
     'l2_norm': 'Grid L2\nlocation',
     'reward_path': 'Reward\npath',
@@ -1113,8 +1175,20 @@ def _fig3_load_single_trial(task_config_str, preferred_repeat=8,
     chosen['button_curr'] = buttons_curr
     chosen['button_next'] = np.roll(buttons_curr, -1)
     chosen['uncover'] = uncover
-    chosen['reward'] = np.zeros(n_conds, dtype=int)
-    chosen['reward'][np.arange(0, n_conds, max(1, n_conds // len(states)))] = 1
+    # Reward is reached at the END of a state: the 360-bin warping anchors
+    # each state's LAST bin to the reward-arrival time (verified: state A's
+    # last bin is loc_A, B's is loc_B, ...). The previous version marked
+    # np.arange(0, n_conds, 3) = conds 0/3/6/9, i.e. the EARLY phase of each
+    # state — the schematic showed the reward at the start of a state while
+    # the real `reward_path` model (build_reward_path_label_360, which walks
+    # forward from bins 89/179/269/359) marks the end. Use the real model.
+    _rp_360 = build_reward_path_label_360(
+        chosen['loc_360'][None, :], chosen['button_360'][None, :],
+        task_config_str)
+    _w = len(_rp_360) // n_conds
+    chosen['reward'] = np.array([
+        int(Counter(_rp_360[i * _w:(i + 1) * _w]).most_common(1)[0][0])
+        for i in range(n_conds)], dtype=int)
 
     print("[pub fig] fig3 example trial: "
           f"sub-{chosen['subject']}, trial row {chosen['trial_index']}, "
@@ -1251,10 +1325,22 @@ def _fig3_model_order(run_config):
 def _fig3_set_common_axis(ax, n_cols, row_labels, ylabel):
     ax.set_xlim(-0.5, n_cols - 0.5)
     ax.set_ylim(len(row_labels) - 0.5, -0.5)
-    x_ticks = np.arange(1, n_cols, 3)
+    # Put each state's label where its REWARD actually sits. The 360-bin
+    # warping anchors each state's LAST bin to reward arrival, so for a panel
+    # with n_cols columns spanning 4 states the reward for state k is the last
+    # column of that state's block: (k+1)*n_cols/4 - 1. The previous version
+    # used np.arange(1, n_cols, 3), i.e. the MIDDLE of each 3-condition block
+    # AND hard-coded a width of 3 columns per state, which silently mislabelled
+    # any panel drawn at the model's true resolution (e.g. `location` is 12
+    # sub-steps per condition = 36 columns per state, not 3).
+    n_states_here = len(states)
+    x_ticks = np.array([((k + 1) * n_cols) // n_states_here - 1
+                        for k in range(n_states_here)])
+    x_ticks = x_ticks[(x_ticks >= 0) & (x_ticks < n_cols)]
     ax.set_xticks(x_ticks)
     ax.set_xticklabels(states[:len(x_ticks)], fontsize=9, fontname='Arial')
-    ax.set_xlabel('task state', fontsize=9, fontname='Arial', labelpad=1)
+    ax.set_xlabel('task state (label at reward)', fontsize=9,
+                  fontname='Arial', labelpad=1)
     ax.set_ylabel(ylabel, fontsize=9, fontname='Arial', labelpad=1)
 
     if len(row_labels) <= 9:
@@ -1264,9 +1350,16 @@ def _fig3_set_common_axis(ax, n_cols, row_labels, ylabel):
     ax.set_yticks(ytick_idx)
     ax.set_yticklabels([row_labels[i] for i in ytick_idx],
                        fontsize=9, fontname='Arial')
-    ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, len(row_labels), 1), minor=True)
-    ax.grid(which='minor', color='white', linewidth=0.5)
+    # White cell separators only while the cells are wide enough to survive
+    # them. At the model's true resolution (144 sub-steps) a 0.5 pt white line
+    # per column is wider than the column itself, which is what made the
+    # `location` panel look mostly white and illegible.
+    if n_cols <= 24:
+        ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
+    if len(row_labels) <= 24:
+        ax.set_yticks(np.arange(-0.5, len(row_labels), 1), minor=True)
+    if n_cols <= 24 or len(row_labels) <= 24:
+        ax.grid(which='minor', color='white', linewidth=0.5)
     ax.tick_params(axis='both', which='major', length=2, pad=1)
     ax.tick_params(axis='both', which='minor', length=0)
     for spine in ax.spines.values():
@@ -1387,6 +1480,302 @@ def _save_pub_fig3_model_schematics(run_dir, run_config,
           f"{matrix_cm:g} cm matrices).")
 
 
+def _pick_smoothest_config(z, cfgs, n_cond, len_path, verbose=True):
+    """Pick the example task whose mode path reads most cleanly.
+
+    The mode path is real behaviour, so some configs have states walked in 2
+    steps and others in 5, with runs only a few sub-steps wide. On a schematic
+    those slivers look like noise and invite questions about a nuance the
+    figure is not making. We therefore pick the config with (a) the smallest
+    spread in steps-per-state and (b) the widest thinnest step, and print the
+    full ranking so the choice is reproducible and auditable.
+
+    This selects an ILLUSTRATION only. No model, RDM or statistic depends on
+    it -- every config enters the RSA identically.
+    """
+    loc = np.asarray(z['location'], dtype=int)
+    scored = []
+    for ci, c in enumerate(cfgs):
+        blk = loc[ci * n_cond:(ci + 1) * n_cond].reshape(-1)
+        per_state = len(blk) // len(states)
+        n_steps, min_run = [], []
+        for k in range(len(states)):
+            w = blk[k * per_state:(k + 1) * per_state]
+            runs = []
+            for x in w:
+                if not runs or runs[-1][0] != x:
+                    runs.append([int(x), 1])
+                else:
+                    runs[-1][1] += 1
+            n_steps.append(len(runs))
+            min_run.append(min(b for _, b in runs))
+        spread = max(n_steps) - min(n_steps)
+        thinnest = min(min_run)
+        scored.append(((spread, -thinnest), c, n_steps, thinnest))
+    scored.sort()
+    if verbose:
+        print("[pub fig] example-task ranking (spread in steps/state, then "
+              "widest thinnest step; illustration only):")
+        for (sp, negt), c, ns, th in scored:
+            print(f"           {c}  steps/state {ns}  spread {sp}  "
+                  f"thinnest step {th}")
+        print(f"[pub fig] chose {scored[0][1]}")
+    return scored[0][1]
+
+
+def _load_saved_design_matrices(run_dir):
+    """Load the per-condition model design matrices the run actually fitted.
+
+    Saved by the main run as `model_design_matrices/model_design_matrices.npz`.
+    Rows are [half-1 conditions; half-2 conditions], each half
+    n_configs * n_conds_per_conf rows.
+    """
+    f = os.path.join(run_dir, 'model_design_matrices',
+                     'model_design_matrices.npz')
+    if not os.path.exists(f):
+        raise FileNotFoundError(
+            f"no saved design matrices at {f} -- a run must complete the model-"
+            f"build stage first. Refusing to re-derive them: re-deriving from a "
+            f"single trial is what made the earlier schematic disagree with the "
+            f"model (the model uses the across-subject MODE path).")
+    z = np.load(f, allow_pickle=True)
+    return (z, int(z['__n_configs__']), int(z['__n_conds_per_conf__']),
+            int(z['__len_standardised_path__']),
+            [str(c) for c in z['__configs__']])
+
+
+def _fig3_spec_from_design(model_name, z, cfg_i, n_cond, len_path):
+    """Build a schematic spec straight from the model's own design matrix.
+
+    Every panel is put on ONE common x-axis of `n_cond * len_path` sub-steps,
+    so the same column means the same moment in the task in every panel and
+    the A/B/C/D labels (drawn at each state's reward) line up across models.
+    Models carrying one value per condition are expanded by repeating it
+    `len_path` times; `location` and `reward_path` already have `len_path`
+    sub-steps per condition and are used as-is.
+    """
+    blk = slice(cfg_i * n_cond, (cfg_i + 1) * n_cond)   # half-1 block
+    title = MODEL_FIG3_LABELS.get(model_name, model_name)
+    if model_name not in z.files:
+        # Archive predates this model being added to model_concat. Skip the
+        # panel rather than substituting a re-derived stand-in.
+        return None
+
+    if model_name == 'location':
+        locs = np.asarray(z['location'][blk], dtype=int).reshape(-1)
+        return {'kind': 'active', 'title': title,
+                'rows': [str(i) for i in range(1, 10)], 'active': locs - 1,
+                'colors': [LOCATION_FIG3_COLORS[i] for i in range(1, 10)],
+                'ylabel': 'grid loc'}
+
+    if model_name == 'reward_path':
+        rp = np.asarray(z['reward_path'][blk], dtype=int).reshape(-1)
+        return {'kind': 'active', 'title': title,
+                'rows': ['path', 'reward'], 'active': rp,
+                'colors': ['#d9d9d9', '#a6611a'], 'ylabel': 'event'}
+
+    if model_name in ('state', 'phase', 'state_phase'):
+        # Column order verified against the saved design matrices: `state`
+        # gives argmax 0,0,0,1,1,1,... `phase` gives 0,1,2,0,1,2,... and
+        # `state_phase` gives 0..11, i.e. state-major / phase-minor. Row
+        # labels below follow that order.
+        M = np.asarray(z[model_name][blk], dtype=float)      # (n_cond, k)
+        active = np.repeat(M.argmax(axis=1), len_path)
+        phase_names = ['early', 'middle', 'late'][:N_PHASES]
+        if model_name == 'state':
+            rows = list(states)
+            colors = [STATE_FIG3_COLORS[r] for r in rows]
+            ylabel = 'state'
+        elif model_name == 'phase':
+            rows = list(phase_names)
+            colors = [PHASE_FIG3_COLORS[ph] for ph in phase_names]
+            ylabel = 'goal progress'
+        else:
+            rows = [f"{st}-{ph[0]}" for st in states for ph in phase_names]
+            colors = [PHASE_FIG3_COLORS[ph] for _st in states
+                      for ph in phase_names]
+            ylabel = 'state x phase'
+        return {'kind': 'active', 'title': title, 'rows': rows,
+                'active': active, 'colors': colors, 'ylabel': ylabel}
+
+    if model_name == 'l2_norm':
+        M = np.asarray(z['l2_norm'][blk], dtype=float)       # (n_cond, 9)
+        mat = np.repeat(M, len_path, axis=0).T               # (9, n_cond*len)
+        return {'kind': 'continuous', 'title': title, 'matrix': mat,
+                'rows': [str(i) for i in range(1, 10)],
+                'ylabel': 'grid loc', 'cmap': 'YlGnBu_r'}
+
+    if model_name.startswith('dsr') or model_name == 'midnight':
+        # DSR is (n_cond x n_cond*len_path): every condition carries the WHOLE
+        # rolled trajectory. Draw it as the matrix it is, conditions on y.
+        M = np.asarray(z[model_name][blk], dtype=float)
+        return {'kind': 'continuous', 'title': title, 'matrix': M,
+                'rows': [f'c{i}' for i in range(M.shape[0])],
+                'ylabel': 'condition', 'cmap': 'YlGnBu_r'}
+
+    return None
+
+
+def _load_saved_model_rdms(run_dir, test_variant='split_halves'):
+    """Load the model RDMs a run actually regressed, from `rdms/rdms_*.npz`.
+
+    These are the regression's OWN inputs, so a figure drawn from them cannot
+    drift from the model that was fitted -- nothing is re-derived here. The
+    model RDMs are behaviour-derived and therefore ROI-independent (verified
+    identical across all saved ROI archives), so the first archive is used and
+    its ROI is reported.
+
+    Returns (rdm_dict, n_configs, n_conds_per_conf, configs, roi_used) with
+    each value a square (n x n) matrix, n = n_configs * n_conds_per_conf.
+    """
+    rdm_dir = os.path.join(run_dir, 'rdms')
+    archives = sorted(glob.glob(os.path.join(rdm_dir, 'rdms_*.npz')))
+    if not archives:
+        raise FileNotFoundError(
+            f"no saved model RDMs in {rdm_dir} -- the run must reach the RDM "
+            f"stage before the RDM panels can be drawn from real data.")
+    z = np.load(archives[0], allow_pickle=True)
+    n_conf = int(z['__n_configs__'])
+    n_cond = int(z['__n_conds_per_conf__'])
+    n = n_conf * n_cond
+    prefix = f'model__{test_variant}__'
+    out = {}
+    for key in z.keys():
+        if key.startswith(prefix):
+            out[key[len(prefix):]] = _vec_to_square_rdm(z[key], n)
+    return (out, n_conf, n_cond, [str(c) for c in z['__configs__']],
+            str(z['__roi__']))
+
+
+def _draw_rdm(ax, M, title, n_cond=None, n_conf=None, kind='single'):
+    """Draw one model RDM. `M` is the real matrix; nothing is rescaled.
+
+    kind='single'  one task: tick each state's REWARD, i.e. the last condition
+                   of each state block, matching the schematics' convention.
+    kind='multi'   all tasks: mask the upper triangle (an RDM is symmetric, so
+                   showing both halves doubles ink for no information) and tick
+                   the centre of each task block.
+    """
+    M = np.array(M, dtype=float)
+    if kind == 'multi':
+        M[np.triu_indices_from(M, k=1)] = np.nan
+    finite = M[np.isfinite(M)]
+    if finite.size == 0:
+        ax.set_axis_off(); return None
+    cmap = plt.get_cmap('RdBu_r').copy()
+    cmap.set_bad('white')
+    im = ax.imshow(np.ma.masked_invalid(M), interpolation='nearest',
+                   aspect='equal', cmap=cmap,
+                   vmin=float(np.nanmin(finite)), vmax=float(np.nanmax(finite)))
+    if kind == 'single' and n_cond:
+        per_state = n_cond // len(states)
+        ticks = [(k + 1) * per_state - 1 for k in range(len(states))]
+        ax.set_xticks(ticks); ax.set_yticks(ticks)
+        ax.set_xticklabels(states, fontsize=7, fontname='Arial')
+        ax.set_yticklabels(states, fontsize=7, fontname='Arial')
+    elif kind == 'multi' and n_cond and n_conf:
+        ticks = [i * n_cond + n_cond / 2.0 - 0.5 for i in range(n_conf)]
+        labs = [f'{i + 1}' for i in range(n_conf)]
+        ax.set_xticks(ticks); ax.set_yticks(ticks)
+        ax.set_xticklabels(labs, fontsize=6, fontname='Arial')
+        ax.set_yticklabels(labs, fontsize=6, fontname='Arial')
+        ax.set_xlabel('task', fontsize=7, fontname='Arial', labelpad=1)
+        ax.set_ylabel('task', fontsize=7, fontname='Arial', labelpad=1)
+    else:
+        ax.set_xticks([]); ax.set_yticks([])
+    ax.tick_params(axis='both', length=2, pad=1)
+    ax.set_title(title, fontsize=8, fontname='Arial', pad=2)
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.7); sp.set_color('#333333')
+    return im
+
+
+def _save_pub_fig3_models_with_rdms(run_dir, run_config, task_config_str=None,
+                                     matrix_cm=REPLOT_PUB_FIG3_MATRIX_CM):
+    """Methods figure: per model, its schematic + single-task + multi-task RDM.
+
+    Every panel comes from real data: the schematic from one real correct loop,
+    the two RDMs from the run's own saved model RDMs (see
+    `_load_saved_model_rdms`). The single-task RDM is the diagonal block of the
+    chosen config; the multi-task RDM is the full conditions x conditions
+    matrix with white lines at the config boundaries.
+    """
+    rdms, n_conf, n_cond, cfg_list, roi_used = _load_saved_model_rdms(run_dir)
+    task_config_str = task_config_str or run_config.get('configs', configs)[0]
+    cfg_i = cfg_list.index(task_config_str) if task_config_str in cfg_list else 0
+    blk = slice(cfg_i * n_cond, (cfg_i + 1) * n_cond)
+
+    # Schematics come from the run's OWN design matrices, at the model's true
+    # resolution, on one shared sub-step x-axis. No re-derivation from a single
+    # trial: the model uses the across-subject mode path, and the two disagree.
+    dz, _dn_conf, dn_cond, dlen, dcfgs = _load_saved_design_matrices(run_dir)
+    if REPLOT_PUB_FIG3_EXAMPLE_CONFIG is None:
+        task_config_str = _pick_smoothest_config(dz, dcfgs, dn_cond, dlen)
+    else:
+        task_config_str = REPLOT_PUB_FIG3_EXAMPLE_CONFIG
+    cfg_i = cfg_list.index(task_config_str) if task_config_str in cfg_list else 0
+    blk = slice(cfg_i * n_cond, (cfg_i + 1) * n_cond)
+    d_cfg_i = dcfgs.index(task_config_str) if task_config_str in dcfgs else 0
+    model_order = [m for m in _fig3_model_order(run_config) if m in rdms]
+    specs = []
+    for m in model_order:
+        spec = _fig3_spec_from_design(m, dz, d_cfg_i, dn_cond, dlen)
+        if spec is not None:
+            specs.append((m, spec))
+        else:
+            print(f"[pub fig] no design-matrix panel for {m!r}; omitted "
+                  f"rather than drawn from a re-derived source.")
+
+    mi = matrix_cm / 2.54
+    left_in, gap_in, top_in, bot_in = 0.62, 0.30, 0.34, 0.42
+    col_w = [left_in + mi * 1.6 + gap_in, left_in * 0.4 + mi + gap_in,
+             left_in * 0.4 + mi + gap_in]
+    row_h = mi + top_in + bot_in
+    fig_w, fig_h = sum(col_w), row_h * len(specs)
+
+    figs_dir = os.path.join(run_dir, 'pub_figures')
+    os.makedirs(figs_dir, exist_ok=True)
+    stem = os.path.join(figs_dir, 'fig3_models_schematic_and_RDMs')
+
+    with plt.rc_context({'font.family': 'Arial', 'font.size': 9,
+                         'pdf.fonttype': 42, 'ps.fonttype': 42}):
+        fig = plt.figure(figsize=(fig_w, fig_h))
+        for r, (mname, spec) in enumerate(specs):
+            y0 = fig_h - (r + 1) * row_h + bot_in
+            # --- column 0: model schematic (real example loop) ---
+            ax = fig.add_axes([left_in / fig_w, y0 / fig_h,
+                               (mi * 1.6) / fig_w, mi / fig_h])
+            if spec['kind'] == 'dsr':
+                _fig3_draw_dsr(ax, spec)
+            elif spec['kind'] == 'continuous':
+                _fig3_draw_continuous(ax, spec)
+            else:
+                _fig3_draw_active(ax, spec)
+            ax.set_title(spec['title'].replace('\n', ' '), fontsize=9,
+                         fontname='Arial', pad=3)
+            # --- columns 1-2: the run's OWN model RDMs ---
+            x1 = (col_w[0] + left_in * 0.4) / fig_w
+            ax1 = fig.add_axes([x1, y0 / fig_h, mi / fig_w, mi / fig_h])
+            im1 = _draw_rdm(ax1, rdms[mname][blk, blk],
+                            f'1 task ({task_config_str})',
+                            n_cond=n_cond, kind='single')
+            x2 = (col_w[0] + col_w[1] + left_in * 0.4) / fig_w
+            ax2 = fig.add_axes([x2, y0 / fig_h, mi / fig_w, mi / fig_h])
+            im2 = _draw_rdm(ax2, rdms[mname], f'{n_conf} tasks',
+                            n_cond=n_cond, n_conf=n_conf, kind='multi')
+            if im2 is not None:
+                cb = fig.colorbar(im2, ax=ax2, fraction=0.05, pad=0.04)
+                cb.ax.tick_params(labelsize=7, length=2)
+                cb.outline.set_linewidth(0.5)
+
+        fig.savefig(stem + '.pdf', dpi=300, bbox_inches='tight')
+        fig.savefig(stem + '.jpg', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+    print(f"[pub fig] wrote {stem}.pdf/.jpg ({len(specs)} models; RDMs from "
+          f"{run_dir}/rdms [ROI {roi_used}, model RDMs are ROI-independent]; "
+          f"single-task block = {task_config_str}).")
+
+
 def _replot_saved_pub_fig3_only():
     for run_name in REPLOT_PUB_FIG3_RUNS:
         run_dir = os.path.join(OUT_BASE, run_name)
@@ -1399,7 +1788,16 @@ def _replot_saved_pub_fig3_only():
             run_dir=run_dir,
             run_config=run_config,
             task_config_str=run_config.get('configs', configs)[0],
+            max_cols=REPLOT_PUB_FIG3_MAX_COLS,
         )
+        try:
+            _save_pub_fig3_models_with_rdms(
+                run_dir=run_dir,
+                run_config=run_config,
+                task_config_str=run_config.get('configs', configs)[0],
+            )
+        except FileNotFoundError as exc:
+            print(f"[pub fig] RDM panels skipped: {exc}")
 
 
 if REPLOT_PUB_FIG3_ONLY:
@@ -2393,6 +2791,7 @@ if RELOAD_RUN is None:
             'state':      np.tile(state_half, (2, 1)),
             'repeat_counter': np.tile(feedback_half, (2,1))
         }
+
         
         if SPLIT_UNCV_BUTTONS == True:
             # now, as an additional step, split 'return' buttons from buttons.
@@ -2473,6 +2872,28 @@ if RELOAD_RUN is None:
             model_concat[_name] = model_concat['dsr_fmri'][:,
                                                              _q * _QLEN:(_q + 1) * _QLEN]
 
+
+        # Persist the per-condition DESIGN MATRICES, not just the RDMs they
+        # produce. Without this the only record was a PNG, so any figure
+        # wanting a model at its true resolution had to re-derive it -- which
+        # is how the fig3 `location` panel came to show one modal location per
+        # condition (the model uses LEN_STANDARDISED_PATH sub-steps per
+        # condition) from a SINGLE trial (the model uses the across-subject
+        # mode path). Saved here, after every model has been added to
+        # `model_concat` -- an earlier save point missed state_phase, phase,
+        # midnight, dsr_old, location_old and the lag variants.
+        try:
+            _dm_dir = os.path.join(OUT_DIR, 'model_design_matrices')
+            os.makedirs(_dm_dir, exist_ok=True)
+            np.savez_compressed(
+                os.path.join(_dm_dir, 'model_design_matrices.npz'),
+                **{k: np.asarray(v) for k, v in model_concat.items()},
+                __configs__=np.asarray(configs),
+                __n_configs__=N_CONFIGS,
+                __n_conds_per_conf__=N_CONDS_PER_CONF,
+                __len_standardised_path__=LEN_STANDARDISED_PATH)
+        except Exception as _exc:
+            print(f"[warn] could not save model design matrices: {_exc}")
 
         # ── Model design-matrix plots ────────────────────────────────────
         # Visualise the (conditions × features) matrix that actually feeds

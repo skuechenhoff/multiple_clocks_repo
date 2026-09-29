@@ -106,6 +106,8 @@ import os
 import sys
 import time
 import tempfile
+import textwrap
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -122,6 +124,7 @@ from scipy import stats
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 sys.path.insert(0, "/Users/xpsy1114/Documents/projects/multiple_clocks/multiple_clocks_repo")
 import era_brewer
@@ -141,28 +144,40 @@ OUT_BASE = os.path.join(DATA_DIR, "group", "encoding_state_sustained_cv")
 ROI_TABLE_PATH = os.path.join(DATA_DIR, "neurons_with_ROI_labels.csv")
 
 # FLAG ADDED — reload a previous run's per-cell CSV instead of recomputing.
-RELOAD_OLD_RESULTS = '2026-08-17_08-41-10'
+# 2026-09-24: None — the balance statistic needs the per-permutation
+# r_state and r_interaction values, which the reload path cannot
+# recover from a saved per-cell CSV. Full re-run required. The run this
+# supersedes (same cells, older ROI labels) was
+#   RELOAD_OLD_RESULTS = '2026-08-17_08-41-10'
+RELOAD_OLD_RESULTS = '2026-09-24_18-35-23'
 
 # Reload-time ROI relabelling. Point at the fresh neurons ROI table (with
 # an `alt_final_roi` column) to overwrite the per-cell `roi` column on
 # reload; the ROI summary + figures are rewritten into a NEW sibling
 # directory `<original>_relabelled_<timestamp>/`. Set to None to skip.
 # Equivalent to passing `--relabel-from <path>` on the CLI.
-RELABEL_FROM = ROI_TABLE_PATH
+RELABEL_FROM = None
 # RELABEL_FROM = None
 
 # RSA companion analysis — provides the 4th column of fig 11 (state RSA).
 # Change the date here when re-running with a new RSA run.
-#RSA_STATE_RUN_DATE = '2026-06-26_11-30-30-final-State'
+# RSA companion run. Updated 2026-09-24 to the first run that POSTDATES the
+# 2026-08-28 ROI-label update (the previous pointer, 2026-07-30_15-58-51, used
+# the old labels). The combo was also renamed and redefined between the two:
+# old `ctrl_dsrFULL` = [state, location, bttn_curr, dsr_fmri];
+# new `ctrl_fMRI-state_dsrFULL` = [location, bttn_curr, bttn_next, state,
+# dsr_fmri, l2_norm], i.e. it adds the FUTURE-action and spatial-similarity
+# controls. The `-noL2` variant drops l2_norm and gives the same betas to
+# three decimals.
 RSA_STATE_RUN_DIR  = ('/Users/xpsy1114/Documents/projects/multiple_clocks/data/'
-                       'ephys_humans/derivatives/group/DSR_RSA_simple_ROI/2026-07-30_15-58-51-fixed_cells-fixed_perms')
+                       'ephys_humans/derivatives/group/DSR_RSA_simple_ROI/2026-08-31_17-57-30')
 
 
 RSA_TEST_VARIANT = 'split_halves_z'   # all-correct-repeats averaged per
                                         # config, z-scored per neuron,
                                         # between-task-config cells only.
 RSA_SUB_MODEL    = 'state'
-COMBO_MODEL_NAME = 'ctrl_dsrFULL'
+COMBO_MODEL_NAME = 'ctrl_fMRI-state_dsrFULL'
 
 N_BINS_PER_TRIAL = 360
 N_STATES = 4
@@ -173,7 +188,11 @@ STATES = ["A", "B", "C", "D"]
 PHASES = ["early", "middle", "late"]
 PHASE_REF = 2
 
-N_PERMUTATIONS = 1000
+# 10,000, not 1,000: the per-cell p is thresholded at .05 and then counted
+# across cells, so Monte-Carlo error (~.007 at p=.05 with 1,000 draws)
+# flips borderline cells and moves the ROI fractions. Runtime was 93 s
+# at 1,000, so this stays cheap.
+N_PERMUTATIONS = 10000
 N_JOBS = -1
 SIG_ALPHA = 0.05
 
@@ -246,6 +265,23 @@ def state_phase_labels(n_bins=N_BINS_PER_TRIAL):
 
 
 STATE_IDX_360, PHASE_IDX_360 = state_phase_labels()
+
+
+def cell_seed(*parts):
+    """Deterministic per-cell permutation seed.
+
+    The previous seed was built with Python's builtin str hash. Python 3 salts
+    str hashing per process unless PYTHONHASHSEED is set, so EVERY RUN DREW
+    DIFFERENT PERMUTATIONS and the analysis was not reproducible. Measured
+    here: the same tuple gave 3855842339, 44291736 and 2509367741 in three
+    consecutive interpreters. The consequence was material -- the planned
+    EC-vs-rest Fisher test moved from P = 0.054 to P = 0.023 between two runs
+    over the identical 924 cells, purely from permutation noise.
+
+    blake2b is stable across processes, machines and Python versions.
+    """
+    key = "\x1f".join(str(p) for p in parts).encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(key, digest_size=4).digest(), "big")
 
 
 def make_circular_shifts(y, n_perms, rng):
@@ -553,9 +589,37 @@ def analyse_one_neuron(neuron_id, roi, y_per_cfg,
         v_i = np.isfinite(perm_r_int)
         p_r_int = ((np.sum(perm_r_int[v_i] >= r_interaction) + 1) / (v_i.sum() + 1)
                    if v_i.any() and np.isfinite(r_interaction) else np.nan)
+
+        # BALANCE — how much of a cell's held-out predictable signal is carried
+        # by the phase-INVARIANT state component versus the phase-MODULATED one.
+        #
+        # r_state comes from a 4-column block and r_interaction from an
+        # 8-column block, so their permutation nulls need not sit at the same
+        # place and a raw difference could be biased by block size alone. Two
+        # guards: (a) `null_mean_*` are stored so the bias can be inspected
+        # directly, and (b) the p-value is computed against the permutation
+        # distribution OF THE DIFFERENCE, built from the SAME circular shifts
+        # already used for both components (`Y_shifted` is shared), so any
+        # common bias cancels within each permutation exactly as it does in
+        # the empirical value.
+        perm_balance = perm_r_state - perm_r_int
+        v_b = np.isfinite(perm_balance)
+        balance = (r_state - r_interaction
+                   if np.isfinite(r_state) and np.isfinite(r_interaction)
+                   else np.nan)
+        p_balance = ((np.sum(perm_balance[v_b] >= balance) + 1) / (v_b.sum() + 1)
+                     if v_b.any() and np.isfinite(balance) else np.nan)
+        null_mean_state = float(np.nanmean(perm_r_state)) if v_s.any() else np.nan
+        null_mean_inter = float(np.nanmean(perm_r_int)) if v_i.any() else np.nan
     else:
         perm_min = np.array([]); perm_r_state = np.array([]); perm_r_int = np.array([])
+        perm_balance = np.array([])
         p_min = np.nan; p_r_state = np.nan; p_r_int = np.nan
+        balance = (r_state - r_interaction
+                   if np.isfinite(r_state) and np.isfinite(r_interaction)
+                   else np.nan)
+        p_balance = np.nan
+        null_mean_state = np.nan; null_mean_inter = np.nan
 
     pref_valid = pref_state_per_fold[pref_state_per_fold >= 0]
     if pref_valid.size:
@@ -585,6 +649,19 @@ def analyse_one_neuron(neuron_id, roi, y_per_cfg,
         "p_perm_r_interaction":  float(p_r_int) if np.isfinite(p_r_int) else np.nan,
         "sig_r_interaction":     bool(np.isfinite(p_r_int) and p_r_int < SIG_ALPHA),
         "r_full":                r_full,
+        # BALANCE — phase-invariant minus phase-modulated generalisation
+        "balance":               balance,
+        "p_perm_balance":        float(p_balance) if np.isfinite(p_balance) else np.nan,
+        "sig_balance":           bool(np.isfinite(p_balance) and p_balance < SIG_ALPHA),
+        "null_mean_r_state":     null_mean_state,
+        "null_mean_r_interaction": null_mean_inter,
+        # Null-centred variant: each component shifted by its OWN null mean
+        # before differencing. Reported alongside `balance` so the two can be
+        # compared; if they disagree the block-size bias is real and material.
+        "balance_null_centred":  (
+            float((r_state - null_mean_state) - (r_interaction - null_mean_inter))
+            if all(np.isfinite([r_state, r_interaction,
+                                null_mean_state, null_mean_inter])) else np.nan),
         # Descriptors
         "pref_state_mode": STATES[pref_state_mode] if pref_state_mode >= 0 else "",
         "pref_state_counts_json": json.dumps({STATES[i]: int(pref_counts[i]) for i in range(N_STATES)}),
@@ -668,6 +745,7 @@ def add_population_shift_tests(roi_summary, results):
         ('p_perm_min_phase_contrast', 'min_phase'),
         ('p_perm_r_state',            'r_state'),
         ('p_perm_r_interaction',      'r_interaction'),
+        ('p_perm_balance',            'balance'),
     ]
     n_rois = max(1, roi_summary.shape[0])
     for p_col, prefix in spec:
@@ -696,24 +774,73 @@ def roi_omnibus_and_ec_tests(results, sig_col):
                    .rename(columns={'sum': 'k', 'count': 'n'}))
     tbl['not_k'] = tbl['n'] - tbl['k']
     obs_kx2 = tbl[['k', 'not_k']].to_numpy(dtype=int)
-    chi2_p = np.nan
+    chi2_p = np.nan; chi2_stat = np.nan; chi2_dof = np.nan
     if obs_kx2.shape[0] >= 2 and obs_kx2.sum() > 0:
         try:
-            chi2, chi2_p, dof, _ = stats.chi2_contingency(obs_kx2)
+            chi2_stat, chi2_p, chi2_dof, _ = stats.chi2_contingency(obs_kx2)
         except Exception:
             chi2_p = np.nan
     # EC vs rest
-    ec_p = np.nan
+    ec_p = np.nan; ec_or = np.nan; ec_counts = None
     if 'EC' in tbl.index:
         ec_row  = tbl.loc['EC', ['k', 'not_k']].to_numpy(dtype=int)
         rest    = tbl.drop('EC')[['k', 'not_k']].sum(axis=0).to_numpy(dtype=int)
+        ec_counts = {'EC_k': int(ec_row[0]), 'EC_n': int(ec_row.sum()),
+                      'rest_k': int(rest[0]), 'rest_n': int(rest.sum())}
         try:
-            _, ec_p = stats.fisher_exact(np.vstack([ec_row, rest]),
-                                          alternative='greater')
+            ec_or, ec_p = stats.fisher_exact(np.vstack([ec_row, rest]),
+                                              alternative='greater')
         except Exception:
             ec_p = np.nan
-    return {'chi2_omnibus_p': float(chi2_p) if np.isfinite(chi2_p) else np.nan,
-            'fisher_EC_vs_rest_p': float(ec_p) if np.isfinite(ec_p) else np.nan}
+    out = {'chi2_omnibus_p': float(chi2_p) if np.isfinite(chi2_p) else np.nan,
+           'fisher_EC_vs_rest_p': float(ec_p) if np.isfinite(ec_p) else np.nan,
+           # reporting extras: the manuscript quotes chi2(dof) and the OR,
+           # which were previously not persisted anywhere.
+           'chi2_omnibus_stat': float(chi2_stat) if np.isfinite(chi2_stat) else np.nan,
+           'chi2_omnibus_dof': int(chi2_dof) if np.isfinite(chi2_dof) else None,
+           'fisher_EC_vs_rest_odds_ratio': float(ec_or) if np.isfinite(ec_or) else np.nan,
+           'per_roi_counts': {str(r): {'k': int(tbl.loc[r, 'k']),
+                                        'n': int(tbl.loc[r, 'n'])}
+                               for r in tbl.index}}
+    if ec_counts is not None:
+        out['EC_vs_rest_counts'] = ec_counts
+    return out
+
+
+def balance_roi_omnibus_perm(results, n_perm=10000, seed=42, col='balance'):
+    """Permutation omnibus: does `balance` differ across ROIs?
+
+    The observed statistic is the Kruskal-Wallis H over ROI groups. The null
+    is built by SHUFFLING ROI LABELS across cells and recomputing H, which
+    holds the balance distribution fixed and tests only the regional
+    assignment. Reported instead of the parametric chi-square p-value
+    because the per-cell balance values are neither normal nor independent of
+    cell count per ROI.
+    """
+    d = results[[col, 'roi']].dropna()
+    if d['roi'].nunique() < 2 or len(d) < 10:
+        return {'stat_H': np.nan, 'p_perm': np.nan, 'n_perm': 0, 'n_cells': len(d)}
+    vals = d[col].to_numpy(dtype=float)
+    labels = d['roi'].to_numpy()
+
+    def _H(lab):
+        groups = [vals[lab == r] for r in np.unique(lab)]
+        groups = [g for g in groups if g.size > 0]
+        if len(groups) < 2:
+            return np.nan
+        return float(stats.kruskal(*groups)[0])
+
+    H_obs = _H(labels)
+    rng = np.random.default_rng(seed)
+    null = np.empty(n_perm, dtype=float)
+    for i in range(n_perm):
+        null[i] = _H(rng.permutation(labels))
+    v = np.isfinite(null)
+    p = ((np.sum(null[v] >= H_obs) + 1) / (v.sum() + 1)
+         if v.any() and np.isfinite(H_obs) else np.nan)
+    return {'stat_H': H_obs, 'p_perm': float(p) if np.isfinite(p) else np.nan,
+            'n_perm': int(n_perm), 'n_cells': int(len(d)),
+            'null_mean_H': float(np.nanmean(null)) if v.any() else np.nan}
 
 
 def make_roi_summary(df):
@@ -758,6 +885,23 @@ def make_roi_summary(df):
             "n_phasic_only": n_phasic_only,
             "frac_phasic_only": n_phasic_only / n,
             "binom_p_phasic_only": float(_binom_vs_alpha(n_phasic_only, n)),
+            # BALANCE (phase-invariant minus phase-modulated generalisation)
+            "mean_balance": float(g["balance"].mean(skipna=True))
+                if "balance" in g else np.nan,
+            "mean_balance_null_centred": float(
+                g["balance_null_centred"].mean(skipna=True))
+                if "balance_null_centred" in g else np.nan,
+            "n_sig_balance": int(g.get("sig_balance",
+                                        pd.Series([False] * n)).sum()),
+            "frac_sig_balance": float(
+                g.get("sig_balance", pd.Series([False] * n)).sum()) / n,
+            # Null means of the two components, so any block-size bias in the
+            # raw difference is visible in the summary rather than assumed away.
+            "null_mean_r_state": float(g["null_mean_r_state"].mean(skipna=True))
+                if "null_mean_r_state" in g else np.nan,
+            "null_mean_r_interaction": float(
+                g["null_mean_r_interaction"].mean(skipna=True))
+                if "null_mean_r_interaction" in g else np.nan,
             # Pref-state overrep among sustained cells
             "overrep_state": ov_state, "overrep_state_count": ov_count,
             "overrep_state_n": ov_n, "overrep_state_p_binom": ov_p,
@@ -817,14 +961,30 @@ def _save(fig, save_path):
 _FIGURE_CAPTIONS = {}
 
 
-def _add_caption(fig, fig_key, text):
-    """Append a wrapped caption beneath the axes of `fig` AND record it for
-    captions.md export."""
-    # Add as figure text at the bottom; constrained_layout will leave room.
-    fig.text(0.5, -0.02, text, ha='center', va='top',
-             fontsize=FONT_SMALL, wrap=True,
-             color='#222')
+def _add_caption(fig, fig_key, text, draw=True):
+    """Record the caption for captions.md, and (unless `draw=False`) draw it
+    beneath the axes.
+
+    The caption is HARD-wrapped with textwrap rather than matplotlib's
+    `wrap=True`. matplotlib wraps against the figure width at draw time, but
+    `bbox_inches='tight'` in `_save` then re-measures the unwrapped extent,
+    so every captioned figure was being saved many times wider than its
+    axes -- fig 11 came out 20,647 px wide for a 6 cm heatmap. Wrapping the
+    string ourselves keeps the saved width equal to the figure width.
+
+    `draw=False` for publication figures: their caption belongs in the
+    manuscript, not burned into the vector file, but should still reach
+    captions.md.
+    """
     _FIGURE_CAPTIONS[fig_key] = text
+    if not draw:
+        return
+    # ~0.5 em per character at FONT_SMALL; 1 pt = 1/72 in.
+    char_in = 0.5 * FONT_SMALL / 72.0
+    ncols = max(40, int(fig.get_size_inches()[0] / char_in))
+    wrapped = "\n".join(textwrap.wrap(text, width=ncols))
+    fig.text(0.5, -0.02, wrapped, ha='center', va='top',
+             fontsize=FONT_SMALL, color='#222')
 
 
 def write_captions_md(out_dir):
@@ -1486,6 +1646,532 @@ def _load_rsa_state_per_roi(rois):
     return t, p_r, p_fdr
 
 
+# ---------------------------------------------------------------------
+# Main-result figure (publication)
+# ---------------------------------------------------------------------
+ROI_DISPLAY_NAMES = {
+    'HC_anterior': 'HC ant',
+    'HC_mid':      'HC mid',
+    'ACC':         'mPFC',   # project rule: never display "ACC"
+}
+
+
+def _roi_label(roi):
+    return ROI_DISPLAY_NAMES.get(roi, roi)
+
+
+def wilson_ci(k, n, alpha=0.05):
+    """Wilson score interval for a binomial proportion.
+
+    Preferred over the Wald interval here because the fractions of interest
+    are small (~0.05-0.3) and some ROIs have few cells (EC n=35), where the
+    Wald interval is badly calibrated and can leave [0, 1].
+    """
+    if n == 0:
+        return np.nan, np.nan
+    z = stats.norm.ppf(1.0 - alpha / 2.0)
+    phat = k / n
+    denom = 1.0 + z ** 2 / n
+    centre = (phat + z ** 2 / (2 * n)) / denom
+    half = (z / denom) * np.sqrt(phat * (1 - phat) / n + z ** 2 / (4 * n ** 2))
+    return float(centre - half), float(centre + half)
+
+
+def rank_biserial_below_half(p_vals):
+    """Matched-pairs rank-biserial correlation for the population-shift test.
+
+    This is the effect size belonging to `wilcoxon_perm_p_per_roi`: the same
+    signed ranks of (perm-p - 0.5), expressed on [-1, 1]. POSITIVE means the
+    population sits below 0.5, i.e. shifted in the predicted direction.
+
+    Used instead of plotting the p-value itself, so the figure shows an
+    effect size and reserves significance for the stars.
+    """
+    d = np.asarray(p_vals, dtype=float)
+    d = d[np.isfinite(d)] - 0.5
+    d = d[d != 0]
+    if d.size == 0:
+        return np.nan
+    ranks = stats.rankdata(np.abs(d))
+    r_neg = float(ranks[d < 0].sum())   # evidence FOR the effect
+    r_pos = float(ranks[d > 0].sum())
+    tot = r_neg + r_pos
+    return float((r_neg - r_pos) / tot) if tot > 0 else np.nan
+
+
+def _boot_ci_rank_biserial(p_vals, n_boot=2000, seed=42, alpha=0.05):
+    """Percentile bootstrap CI over CELLS for `rank_biserial_below_half`."""
+    p_vals = np.asarray(p_vals, dtype=float)
+    p_vals = p_vals[np.isfinite(p_vals)]
+    if p_vals.size < 5:
+        return np.nan, np.nan
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, p_vals.size, size=(n_boot, p_vals.size))
+    vals = np.array([rank_biserial_below_half(p_vals[i]) for i in idx])
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return np.nan, np.nan
+    return (float(np.percentile(vals, 100 * alpha / 2)),
+            float(np.percentile(vals, 100 * (1 - alpha / 2))))
+
+
+def _stars_from_p(p):
+    if not np.isfinite(p):
+        return ''
+    if p < 0.001: return '***'
+    if p < 0.01:  return '**'
+    if p < 0.05:  return '*'
+    return 'n.s.'
+
+
+def fig15_single_cell_summary(results, roi_summary, save_path, omnibus=None):
+    """CHAPTER PANEL: how the position code is carried, per region.
+
+    a  the two COMPONENTS of each cell's held-out prediction -- phase-invariant
+       position vs phase-modulated -- as point estimates with 95% CIs over a
+       box of the per-cell distribution.
+    b  their per-cell difference (the balance contrast), same form, with the
+       permutation omnibus across regions.
+    c  fraction of cells classified sustained, with Wilson CIs and the 5%
+       chance rate.
+
+    Panels a and b deliberately do NOT use bars. A bar encodes magnitude by
+    area from zero, which for a mean correlation of ~0.02 against a per-cell
+    spread an order of magnitude larger implies a precision the data do not
+    have. Point + CI over the distribution box states exactly what is
+    estimated. Panel c keeps bars because a fraction genuinely is a
+    quantity measured from zero, and the 5% chance line needs that baseline.
+    """
+    _rc()
+    rs = roi_summary[roi_summary['n_cells'] > 0].copy()
+    rs = rs.sort_values('mean_balance', ascending=False)
+    rois = rs['roi'].tolist()
+    x = np.arange(len(rois), dtype=float)
+    colours = [ROI_COLOURS.get(r, '#888888') for r in rois]
+
+    fig, axes = plt.subplots(1, 3, figsize=(18.0 * CM, 4.0 * CM),
+                             gridspec_kw={'width_ratios': [1.35, 1.0, 1.0],
+                                          'wspace': 0.60})
+    ax_a, ax_b, ax_c = axes
+
+    # ---- a: components --------------------------------------------------
+    # Significance is carried by LINE WEIGHT and OPACITY rather than by stars:
+    # 12 star annotations in panel a were unreadable and made it hard to see
+    # which point belonged to which ROI. Solid error bar = phase-invariant,
+    # dotted = phase-modulated; the within-pair offset is small relative to
+    # the between-ROI gap so pairs group visually.
+    off = 0.19
+    for i, roi in enumerate(rois):
+        cells = results.loc[results['roi'] == roi]
+        row = rs.iloc[i]
+        for j, (col, qcol, filled) in enumerate([
+                ('r_state', 'q_wilcoxon_r_state', True),
+                ('r_interaction', 'q_wilcoxon_r_interaction', False)]):
+            v = cells[col].dropna().to_numpy()
+            if v.size == 0:
+                continue
+            xi = x[i] + (j - 0.5) * 2 * off
+            m = float(v.mean()); se = float(v.std(ddof=1) / np.sqrt(v.size))
+            q = float(row[qcol]) if qcol in rs.columns else np.nan
+            sig = np.isfinite(q) and q < SIG_ALPHA
+            bar_c = '0.05' if sig else '0.55'
+            alpha = 1.0 if sig else 0.45
+            ax_a.plot([xi, xi], [m - 1.96 * se, m + 1.96 * se], color=bar_c,
+                      lw=2.3 if sig else 1.1, zorder=3, alpha=alpha,
+                      solid_capstyle='round')
+            ax_a.scatter([xi], [m], s=80, zorder=4, alpha=alpha,
+                         facecolor=colours[i],
+                         edgecolor='0.05' if sig else '0.55',
+                         linewidth=1.3 if sig else 0.9,
+                         hatch=None if filled else '////')
+    ax_a.axhline(0, color='0.45', lw=0.9, ls=':', zorder=0)
+    ax_a.set_ylabel('held-out r', labelpad=2)
+    ax_a.set_title('a   Components', loc='left', fontweight='bold')
+    ax_a.legend(handles=[
+        mpatches.Patch(facecolor='0.55', edgecolor='0.05',
+                       label='position (phase-invariant)'),
+        mpatches.Patch(facecolor='0.55', edgecolor='0.05', hatch='////',
+                       label='phase-modulated'),
+        plt.Line2D([], [], color='0.45', ls=':', lw=0.9,
+                   label='permutation null')],
+        frameon=False, loc='upper right', handlelength=1.0,
+        borderaxespad=0.05, fontsize=FONT_SMALL - 2,
+        labelspacing=0.3)
+
+    # ---- b: balance ------------------------------------------------------
+    rng = np.random.default_rng(42)
+    for i, roi in enumerate(rois):
+        v = results.loc[results['roi'] == roi, 'balance'].dropna().to_numpy()
+        if v.size < 3:
+            continue
+        m = float(v.mean())
+        boot = rng.choice(v, size=(2000, v.size), replace=True).mean(axis=1)
+        lo, hi = np.percentile(boot, [2.5, 97.5])
+        q = (float(rs.iloc[i]['q_wilcoxon_balance'])
+             if 'q_wilcoxon_balance' in rs.columns else np.nan)
+        sig = np.isfinite(q) and q < SIG_ALPHA
+        ax_b.plot([x[i], x[i]], [lo, hi], color='0.05' if sig else '0.55',
+                  lw=2.3 if sig else 1.1, zorder=3,
+                  alpha=1.0 if sig else 0.45, solid_capstyle='round')
+        ax_b.scatter([x[i]], [m], s=80, zorder=4,
+                     alpha=1.0 if sig else 0.45, facecolor=colours[i],
+                     edgecolor='0.05' if sig else '0.55',
+                     linewidth=1.3 if sig else 0.9)
+    ax_b.axhline(0, color='0.45', lw=0.9, ls=':', zorder=0)
+    ax_b.set_ylabel('position − phase-mod. (r)', labelpad=2)
+    ax_b.set_title('b   Balance', loc='left', fontweight='bold')
+    if omnibus and np.isfinite(omnibus.get('p_perm', np.nan)):
+        ax_b.text(0.98, 0.03, f"perm. omnibus\nP = {omnibus['p_perm']:.3g}",
+                  transform=ax_b.transAxes, ha='right', va='bottom',
+                  fontsize=FONT_SMALL - 1, color='0.25')
+
+    # ---- c: sustained fraction ------------------------------------------
+    for i, roi in enumerate(rois):
+        row = rs.iloc[i]
+        k = float(row['n_sustained']); n = float(row['n_cells'])
+        lo, hi = wilson_ci(k, n)
+        sig = float(row['binom_p_sustained']) < SIG_ALPHA
+        ax_c.bar(x[i], k / n, width=0.78, facecolor=colours[i],
+                 edgecolor=colours[i], lw=1.0, zorder=2,
+                 alpha=1.0 if sig else 0.45)
+        ax_c.plot([x[i], x[i]], [lo, hi], color='0.05' if sig else '0.55',
+                  lw=2.3 if sig else 1.1, zorder=3,
+                  alpha=1.0 if sig else 0.45, solid_capstyle='round')
+    ax_c.axhline(0.05, ls='--', lw=0.9, color='0.55', zorder=1)
+    ax_c.set_xlim(-0.9, len(rois) - 0.4)
+    ax_c.text(-0.84, 0.056, 'chance', fontsize=FONT_SMALL - 2, color='0.45',
+              ha='left', va='bottom')
+    ax_c.set_ylabel('fraction sustained (95% CI)', labelpad=2)
+    ax_c.set_title('c   Sustained cells', loc='left', fontweight='bold')
+    ax_c.set_ylim(0, None)
+
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels([_roi_label(r) for r in rois], rotation=30,
+                           ha='right')
+        _strip(ax)
+
+    _add_caption(fig, "15_single_cell_summary", draw=False, text=(
+        "How the position-in-sequence code is carried, per region. (a) The two "
+        "components of each cell's held-out prediction: from the "
+        "phase-invariant position block alone (filled) and the phase-modulated "
+        "block alone (open). Point and whisker give the mean and its 95% CI. "
+        "The per-cell distributions are an order of magnitude wider than these "
+        "means (SD approx. 0.05 for each component, 0.06 for the balance), so "
+        "these are small mean shifts in a noisy population; the inference is "
+        "about the population shift, not about individual cells. The dotted line at zero is "
+        "the permutation null, which both components share (measured means "
+        "-0.000013 and +0.000002). Stars are the bias-free population-shift "
+        "test (Wilcoxon of per-cell permutation p against 0.5), BH-FDR across "
+        "the six regions; significance is shown by line weight and opacity "
+        "rather than by stars (thick black q < .05, thin pale n.s.), and the "
+        "phase-modulated component is drawn with a hatched marker. (b) The per-cell difference, same conventions, with "
+        "a percentile bootstrap 95% CI of the mean (2,000 draws, seed 42); "
+        "positive means the position code is carried mainly by the "
+        "phase-invariant component. The omnibus permutes region labels across "
+        "cells and recomputes Kruskal-Wallis H. (c) Fraction of cells whose "
+        "minimum-across-phases preferred-state contrast exceeds its own "
+        "permutation null, with Wilson 95% CIs against the 5% chance rate. "
+        "ROIs ordered by balance throughout. * p<.05, ** p<.01, *** p<.001."))
+    _save(fig, save_path)
+
+
+def fig14_balance_vs_sustained(results, save_path):
+    """Do the two per-cell measures agree?
+
+    `min_phase_contrast` asks an ABSOLUTE question -- is the preferred state
+    elevated at every phase -- while `balance` asks a RELATIVE one -- does the
+    phase-invariant component out-predict the phase-modulated one. They are
+    not the same statistic, so how far they agree is worth showing rather
+    than assuming.
+
+    (a) paired plot, one line per cell, both measures z-scored across the
+        sample so the slope is meaningful.
+    (b) the same data as a scatter, with Spearman rho.
+    """
+    _rc()
+    d = results[['min_phase_contrast', 'balance', 'roi']].dropna()
+    if len(d) < 10:
+        return
+    z = lambda v: (v - v.mean()) / v.std(ddof=1)
+    zm = z(d['min_phase_contrast'].to_numpy())
+    zb = z(d['balance'].to_numpy())
+    rho, p_rho = stats.spearmanr(d['min_phase_contrast'], d['balance'])
+    cols = [ROI_COLOURS.get(r, '#888888') for r in d['roi']]
+
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(14.0 * CM, 6.5 * CM),
+                                      gridspec_kw={'wspace': 0.45})
+    for i in range(len(d)):
+        ax_a.plot([0, 1], [zm[i], zb[i]], color='0.6', lw=0.3, alpha=0.18,
+                   zorder=1, solid_capstyle='butt')
+    ax_a.scatter(np.zeros(len(d)), zm, s=5, c=cols, alpha=0.55,
+                  linewidths=0, zorder=2)
+    ax_a.scatter(np.ones(len(d)), zb, s=5, c=cols, alpha=0.55,
+                  linewidths=0, zorder=2)
+    ax_a.set_xlim(-0.35, 1.35)
+    ax_a.set_xticks([0, 1])
+    ax_a.set_xticklabels(['sustained\n(min phase contrast)', 'balance'])
+    ax_a.set_ylabel('z-scored across cells')
+    ax_a.set_title('a   Same cell, both measures', loc='left', fontweight='bold')
+    _strip(ax_a)
+
+    ax_b.axhline(0, color='0.85', lw=0.7, zorder=0)
+    ax_b.axvline(0, color='0.85', lw=0.7, zorder=0)
+    ax_b.scatter(d['min_phase_contrast'], d['balance'], s=6, c=cols,
+                  alpha=0.55, linewidths=0, zorder=2)
+    ax_b.set_xlabel('min phase contrast (Hz)')
+    ax_b.set_ylabel('balance (r_state − r_inter)')
+    ax_b.set_title(f"b   Spearman ρ = {rho:.2f}, P = {p_rho:.2g}",
+                    loc='left', fontweight='bold')
+    _strip(ax_b)
+    handles = [mpatches.Patch(facecolor=ROI_COLOURS.get(r, '#888888'),
+                               edgecolor='none', label=_roi_label(r))
+               for r in ROI_ORDER if r in set(d['roi'])]
+    ax_b.legend(handles=handles, frameon=False, fontsize=FONT_SMALL - 2,
+                 loc='upper left', handlelength=0.9, borderaxespad=0.1,
+                 ncol=2)
+
+    _add_caption(fig, "14_balance_vs_sustained", draw=False, text=(
+        f"Agreement between the two per-cell measures. (a) One line per cell "
+        f"({len(d)} cells), both measures z-scored across the sample so the "
+        f"slope is interpretable; point colour is ROI. (b) The same data "
+        f"unstandardised, with Spearman rho = {rho:.2f} (P = {p_rho:.2g}). "
+        f"`min_phase_contrast` is the minimum across phases of the held-out "
+        f"preferred-state-minus-others contrast, an ABSOLUTE test of whether "
+        f"the preferred state is elevated at every phase. `balance` is "
+        f"r_state - r_interaction, a RELATIVE measure of which component "
+        f"out-predicts the other. They answer different questions, so partial "
+        f"agreement is expected."))
+    _save(fig, save_path)
+
+
+def fig13_balance(results, roi_summary, save_path, omnibus=None):
+    """Phase-invariant vs phase-modulated generalisation, per ROI.
+
+    Panel a shows the two COMPONENTS separately (project rule: never plot a
+    contrast in raw units without its parts), each with its permutation-null
+    mean as a reference, so any block-size bias is visible. Panel b shows
+    their per-cell difference with a bootstrap CI and the permutation omnibus.
+    """
+    _rc()
+    rs = roi_summary[roi_summary['n_cells'] > 0].copy()
+    rs = rs.sort_values('mean_balance', ascending=False)
+    rois = rs['roi'].tolist()
+    x = np.arange(len(rois), dtype=float)
+    colours = [ROI_COLOURS.get(r, '#888888') for r in rois]
+
+    fig, (ax_a, ax_b) = plt.subplots(
+        1, 2, figsize=(16.5 * CM, 6.5 * CM),
+        gridspec_kw={'width_ratios': [1.3, 1.0], 'wspace': 0.42})
+
+    w = 0.36
+    for i, roi in enumerate(rois):
+        cells = results.loc[results['roi'] == roi]
+        for j, (col, nullcol, filled) in enumerate([
+                ('r_state', 'null_mean_r_state', True),
+                ('r_interaction', 'null_mean_r_interaction', False)]):
+            v = cells[col].dropna().to_numpy()
+            if v.size == 0:
+                continue
+            m = float(v.mean()); se = float(v.std(ddof=1) / np.sqrt(v.size))
+            xi = x[i] + (j - 0.5) * w
+            ax_a.bar(xi, m, width=w * 0.92,
+                      facecolor=colours[i] if filled else 'white',
+                      edgecolor=colours[i], linewidth=1.1,
+                      hatch=None if filled else '///', zorder=2)
+            ax_a.plot([xi, xi], [m - 1.96 * se, m + 1.96 * se],
+                       color='0.25', lw=1.0, zorder=3)
+            if nullcol in cells.columns:
+                nm = float(cells[nullcol].dropna().mean())
+                ax_a.plot([xi - w * 0.46, xi + w * 0.46], [nm, nm],
+                           color='0.35', lw=1.0, ls=':', zorder=4)
+    ax_a.axhline(0, color='0.7', lw=0.8, zorder=0)
+    ax_a.set_xticks(x); ax_a.set_xticklabels([_roi_label(r) for r in rois],
+                                              rotation=30, ha='right')
+    ax_a.set_ylabel('held-out r (mean ± 95% CI)')
+    ax_a.set_title('a   Components', loc='left', fontweight='bold')
+    _strip(ax_a)
+    ax_a.legend(handles=[
+        mpatches.Patch(facecolor='0.45', edgecolor='0.2',
+                       label='phase-invariant (r_state)'),
+        mpatches.Patch(facecolor='white', edgecolor='0.2', hatch='///',
+                       label='phase-modulated (r_inter)'),
+        plt.Line2D([], [], color='0.35', ls=':', lw=1.0,
+                   label='permutation null')],
+        frameon=False, loc='upper right', handlelength=1.3,
+        borderaxespad=0.1, fontsize=FONT_SMALL - 1)
+
+    rng = np.random.default_rng(42)
+    for i, roi in enumerate(rois):
+        v = results.loc[results['roi'] == roi, 'balance'].dropna().to_numpy()
+        if v.size < 3:
+            continue
+        m = float(v.mean())
+        boot = rng.choice(v, size=(2000, v.size), replace=True).mean(axis=1)
+        lo, hi = np.percentile(boot, [2.5, 97.5])
+        ax_b.bar(x[i], m, width=0.6, facecolor=colours[i],
+                  edgecolor=colours[i], linewidth=1.0, zorder=2)
+        ax_b.plot([x[i], x[i]], [lo, hi], color='0.25', lw=1.0, zorder=3)
+    ax_b.axhline(0, color='0.7', lw=0.8, zorder=0)
+    ax_b.set_xticks(x); ax_b.set_xticklabels([_roi_label(r) for r in rois],
+                                              rotation=30, ha='right')
+    ax_b.set_ylabel('balance\n(phase-invariant − phase-modulated)')
+    ttl = 'b   Balance'
+    if omnibus and np.isfinite(omnibus.get('p_perm', np.nan)):
+        ttl += (f"   (perm omnibus H = {omnibus['stat_H']:.1f}, "
+                f"P = {omnibus['p_perm']:.3g})")
+    ax_b.set_title(ttl, loc='left', fontweight='bold')
+    _strip(ax_b)
+
+    _add_caption(fig, "13_balance", draw=False, text=(
+        "Phase-invariant versus phase-modulated generalisation of the "
+        "position code, per ROI. (a) The two components separately: mean "
+        "held-out correlation between the left-out configuration's activity "
+        "and the prediction from the state block alone (filled) or the "
+        "state x phase block alone (hatched); error bars 95% CI over cells; "
+        "dotted lines the mean of each component's own circular-shift "
+        "permutation null, shown so that any difference in null position "
+        "between the 4-column and 8-column blocks is visible rather than "
+        "assumed absent. (b) Their per-cell difference, with a percentile "
+        "bootstrap 95% CI over cells (2,000 draws, seed 42). Positive means "
+        "the position code is carried mainly by the phase-invariant "
+        "component. The omnibus is a permutation test that shuffles ROI "
+        "labels across cells and recomputes the Kruskal-Wallis statistic. "
+        "ROIs ordered by mean balance."))
+    _save(fig, save_path)
+
+
+def fig12_main_result(results, roi_summary, save_path):
+    """THE main-result figure: is the position code sustained or phase-driven?
+
+    Panel a (cell level)       fraction of cells classified sustained vs
+                               phasic-only, per ROI, with Wilson 95% CIs and
+                               the 5% chance rate. CIs are the point of the
+                               panel: EC's 31% rests on 35 cells, and the bare
+                               bar in the old fig 8b invited the reader to
+                               over-read it.
+    Panel b (population level) rank-biserial effect size of the population
+                               shift for the sustained statistic and for the
+                               phase-modulated component, same ROI order, with
+                               bootstrap CIs over cells. Every region shows
+                               both EXCEPT EC, whose phase-modulation evidence
+                               is absent -- which is the actual headline.
+
+    ROIs are ordered by sustained fraction (descending) in BOTH panels; this
+    is stated in the caption.
+    """
+    _rc()
+    rs = roi_summary.copy()
+    rs = rs[rs['n_cells'] > 0].sort_values('frac_sustained', ascending=False)
+    rois = rs['roi'].tolist()
+    n = len(rois)
+    x = np.arange(n, dtype=float)
+    colours = [ROI_COLOURS.get(r, '#888888') for r in rois]
+
+    # ~16.5 cm x 6.5 cm total: a full-text-width two-panel main figure on A4.
+    fig, (ax_a, ax_b) = plt.subplots(
+        1, 2, figsize=(16.5 * CM, 6.5 * CM),
+        gridspec_kw={'width_ratios': [1.25, 1.0], 'wspace': 0.42})
+
+    # ---------------- panel a: cell-level fractions ----------------
+    w = 0.36
+    for i, roi in enumerate(rois):
+        row = rs.iloc[i]
+        for j, (kcol, ncol, pcol, filled) in enumerate([
+                ('n_sustained',   'n_cells', 'binom_p_sustained',   True),
+                ('n_phasic_only', 'n_cells', 'binom_p_phasic_only', False)]):
+            k = float(row[kcol]); nn = float(row[ncol])
+            frac = k / nn if nn else np.nan
+            lo, hi = wilson_ci(k, nn)
+            xi = x[i] + (j - 0.5) * w
+            ax_a.bar(xi, frac, width=w * 0.92,
+                      facecolor=colours[i] if filled else 'white',
+                      edgecolor=colours[i], linewidth=1.1,
+                      hatch=None if filled else '///', zorder=2)
+            ax_a.plot([xi, xi], [lo, hi], color='0.25', lw=1.0, zorder=3,
+                       solid_capstyle='butt')
+            star = _stars_from_p(row[pcol])
+            if star:
+                ax_a.text(xi, hi + 0.012, star, ha='center', va='bottom',
+                           fontsize=FONT_SMALL - 1, color='0.25',
+                           rotation=90 if star == 'n.s.' else 0)
+    ax_a.axhline(0.05, ls='--', lw=0.9, color='0.55', zorder=1)
+    ax_a.set_xlim(-0.95, n - 0.35)
+    ax_a.text(-0.88, 0.052, 'chance', fontsize=FONT_SMALL - 1,
+               color='0.45', ha='left', va='bottom')
+    ax_a.set_xticks(x)
+    ax_a.set_xticklabels([_roi_label(r) for r in rois], rotation=30, ha='right')
+    ax_a.set_ylabel('fraction of cells\n(95% Wilson CI)')
+    ax_a.set_title('a   Cell level', loc='left', fontweight='bold')
+    ax_a.set_ylim(0, None)
+    _strip(ax_a)
+    handles = [mpatches.Patch(facecolor='0.45', edgecolor='0.2',
+                               label='sustained'),
+               mpatches.Patch(facecolor='white', edgecolor='0.2',
+                               hatch='///', label='phase-driven')]
+    ax_a.legend(handles=handles, frameon=False, loc='upper right',
+                 handlelength=1.2, borderaxespad=0.1)
+
+    # ---------------- panel b: population-level effect sizes ----------------
+    spec = [('p_perm_min_phase_contrast', 'q_wilcoxon_min_phase',   True),
+            ('p_perm_r_interaction',      'q_wilcoxon_r_interaction', False)]
+    for i, roi in enumerate(rois):
+        cells = results.loc[results['roi'] == roi]
+        pts = []
+        for j, (pcol, qcol, filled) in enumerate(spec):
+            vals = cells[pcol].dropna().to_numpy() if pcol in cells else np.array([])
+            eff = rank_biserial_below_half(vals)
+            lo, hi = _boot_ci_rank_biserial(vals)
+            xi = x[i] + (j - 0.5) * 0.30
+            pts.append((xi, eff))
+            if np.isfinite(lo):
+                ax_b.plot([xi, xi], [lo, hi], color='0.25', lw=1.0, zorder=2)
+            ax_b.plot(xi, eff, marker='o', ms=6.0, zorder=3,
+                       markerfacecolor=colours[i] if filled else 'white',
+                       markeredgecolor=colours[i], markeredgewidth=1.4)
+            q = float(rs.iloc[i][qcol]) if qcol in rs.columns else np.nan
+            ax_b.text(xi, hi + 0.03 if np.isfinite(hi) else eff + 0.03,
+                       _stars_from_p(q), ha='center', va='bottom',
+                       fontsize=FONT_SMALL - 1, color='0.25',
+                       rotation=90 if _stars_from_p(q) == 'n.s.' else 0)
+        # connector makes the EC drop visible at a glance
+        ax_b.plot([pts[0][0], pts[1][0]], [pts[0][1], pts[1][1]],
+                   color=colours[i], lw=1.0, alpha=0.55, zorder=1)
+    ax_b.axhline(0.0, ls='-', lw=0.8, color='0.7', zorder=0)
+    ax_b.set_xticks(x)
+    ax_b.set_xticklabels([_roi_label(r) for r in rois], rotation=30, ha='right')
+    ax_b.set_ylabel('population shift\n(rank-biserial, 95% CI)')
+    ax_b.set_title('b   Population level', loc='left', fontweight='bold')
+    _strip(ax_b)
+    handles_b = [plt.Line2D([], [], marker='o', ls='none', ms=6,
+                             markerfacecolor='0.45', markeredgecolor='0.2',
+                             label='sustained'),
+                 plt.Line2D([], [], marker='o', ls='none', ms=6,
+                             markerfacecolor='white', markeredgecolor='0.2',
+                             label='phase-driven')]
+    ax_b.legend(handles=handles_b, frameon=False, loc='lower left',
+                 handlelength=1.0, borderaxespad=0.1)
+
+    _add_caption(fig, "12_main_result", draw=False, text=(
+                  "Position-in-sequence coding is sustained in EC and "
+                  "phase-driven elsewhere. ROIs are ordered by sustained "
+                  "fraction (descending) in both panels. (a) Fraction of "
+                  "cells classified sustained (filled) and phasic-only "
+                  "(hatched) per ROI; error bars are Wilson 95% CIs, dashed "
+                  "line the 5% rate expected by chance, stars per-ROI "
+                  "binomial tests against that rate. (b) Effect size of the "
+                  "population-shift test (matched-pairs rank-biserial "
+                  "correlation of per-cell permutation-p against 0.5; "
+                  "positive = shifted in the predicted direction) for the "
+                  "sustained statistic and for the phase-modulated "
+                  "component; error bars are percentile bootstrap 95% CIs "
+                  "over cells (2,000 draws, seed 42), stars are BH-FDR "
+                  "across the six ROIs. Every region carries both components "
+                  "except EC, where the phase-modulated component is absent. "
+                  "* p<.05, ** p<.01, *** p<.001."))
+    _save(fig, save_path)
+
+
 def fig11_wilcoxon_heatmap(results, roi_summary, save_path):
     _rc()
     rois = roi_summary['roi'].tolist()
@@ -1619,7 +2305,7 @@ def fig11_wilcoxon_heatmap(results, roi_summary, save_path):
                   "here is mechanically biased toward negative, so only the "
                   "cross-ROI ordering is meaningful. RIGHT panel: companion "
                   "RSA analysis from "
-                  f"`DSR_RSA_simple_ROI/{RSA_STATE_RUN_DATE}/results_"
+                  f"`DSR_RSA_simple_ROI/{os.path.basename(RSA_STATE_RUN_DIR.rstrip('/'))}/results_"
                   f"summary_combos.csv` (test=`{RSA_TEST_VARIANT}`, "
                   f"sub_model=`{RSA_SUB_MODEL}`), in PiYG_r. Significance is "
                   "shown as BOLD STARS inside each cell (FDR-corrected ONLY; "
@@ -1966,7 +2652,7 @@ def _build_all_figures(results, roi_summary, diag_dir, n_permutations,
                     ex_row['neuron'], ex_row['roi'], Y_dict[ex_row['neuron']],
                     state_idx_full, phase_idx_full, config_idx_full, list(range(n_cfgs_local)),
                     n_permutations,
-                    seed=abs(hash((sub_str, ex_row['neuron'], "state_sustained_v4"))) & 0xFFFFFFFF,
+                    seed=cell_seed(sub_str, ex_row['neuron'], "state_sustained_v4"),
                     return_perm_dists=True,
                 )
                 refits.append((label, rf))
@@ -2049,6 +2735,36 @@ def _build_all_figures(results, roi_summary, diag_dir, n_permutations,
         print("  saved 11")
     except Exception as e:
         print(f"  fig11 failed: {e}")
+    try:
+        fig12_main_result(
+            results, roi_summary,
+            str(diag_dir / "12_main_result.png"))
+        print("  saved 12_main_result")
+    except Exception as e:
+        print(f"  fig12 failed: {e}")
+    try:
+        _omni = (balance_roi_omnibus_perm(results)
+                 if 'balance' in results.columns else None)
+        fig13_balance(results, roi_summary,
+                      str(diag_dir / "13_balance.png"), omnibus=_omni)
+        print("  saved 13_balance")
+    except Exception as e:
+        print(f"  fig13 failed: {e}")
+    try:
+        _om = (balance_roi_omnibus_perm(results)
+               if 'balance' in results.columns else None)
+        fig15_single_cell_summary(
+            results, roi_summary,
+            str(diag_dir / "15_single_cell_summary.png"), omnibus=_om)
+        print("  saved 15_single_cell_summary")
+    except Exception as e:
+        print(f"  fig15 failed: {e}")
+    try:
+        fig14_balance_vs_sustained(
+            results, str(diag_dir / "14_balance_vs_sustained.png"))
+        print("  saved 14_balance_vs_sustained")
+    except Exception as e:
+        print(f"  fig14 failed: {e}")
 
     # ROI-level inference: omnibus chi-squared + EC vs rest (Fisher exact)
     try:
@@ -2063,6 +2779,16 @@ def _build_all_figures(results, roi_summary, diag_dir, n_permutations,
         )
         roi_inference['_phasic_only'] = roi_omnibus_and_ec_tests(
             results_tmp, '_phasic_only')
+        # Balance: permutation omnibus over ROI labels, plus the same
+        # significant-cell-fraction tests as the other statistics.
+        if 'balance' in results.columns:
+            roi_inference['balance_omnibus_perm'] = balance_roi_omnibus_perm(
+                results, col='balance')
+            roi_inference['balance_null_centred_omnibus_perm'] = (
+                balance_roi_omnibus_perm(results, col='balance_null_centred'))
+            if 'sig_balance' in results.columns:
+                roi_inference['sig_balance'] = roi_omnibus_and_ec_tests(
+                    results, 'sig_balance')
         with open(diag_dir / "roi_inference.json", 'w') as f:
             json.dump(roi_inference, f, indent=2)
         print("  saved roi_inference.json")
@@ -2163,12 +2889,27 @@ def main():
         "data_dir": DATA_DIR, "out_dir": out_dir, "subjects": subjects,
         "target_rois": target_rois, "roi_label_column": ROI_LABEL_COLUMN,
         "roi_table_path": ROI_TABLE_PATH,
+        "input_traces": ("cell-*-360_bins_passed.csv (res_data=False): binned "
+                          "firing rate in Hz, 90 time-warped bins per state, "
+                          "averaged over correct repeats within configuration. "
+                          "NOT residualised — neither for phase nor for repeat number."),
         "fit_method": "OLS (numpy.linalg.lstsq)",
-        "glm_terms": ["state (4 one-hot)", "phase (early, middle; late ref)",
-                      "state × phase (8 cols)", "per-config intercepts (one dropped)"],
+        "glm_terms": ["state (4 one-hot)",
+                      "state × sum-coded phase (8 cols; late = reference)",
+                      "NO separate phase main effect — it lies in the span of the "
+                      "interaction block, so a separate column would be rank-deficient",
+                      "per-config intercepts, train configs only (one dropped)"],
+        "cross_validation": "leave-one-configuration-out",
         "tests": {
-            "b_sustained":  "held-out min_phase_contrast > 0 (perm null = circular shifts)",
-            "c_any_state":  "held-out r_state with reduced = phase + config (perm null = circular shifts)",
+            "b_sustained":  ("held-out min_phase_contrast vs its own permutation null "
+                              "(circular shifts); NOT tested against zero — the minimum "
+                              "of three noisy contrasts is biased below zero"),
+            "c_any_state":  ("held-out Pearson r between y_test and X_state @ beta_state "
+                              "vs permutation null (circular shifts); a correlation, "
+                              "not a nested-model comparison"),
+            "d_interaction": ("held-out Pearson r between y_test and X_inter @ beta_inter "
+                              "vs the same permutation null; captures common phase "
+                              "modulation AND state-specific phase deviations"),
         },
         "n_permutations": args.n_permutations, "n_jobs": args.n_jobs,
         "sig_alpha": SIG_ALPHA, "states": STATES, "phases": PHASES,
@@ -2251,7 +2992,7 @@ def main():
                 n_lab, meta.loc[n_lab, "roi"], Y_dict[n_lab],
                 state_idx_full, phase_idx_full, config_idx_full, all_config_ids,
                 args.n_permutations,
-                seed=abs(hash((sub_str, n_lab, "state_sustained_v4"))) & 0xFFFFFFFF,
+                seed=cell_seed(sub_str, n_lab, "state_sustained_v4"),
             )
             for n_lab in keep_labels
         )

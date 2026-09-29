@@ -3,15 +3,15 @@
 
 Three 3.5 x 3.5 cm subpanels:
 
-  1. plan model in mPFC                    (raw betas)      -- the result
-  2. memory model in bilateral Garvert MTL (demeaned)       -- descriptive
-  3. memory model in left/right hippocampus (demeaned)      -- descriptive
+  1. plan model in mPFC                       (raw betas)   -- the result
+  2. memory model in bilateral Garvert MTL    (demeaned)    -- descriptive
+  3. memory model in left/right Garvert MTL   (demeaned)    -- descriptive
 
-Masks: hippocampus_left/right.nii.gz are PROBABILISTIC (0-100), so loading them
-with a >0 rule would take every voxel with >=1% probability and give a "left
-hippocampus" larger than bilateral MTL. The binarised hippocampus_{side}_bin50
-masks (>50%) are used instead; their union reproduces hippocampus_bin exactly
-(4274 + 4445 = 8719 voxels at 1 mm, 539 + 542 = 1081 in the group brain mask).
+Masks: the unilateral panels use Garvert_MTL_2mm_L/R, i.e. the same Garvert MTL
+mask as the bilateral panel split at x = 0, so left and right are halves of one
+a-priori ROI rather than a second, tighter region. Earlier versions of this
+figure drew hippocampus_{side}_bin50 instead; those panels showed a mask that no
+reported statistic was computed in, and were dropped.
 
 Values are the LEAVE-ONE-SUBJECT-OUT readout from per_TR_loso.py, not the peak
 voxel of the group map: for each held-out subject the ROI voxels are ranked by
@@ -37,15 +37,28 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 PROJECT = "/Users/xpsy1114/Documents/projects/multiple_clocks"
 GROUP = os.path.join(PROJECT, "data/derivatives/group")
 SVC_RAW = os.path.join(GROUP, "instr_dir_unord_svc_loso_2026-09-16")
 SVC_DEMEAN = os.path.join(GROUP, "instr_dir_unord_svc_loso_DEMEANED_2026-09-17")
+# The unilateral Garvert halves were only run on 2026-09-21; the bilateral MTL
+# and the unilateral halves therefore live in two different run folders.
+SVC_DEMEAN_UNI = os.path.join(
+    GROUP, "instr_dir_unord_svc_loso_DEMEANED_UNILATERAL_2026-09-21")
 OUT = os.path.join(GROUP, f"instr_dir_unord_timecourse_figure_{date.today().isoformat()}")
 K = "100"
 PANEL_CM = 3.5
+# Each panel is drawn twice: as the group t that the p-values are computed from,
+# and as the underlying effect with its between-subject SEM. They are the same
+# numbers -- the one-sample t IS mean/sem, asserted in load_trace -- so the two
+# versions cannot disagree, and neither is recomputed here.
+ESTIMATES = ("t", "effect")
+# RSA betas are ~1e-2, which at 3.5 cm gives y labels ("0.02") wider than the
+# space reserved for them. Scaled to 1e-3 units the ticks are small integers.
+EFFECT_SCALE = 1000.0
 
 EPOCHS = [
     ("instr_see-A-first",   0.0,  1.5, "A"),
@@ -83,9 +96,9 @@ PANELS = (
     + [{"name": f"memory_MTL_{lvl}_demeaned", "svc": SVC_DEMEAN,
         "traces": [("MTL", memory_model(lvl), MEMORY_DARK, None)]}
        for lvl in ("A", "AB", "ABC", "ABCD")]
-    + [{"name": f"memory_HC_LR_{lvl}_demeaned", "svc": SVC_DEMEAN,
-        "traces": [("HC_left", memory_model(lvl), MEMORY_DARK, "L"),
-                   ("HC_right", memory_model(lvl), MEMORY_LIGHT, "R")]}
+    + [{"name": f"memory_MTL_LR_{lvl}_demeaned", "svc": SVC_DEMEAN_UNI,
+        "traces": [("MTL_left", memory_model(lvl), MEMORY_DARK, "L"),
+                   ("MTL_right", memory_model(lvl), MEMORY_LIGHT, "R")]}
        for lvl in ("A", "AB", "ABC", "ABCD")]
     # The memory model in the SAME mask as the plan effect, raw betas, to show
     # it is a null there: once beside the plan trace, once on its own.
@@ -108,16 +121,37 @@ def integer_yticks(values):
     return list(range(lo, hi + 1, step))
 
 
+def plotted(trace, estimate):
+    """(y, yerr) for one trace under one estimate; yerr is None for group t.
+
+    The effect is scaled to 1e-3 units purely for the tick labels, so the error
+    bar is scaled with it and the ratio y/yerr still reads as the t."""
+    if estimate == "t":
+        return trace["t"], None
+    return trace["mean"] * EFFECT_SCALE, trace["sem"] * EFFECT_SCALE
+
+
 def load_trace(svc_dir, mask, model):
+    """The LOSO block for one (mask, model), reordered onto the epoch axis.
+
+    `mean` and `sem` are the across-subject mean and standard error of the
+    held-out per-subject readout; `t` is the one-sample t computed from exactly
+    those, so mean/sem == t. That identity is asserted rather than assumed: it
+    is what lets the effect panel and the t panel share one set of p-values."""
     path = os.path.join(svc_dir, mask, f"{model}_loso_results.json")
     with open(path) as handle:
         block = json.load(handle)[K]
     order = [block["trs"].index(name) for name, *_ in EPOCHS]
-    return (np.asarray(block["t"])[order], np.asarray(block["p_FWE"])[order],
-            float(block["t_crit_FWE05"]), path)
+    take = lambda key: np.asarray(block[key], dtype=float)[order]
+    trace = {"t": take("t"), "p_FWE": take("p_FWE"), "mean": take("mean"),
+             "sem": take("sem"), "t_crit": float(block["t_crit_FWE05"]),
+             "path": path}
+    assert np.allclose(trace["mean"] / trace["sem"], trace["t"], atol=1e-4), (
+        f"mean/sem != t in {path}; the stored block is not self-consistent")
+    return trace
 
 
-def draw_panel(panel, mid):
+def draw_panel(panel, mid, estimate):
     plt.rcParams.update({"font.family": "Arial", "pdf.fonttype": 42})
     CM = 1 / 2.54
     fig, (strip, ax) = plt.subplots(
@@ -140,10 +174,11 @@ def draw_panel(panel, mid):
 
     traces = {}
     for row, (mask, model, colour, label) in enumerate(panel["traces"]):
-        t_values, p_fwe, t_crit, path = load_trace(panel["svc"], mask, model)
-        traces[(mask, model)] = (t_values, p_fwe, t_crit, path)
-        # one significance rail per trace, stacked so two traces never overlap
-        for (_n, start, stop, _s), p in zip(EPOCHS, p_fwe):
+        trace = load_trace(panel["svc"], mask, model)
+        traces[(mask, model)] = trace
+        # The rails come from p_FWE, which is identical in both estimates: the
+        # sign-flip null is on the subject-level readout, not on the summary.
+        for (_n, start, stop, _s), p in zip(EPOCHS, trace["p_FWE"]):
             if p < .05:
                 strip.plot([start + .1, stop - .1], [-.75 - 1.05 * row] * 2,
                            color=colour, linewidth=2.0, solid_capstyle="butt",
@@ -151,9 +186,18 @@ def draw_panel(panel, mid):
 
     ax.axhline(0, color="grey", linewidth=.6, zorder=1)
     for mask, model, colour, label in panel["traces"]:
-        t_values = traces[(mask, model)][0]
-        ax.plot(mid, t_values, "-o", color=colour, markersize=2.6,
-                linewidth=1.3, zorder=3, clip_on=False)
+        y, err = plotted(traces[(mask, model)], estimate)
+        if err is None:
+            ax.plot(mid, y, "-o", color=colour, markersize=2.6,
+                    linewidth=1.3, zorder=3, clip_on=False)
+        else:
+            # Shaded band rather than error bars: at 3.5 cm two sets of bars
+            # collide wherever the traces cross, and the band keeps the line
+            # itself the most salient mark.
+            ax.fill_between(mid, y - err, y + err, color=colour, alpha=.22,
+                            linewidth=0, zorder=2, clip_on=False)
+            ax.plot(mid, y, "-o", color=colour, markersize=2.6,
+                    linewidth=1.3, zorder=3, clip_on=False)
 
     # Inline trace labels: there is no room for a legend at 3.5 cm. They are
     # placed at the condition where the traces are furthest apart, and offset
@@ -162,7 +206,12 @@ def draw_panel(panel, mid):
     lower_anchor = None
     labelled = [((m, mod), c, l) for m, mod, c, l in panel["traces"] if l]
     if len(labelled) > 1:
-        stack = np.array([traces[key][0] for key, _c, _l in labelled])
+        drawn = [plotted(traces[key], estimate) for key, _c, _l in labelled]
+        stack = np.array([y for y, _e in drawn])
+        # A label anchored on the mean overlaps its own error bar; anchor the
+        # top label on mean+sem and the bottom on mean-sem instead.
+        stack_hi = np.array([y if e is None else y + e for y, e in drawn])
+        stack_lo = np.array([y if e is None else y - e for y, e in drawn])
         split = int(np.argmax(stack.max(0) - stack.min(0)))
         order = np.argsort(-stack[:, split])
         for rank, index in enumerate(order):
@@ -178,12 +227,12 @@ def draw_panel(panel, mid):
             # lower label down to a minimum that may occur far right, pushing it
             # onto the x axis; anchoring on the local value lets the trace catch
             # up with it further along. Left half, own extreme, is free of both.
-            span = stack[index][:len(mid) // 2 + 1]
+            span = stack_lo[index][:len(mid) // 2 + 1]
             if not top:
                 lower_anchor = float(span.min())
             ax.annotate(label,
                         (mid[split] if top else mid[0],
-                         stack[index].max() if top else span.min()),
+                         stack_hi[index].max() if top else span.min()),
                         textcoords="offset points", xytext=(3.0, 3.0 if top else -10.0),
                         fontsize=8, color=colour, fontweight="bold")
 
@@ -199,13 +248,22 @@ def draw_panel(panel, mid):
     ax.set_xlim(0, 12)
     ax.set_xticks([0, 3, 6, 9, 12])
     ax.set_xlabel("time (s)", fontsize=9, labelpad=1.0)
-    ax.set_ylabel("group $t$", fontsize=9, labelpad=1.0)
-    ax.set_yticks(integer_yticks(np.concatenate(
-        [traces[(m, mod)][0] for m, mod, _c, _l in panel["traces"]] + [[0.0]])))
+    ax.set_ylabel("group $t$" if estimate == "t" else "effect $\\times10^{-3}$",
+                  fontsize=9, labelpad=1.0)
+    if estimate == "t":
+        ax.set_yticks(integer_yticks(np.concatenate(
+            [traces[(m, mod)]["t"] for m, mod, _c, _l in panel["traces"]]
+            + [[0.0]])))
+    else:
+        # integer_yticks steps by ceil(range/3), which on the wider scaled
+        # effect range lands on values like -17/-1/15. Round numbers instead.
+        ax.yaxis.set_major_locator(
+            MaxNLocator(nbins=3, steps=[1, 2, 2.5, 5, 10]))
     ax.tick_params(labelsize=8, length=2, pad=1.5)
     ax.spines[["top", "right"]].set_visible(False)
 
-    stem = os.path.join(OUT, f"instr_dir_unord_{panel['name']}_3p5cm")
+    suffix = "" if estimate == "t" else "_effect"
+    stem = os.path.join(OUT, f"instr_dir_unord_{panel['name']}{suffix}_3p5cm")
     fig.savefig(stem + ".pdf")
     fig.savefig(stem + ".png", dpi=600)
     plt.close(fig)
@@ -220,20 +278,36 @@ def main():
              "correction": ("subject-wise sign-flip max-t over the nine "
                             "conditions, one family per (mask, model); "
                             "10000 permutations, seed 0"),
+             "estimates": {
+                 "t": "one-sample group t across the 33 held-out subject means",
+                 "effect": ("across-subject mean of the held-out readout +- "
+                            f"SEM, scaled by {EFFECT_SCALE:g} for the tick "
+                            "labels; mean/sem == t, so the two versions carry "
+                            "the same p_FWE")},
              "conditions": [e[0] for e in EPOCHS], "panels": {}}
     for panel in PANELS:
-        stem, traces = draw_panel(panel, mid)
+        for estimate in ESTIMATES:
+            stem, traces = draw_panel(panel, mid, estimate)
+            print("wrote", os.path.basename(stem) + ".pdf")
+        # Both estimates read the same block, so the recorded numbers are the
+        # panel's, not one drawing's; `files` lists which version shows what.
         stats["panels"][panel["name"]] = {
-            "file": stem + ".pdf",
-            "betas": "demeaned" if panel["svc"] is SVC_DEMEAN else "raw",
+            "files": {e: os.path.join(
+                          OUT, "instr_dir_unord_" + panel["name"]
+                          + ("" if e == "t" else "_effect") + "_3p5cm.pdf")
+                      for e in ESTIMATES},
+            "betas": ("demeaned"
+                      if panel["svc"] in (SVC_DEMEAN, SVC_DEMEAN_UNI)
+                      else "raw"),
             "traces": {f"{mask}|{model}": {
                           "mask": mask, "model": model,
-                          "t": traces[(mask, model)][0].round(4).tolist(),
-                          "p_FWE": traces[(mask, model)][1].round(4).tolist(),
-                          "t_crit_FWE05": round(traces[(mask, model)][2], 4),
-                          "source_file": traces[(mask, model)][3]}
+                          "mean": traces[(mask, model)]["mean"].round(6).tolist(),
+                          "sem": traces[(mask, model)]["sem"].round(6).tolist(),
+                          "t": traces[(mask, model)]["t"].round(4).tolist(),
+                          "p_FWE": traces[(mask, model)]["p_FWE"].round(4).tolist(),
+                          "t_crit_FWE05": round(traces[(mask, model)]["t_crit"], 4),
+                          "source_file": traces[(mask, model)]["path"]}
                        for mask, model, _c, _l in panel["traces"]}}
-        print("wrote", os.path.basename(stem) + ".pdf")
     with open(os.path.join(OUT, "figure_stats.json"), "w") as handle:
         json.dump(stats, handle, indent=2)
 
