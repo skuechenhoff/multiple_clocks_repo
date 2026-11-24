@@ -14,6 +14,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from mc.analyse.roi_labels import read_per_cell_table
 from matplotlib.colors import LinearSegmentedColormap, Normalize, to_hex
 
 import harmonic_maps_brain_overlay as overlay
@@ -22,7 +24,7 @@ import harmonic_maps_brain_overlay as overlay
 CELL_CORRELATION_TABLE = Path(
     '/Users/xpsy1114/Documents/projects/multiple_clocks/data'
     '/ephys_humans/derivatives/group/per_lag_encoding'
-    '/2026-08-04_07-25-15_reload_from_2026-06-30_18-21-57_relabelled'
+    '/2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled'
     '/per_cell_ALL_ROIs.csv'
 )
 LAG_ANGLES_DEG = np.arange(0.0, 360.0, 30.0)
@@ -31,7 +33,7 @@ CORRELATION_KIND = 'noctrl'
 
 
 def mean_cell_argmax_angle():
-    table = pd.read_csv(CELL_CORRELATION_TABLE)
+    table = read_per_cell_table(CELL_CORRELATION_TABLE)
     cells = table.loc[table['roi'].eq(CELL_ROI)].copy()
     correlation_columns = [
         f'r_lag{int(angle):03d}_{CORRELATION_KIND}'

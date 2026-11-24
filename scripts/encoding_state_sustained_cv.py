@@ -150,6 +150,8 @@ ROI_TABLE_PATH = os.path.join(DATA_DIR, "neurons_with_ROI_labels.csv")
 # supersedes (same cells, older ROI labels) was
 #   RELOAD_OLD_RESULTS = '2026-08-17_08-41-10'
 RELOAD_OLD_RESULTS = '2026-09-24_18-35-23'
+if os.environ.get('ENC_RELOAD', '').lower() == 'none':
+    RELOAD_OLD_RESULTS = None
 
 # Reload-time ROI relabelling. Point at the fresh neurons ROI table (with
 # an `alt_final_roi` column) to overwrite the per-cell `roi` column on
@@ -192,6 +194,36 @@ PHASE_REF = 2
 # across cells, so Monte-Carlo error (~.007 at p=.05 with 1,000 draws)
 # flips borderline cells and moves the ROI fractions. Runtime was 93 s
 # at 1,000, so this stays cheap.
+# Elapsed-time controls (see CHANGELOG 2026-10-01).
+#   DRIFT_RESIDUALISE  removes the PER-LOOP drift from each trial's 360-bin
+#                     trace before averaging, exactly as the RSA does: the
+#                     least-squares linear trend is subtracted and the trial
+#                     mean preserved. This is the drift that can masquerade as
+#                     a position code, since state A simply is the first
+#                     quarter of the loop.
+#   RESIDUALISE_REPEATS  loads the repeat-residualised traces instead of the
+#                     raw ones (scripts/residualise_data_by_repeat.py), which
+#                     removes the ACROSS-TASK drift. This cannot be a GLM
+#                     regressor, because build_y_per_config averages across
+#                     repeats before fitting, so no trial dimension survives
+#                     into the design.
+# Both are overridable from the environment so the control runs can be
+# chained without editing this file: ENC_DRIFT_REGRESSOR=1,
+# ENC_RESID_REPEATS=1, ENC_RELOAD=none.
+DRIFT_RESIDUALISE = os.environ.get('ENC_DRIFT_RESID', 'none')
+if str(DRIFT_RESIDUALISE).lower() in ('none', ''):
+    DRIFT_RESIDUALISE = None
+RESIDUALISE_REPEATS = os.environ.get('ENC_RESID_REPEATS', '0') == '1'
+# Within-state goal-progress residualisation, the same operation the RSA
+# applies. Exploratory here: the encoding model exists to SEPARATE the
+# phase-invariant from the phase-modulated component, so removing the
+# phase main effect from the data removes part of what it measures. Run
+# it to see how much of the phase-modulated component is the main effect
+# rather than genuine state x phase structure.
+PHASE_RESIDUALISE = os.environ.get('ENC_PHASE_RESID', 'none')
+if str(PHASE_RESIDUALISE).lower() in ('none', ''):
+    PHASE_RESIDUALISE = None
+
 N_PERMUTATIONS = 10000
 N_JOBS = -1
 SIG_ALPHA = 0.05
@@ -375,6 +407,34 @@ def _state_dict(arr):
 # ---------------------------------------------------------------------
 # Trace per (cell, config)
 # ---------------------------------------------------------------------
+def drift_residualise_traces(neurons):
+    """Subtract the per-trial linear trend across a loop's 360 bins.
+
+    Same operation the RSA applies (DRIFT_RESIDUALISE there), so the two
+    levels of analysis are controlled identically. Removes exactly one
+    dimension -- the monotone ramp through the loop -- and leaves a peaked
+    tuning profile almost untouched. The trial mean is preserved.
+    """
+    out = {}
+    for n_lab, n_df in neurons.items():
+        arr = n_df.to_numpy(dtype=float)
+        t = np.arange(arr.shape[1], dtype=float)
+        tc = t - t.mean()
+        clean = arr.copy()
+        for i in range(arr.shape[0]):
+            y = arr[i]
+            ok = np.isfinite(y)
+            if ok.sum() < 3:
+                continue
+            denom = float((tc[ok] ** 2).sum())
+            if denom <= 0:
+                continue
+            slope = float((tc[ok] * (y[ok] - y[ok].mean())).sum() / denom)
+            clean[i, ok] = y[ok] - slope * tc[ok]
+        out[n_lab] = pd.DataFrame(clean, index=n_df.index, columns=n_df.columns)
+    return out
+
+
 def build_y_per_config(beh, neurons, configs):
     config_labels, per_cfg_y = [], {n_lab: [] for n_lab in neurons}
     for c in configs:
@@ -807,6 +867,46 @@ def roi_omnibus_and_ec_tests(results, sig_col):
     return out
 
 
+RAMP_CHANCE = 1.0 / 3.0   # a ramp is 1 of 3 non-constant dimensions over 4 states
+
+
+def add_ramp_fraction(df):
+    """Share of each cell's across-state tuning explained by a monotone ramp.
+
+    Elapsed-time control. A position code that is really a drift through the
+    loop produces beta_A < beta_B < beta_C < beta_D (or the reverse), i.e. its
+    across-state tuning is monotone. A genuinely positional code has one state
+    elevated and is not. For each cell I demean its four state coefficients,
+    project onto the normalised linear contrast [-1.5, -0.5, 0.5, 1.5], and
+    take the squared projection as a share of the total across-state variance.
+
+    Chance is 1/3, NOT zero: over four states the ramp is one of three
+    non-constant dimensions, so a cell with arbitrary tuning puts a third of
+    its variance there on average. Tests are therefore against 1/3.
+
+    Computed from `mean_beta_state_json` so it also works on reloaded runs.
+    """
+    if 'mean_beta_state_json' not in df.columns:
+        return df
+    L = np.array([-1.5, -0.5, 0.5, 1.5]); L = L / np.linalg.norm(L)
+    out = []
+    for js in df['mean_beta_state_json']:
+        try:
+            d = json.loads(js)
+            b = np.array([d[k] if d[k] is not None else np.nan for k in STATES],
+                         dtype=float)
+        except Exception:
+            out.append(np.nan); continue
+        if not np.isfinite(b).all():
+            out.append(np.nan); continue
+        bc = b - b.mean()
+        den = float((bc ** 2).sum())
+        out.append(float((bc @ L) ** 2 / den) if den > 0 else np.nan)
+    df = df.copy()
+    df['ramp_fraction'] = out
+    return df
+
+
 def balance_roi_omnibus_perm(results, n_perm=10000, seed=42, col='balance'):
     """Permutation omnibus: does `balance` differ across ROIs?
 
@@ -885,6 +985,19 @@ def make_roi_summary(df):
             "n_phasic_only": n_phasic_only,
             "frac_phasic_only": n_phasic_only / n,
             "binom_p_phasic_only": float(_binom_vs_alpha(n_phasic_only, n)),
+            # ELAPSED-TIME CONTROL: is the across-state tuning a ramp?
+            "mean_ramp_fraction": (float(g["ramp_fraction"].mean(skipna=True))
+                                    if "ramp_fraction" in g else np.nan),
+            "t_ramp_vs_chance": (
+                float(stats.ttest_1samp(
+                    g["ramp_fraction"].dropna(), RAMP_CHANCE)[0])
+                if "ramp_fraction" in g and g["ramp_fraction"].notna().sum() > 3
+                else np.nan),
+            "p_ramp_vs_chance": (
+                float(stats.ttest_1samp(
+                    g["ramp_fraction"].dropna(), RAMP_CHANCE)[1])
+                if "ramp_fraction" in g and g["ramp_fraction"].notna().sum() > 3
+                else np.nan),
             # BALANCE (phase-invariant minus phase-modulated generalisation)
             "mean_balance": float(g["balance"].mean(skipna=True))
                 if "balance" in g else np.nan,
@@ -915,6 +1028,8 @@ def make_roi_summary(df):
     out = out.sort_values("__o").drop(columns="__o").reset_index(drop=True)
     # Population shift tests (Wilcoxon perm-p vs 0.5, BH-FDR across ROIs)
     out = add_population_shift_tests(out, df)
+    if 'p_ramp_vs_chance' in out.columns:
+        out['q_ramp_vs_chance'] = bh_fdr(out['p_ramp_vs_chance'].to_numpy(float))
     return out
 
 
@@ -1749,10 +1864,10 @@ def fig15_single_cell_summary(results, roi_summary, save_path, omnibus=None):
     x = np.arange(len(rois), dtype=float)
     colours = [ROI_COLOURS.get(r, '#888888') for r in rois]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18.0 * CM, 4.0 * CM),
-                             gridspec_kw={'width_ratios': [1.35, 1.0, 1.0],
-                                          'wspace': 0.60})
-    ax_a, ax_b, ax_c = axes
+    fig, axes = plt.subplots(1, 4, figsize=(22.0 * CM, 4.0 * CM),
+                             gridspec_kw={'width_ratios': [1.35, 1.0, 1.0, 1.0],
+                                          'wspace': 0.75})
+    ax_a, ax_b, ax_c, ax_d = axes
 
     # ---- a: components --------------------------------------------------
     # Significance is carried by LINE WEIGHT and OPACITY rather than by stars:
@@ -1841,9 +1956,31 @@ def fig15_single_cell_summary(results, roi_summary, save_path, omnibus=None):
     ax_c.set_xlim(-0.9, len(rois) - 0.4)
     ax_c.text(-0.84, 0.056, 'chance', fontsize=FONT_SMALL - 2, color='0.45',
               ha='left', va='bottom')
-    ax_c.set_ylabel('fraction sustained (95% CI)', labelpad=2)
+    ax_c.set_ylabel('fraction sustained', labelpad=2)
     ax_c.set_title('c   Sustained cells', loc='left', fontweight='bold')
     ax_c.set_ylim(0, None)
+
+    # ---- d: elapsed-time control -----------------------------------------
+    for i, roi in enumerate(rois):
+        v = (results.loc[results['roi'] == roi, 'ramp_fraction'].dropna().to_numpy()
+             if 'ramp_fraction' in results.columns else np.array([]))
+        if v.size < 4:
+            continue
+        m = float(v.mean()); se = float(v.std(ddof=1) / np.sqrt(v.size))
+        q = (float(rs.iloc[i]['q_ramp_vs_chance'])
+             if 'q_ramp_vs_chance' in rs.columns else np.nan)
+        sig = np.isfinite(q) and q < SIG_ALPHA
+        ax_d.plot([x[i], x[i]], [m - 1.96 * se, m + 1.96 * se],
+                  color='0.05' if sig else '0.55', lw=2.3 if sig else 1.1,
+                  zorder=3, alpha=1.0 if sig else 0.45, solid_capstyle='round')
+        ax_d.scatter([x[i]], [m], s=80, zorder=4, alpha=1.0 if sig else 0.45,
+                     facecolor=colours[i], edgecolor='0.05' if sig else '0.55',
+                     linewidth=1.3 if sig else 0.9)
+    ax_d.axhline(RAMP_CHANCE, ls='--', lw=0.9, color='0.55', zorder=1)
+    ax_d.text(-0.4, RAMP_CHANCE + 0.004, 'chance', fontsize=FONT_SMALL - 2,
+              color='0.45', ha='left', va='bottom')
+    ax_d.set_ylabel('ramp share of tuning', labelpad=2)
+    ax_d.set_title('d   Elapsed-time control', loc='left', fontweight='bold')
 
     for ax in axes:
         ax.set_xticks(x)
@@ -1872,7 +2009,12 @@ def fig15_single_cell_summary(results, roi_summary, save_path, omnibus=None):
         "cells and recomputes Kruskal-Wallis H. (c) Fraction of cells whose "
         "minimum-across-phases preferred-state contrast exceeds its own "
         "permutation null, with Wilson 95% CIs against the 5% chance rate. "
-        "ROIs ordered by balance throughout. * p<.05, ** p<.01, *** p<.001."))
+        "(d) Elapsed-time control: the share of a cell's across-state tuning "
+        "explained by a monotone ramp from the first to the fourth position. "
+        "A position code that is really a drift through the loop is monotone; "
+        "a genuinely positional one is not. Chance is 1/3, since the ramp is "
+        "one of three non-constant dimensions over four states, and the test "
+        "is against that value. ROIs ordered by balance throughout."))
     _save(fig, save_path)
 
 
@@ -2476,7 +2618,7 @@ def load_cell_data(neuron_id):
     if sub is None: return None
     sub_str = f"{sub:02d}"
     try:
-        data = hh.load_norm_data(DATA_DIR, [sub_str], res_data=False)
+        data = hh.load_norm_data(DATA_DIR, [sub_str], res_data=RESIDUALISE_REPEATS)
     except Exception as exc:
         print(f"  load failed for sub-{sub_str}: {exc}"); return None
     key = f"sub-{sub_str}"
@@ -2602,7 +2744,7 @@ def _build_all_figures(results, roi_summary, diag_dir, n_permutations,
     try:
         # Use sub-01 (or first sub in results) to build a representative design.
         first_sub = f"{int(results.iloc[0]['subject_int']):02d}"
-        data = hh.load_norm_data(DATA_DIR, [first_sub], res_data=False)
+        data = hh.load_norm_data(DATA_DIR, [first_sub], res_data=RESIDUALISE_REPEATS)
         sub_dict = data[f"sub-{first_sub}"]
         beh = add_config_str(sub_dict["beh"])
         configs = sorted(beh["config_str"].dropna().unique().tolist())
@@ -2632,7 +2774,7 @@ def _build_all_figures(results, roi_summary, diag_dir, n_permutations,
         for label, ex_row in examples:
             sub_str = f"{int(ex_row['subject_int']):02d}"
             try:
-                data = hh.load_norm_data(DATA_DIR, [sub_str], res_data=False)
+                data = hh.load_norm_data(DATA_DIR, [sub_str], res_data=RESIDUALISE_REPEATS)
                 sub_dict = data[f"sub-{sub_str}"]
                 beh = add_config_str(sub_dict["beh"])
                 configs = sorted(beh["config_str"].dropna().unique().tolist())
@@ -2857,6 +2999,7 @@ def main():
 
         # Re-derive the ROI summary so newly-added columns (e.g.
         # binom_p_phasic_only) appear even with old CSVs.
+        results = add_ramp_fraction(results)
         roi_summary = make_roi_summary(results)
         roi_summary.to_csv(run_dir / "state_sustained_cv_roi_summary.csv",
                             index=False)
@@ -2889,7 +3032,7 @@ def main():
         "data_dir": DATA_DIR, "out_dir": out_dir, "subjects": subjects,
         "target_rois": target_rois, "roi_label_column": ROI_LABEL_COLUMN,
         "roi_table_path": ROI_TABLE_PATH,
-        "input_traces": ("cell-*-360_bins_passed.csv (res_data=False): binned "
+        "input_traces": ("cell-*-360_bins_passed.csv (res_data=RESIDUALISE_REPEATS): binned "
                           "firing rate in Hz, 90 time-warped bins per state, "
                           "averaged over correct repeats within configuration. "
                           "NOT residualised — neither for phase nor for repeat number."),
@@ -2900,6 +3043,9 @@ def main():
                       "interaction block, so a separate column would be rank-deficient",
                       "per-config intercepts, train configs only (one dropped)"],
         "cross_validation": "leave-one-configuration-out",
+        "drift_residualise": DRIFT_RESIDUALISE,
+        "phase_residualise": PHASE_RESIDUALISE,
+        "residualise_repeats": RESIDUALISE_REPEATS,
         "tests": {
             "b_sustained":  ("held-out min_phase_contrast vs its own permutation null "
                               "(circular shifts); NOT tested against zero — the minimum "
@@ -2931,7 +3077,7 @@ def main():
     for sub_i, sub_str in enumerate(subjects, start=1):
         print(f"\n========== sub-{sub_str} ({sub_i}/{len(subjects)}) ==========")
         try:
-            data = hh.load_norm_data(DATA_DIR, [sub_str], res_data=False)
+            data = hh.load_norm_data(DATA_DIR, [sub_str], res_data=RESIDUALISE_REPEATS)
         except Exception as exc:
             print(f"  load failed: {exc}"); continue
         key = f"sub-{sub_str}"
@@ -2959,6 +3105,15 @@ def main():
             print("  no usable neurons; skipping"); continue
 
         neurons_used = {n: neurons_raw[n].reset_index(drop=True) for n in keep_labels}
+        if PHASE_RESIDUALISE:
+            from mc.analyse.future_spatial_peaks import phase_residualise as _pres
+            neurons_used = {
+                n: pd.DataFrame(_pres(df.to_numpy(dtype=float),
+                                      basis=PHASE_RESIDUALISE),
+                                index=df.index, columns=df.columns)
+                for n, df in neurons_used.items()}
+        if DRIFT_RESIDUALISE:
+            neurons_used = drift_residualise_traces(neurons_used)
         Y_dict, config_labels, state_block, phase_block = build_y_per_config(
             beh, neurons_used, configs
         )
@@ -3012,6 +3167,7 @@ def main():
 
     results = pd.DataFrame(all_rows)
     results = add_fdr_columns(results)
+    results = add_ramp_fraction(results)
     results = results.sort_values(["subject_int", "cell_idx"]).reset_index(drop=True)
     results_csv = os.path.join(out_dir, "state_sustained_cv_results.csv")
     results.to_csv(results_csv, index=False)

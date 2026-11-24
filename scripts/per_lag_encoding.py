@@ -196,8 +196,9 @@ OUT_BASE = os.path.join(DATA_DIR, 'group', 'per_lag_encoding')
 # Reload mode: point at a previous run directory to skip the heavy
 # CV + permutation compute and just re-run stats + plots from the
 # cached per-cell CSVs. Outputs land in a fresh timestamped dir.
-RELOAD_FROM     = os.path.join(OUT_BASE, '2026-06-30_18-21-57')
-# RELOAD_FROM   = None
+# The 2026-06-30 base run (old ROI labels, mode estimator) was archived on
+# 2026-11-23; with MAP_ESTIMATOR = 'per_repeat' the maps must be recomputed.
+RELOAD_FROM     = None
 
 # Optional. Path to a fresh neurons_with_final_roi_labels.csv. Only used
 # when RELOAD_FROM is set; on reload the per-cell CSV's `roi` column is
@@ -238,6 +239,15 @@ ROIS_TO_RUN = ['mPFC', 'mOFC', 'PCC', 'PHC',
 
 PHASE_RESIDUALISE      = 'cosine'
 TRIALS                 = 'all_minus_explore'
+
+# How a configuration's rate map is built (SK, 2026-11-23):
+#   'per_repeat' -- every repeat with its OWN visited locations; a bin counts
+#                   for the location visited `lag` bins later in that repeat.
+#                   Dwell = bins per repeat, so MIN_DWELL_BINS keeps its scale.
+#   'mode'       -- average the repeats, then one location per bin (the most
+#                   frequent one). The 2026-06-30 run (published until then).
+# 'per_repeat' supports the noctrl variants only (the ctrl columns are NaN).
+MAP_ESTIMATOR          = 'per_repeat'
 
 # Which cells enter the analysis. Same vocabulary as
 # `spatial_peaks_simple.CELL_SET`, resolved by `cs.load_cells`:
@@ -398,6 +408,12 @@ def _mode_per_bin_int(arr2d):
 
 
 def _build_per_cfg_sequences(arr_clean, idx_cfg, locs, btns_int, n_cfg):
+    if MAP_ESTIMATOR == 'per_repeat':
+        # one (n_repeats, 360) block per configuration, nothing averaged
+        Y_cfg   = [arr_clean[idx_cfg == c] for c in range(n_cfg)]
+        loc_cfg = [locs[idx_cfg == c] for c in range(n_cfg)]
+        btn_cfg = [btns_int[idx_cfg == c] for c in range(n_cfg)]
+        return Y_cfg, loc_cfg, btn_cfg
     Y_cfg   = np.zeros((n_cfg, N_BINS))
     loc_cfg = np.zeros((n_cfg, N_BINS), dtype=int)
     btn_cfg = np.zeros((n_cfg, N_BINS), dtype=int)
@@ -414,14 +430,18 @@ def _build_per_cfg_sequences(arr_clean, idx_cfg, locs, btns_int, n_cfg):
 # ── Rate-map helpers ──────────────────────────────────────────────────
 def _lag_shifted_rate_map(y_360, loc_360, lag_bins):
     """Returns (9-d rate, 9-d dwell). rate[L-1] = mean firing at bins
-    where the location AT LAG +lag_bins is L."""
-    loc_at_lag = np.roll(loc_360, -lag_bins)
+    where the location AT LAG +lag_bins is L.
+
+    y_360, loc_360: one sequence (360,) or one row per repeat (n_rep, 360);
+    each repeat is shifted within itself. Dwell = such bins per repeat."""
+    loc_at_lag = np.roll(loc_360, -lag_bins, axis=-1)
+    n_rep = 1 if np.ndim(y_360) == 1 else len(y_360)
     rate = np.full(N_LOC, np.nan)
-    dwell = np.zeros(N_LOC, dtype=int)
+    dwell = np.zeros(N_LOC)
     for L in range(1, N_LOC + 1):
         m = (loc_at_lag == L) & np.isfinite(y_360)
         d = int(m.sum())
-        dwell[L - 1] = d
+        dwell[L - 1] = d / n_rep
         if d > 0:
             rate[L - 1] = float(np.nanmean(y_360[m]))
     return rate, dwell
@@ -479,7 +499,7 @@ def _ratemap_cv_one_setup(rate_per_cfg, dwell_per_cfg,
             for p in range(n_perms):
                 # Avoid trivial near-zero shifts (would re-create the obs)
                 shift = int(rng.integers(N_BINS // 12, N_BINS - N_BINS // 12))
-                loc_sh = np.roll(loc_cfg[held], shift)
+                loc_sh = np.roll(loc_cfg[held], shift, axis=-1)
                 obs_p, dwell_p = _stacked_rate_map(y_cfg_used[held], loc_sh,
                                                     lags_deg)
                 w_p = (np.minimum(total_d, dwell_p)
@@ -608,9 +628,11 @@ def _fit_variant(Y_cfg, loc_cfg, btn_cfg, lags_deg,
     include_loc_now_in_ctrl) PER FOLD — the residualisation is refit on
     each training set so the held-out config's residual is leakage-free.
     """
-    n_cfg = Y_cfg.shape[0]
+    n_cfg = len(Y_cfg)
     if n_cfg < 2:
         return np.nan, np.nan
+    if with_controls and MAP_ESTIMATOR == 'per_repeat':
+        return np.nan, np.nan          # ctrl is defined on averaged sequences only
     # We need to refit controls per fold for leakage-free residuals.
     # For efficiency, when with_controls=False the rate maps don't change
     # across folds, so build them ONCE and call the CV inline.
@@ -672,7 +694,7 @@ def _fit_variant(Y_cfg, loc_cfg, btn_cfg, lags_deg,
         if n_perms > 0:
             for p in range(n_perms):
                 shift = int(rng.integers(N_BINS // 12, N_BINS - N_BINS // 12))
-                loc_sh = np.roll(loc_cfg[held], shift)
+                loc_sh = np.roll(loc_cfg[held], shift, axis=-1)
                 obs_p, dwell_p = _stacked_rate_map(Y_resid[held], loc_sh,
                                                     lags_deg)
                 w_p = (np.minimum(total_d, dwell_p) if WEIGHTED_CORRELATION
@@ -2276,6 +2298,7 @@ def main():
         'cell_set':             CELL_SET,
         'phase_residualise':    PHASE_RESIDUALISE,
         'trials':               TRIALS,
+        'map_estimator':        MAP_ESTIMATOR,
         'lags_deg':             LAGS_DEG,
         'dsr_full_lags_deg':    DSR_FULL_LAGS_DEG,
         'dsr_inf_lags_deg':     DSR_INF_LAGS_DEG,

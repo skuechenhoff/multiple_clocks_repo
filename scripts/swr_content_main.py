@@ -4,7 +4,7 @@
 Location information in and around hippocampal ripples -- the reported result.
 
     python scripts/swr_content_main.py            # everything, in order
-    python scripts/swr_content_main.py --step=timecourse
+    python scripts/swr_content_main.py phase      # one step (fire subcommand)
 
 THE CLAIM THIS SCRIPT SUPPORTS, and nothing more: during ENCODING, hippocampal
 ripples carry the square the participant is standing on; once the sequence is

@@ -334,6 +334,7 @@ def fingerprint(
     n_conds_per_config: int = 12,
     n_bins_per_trial: int = 360,
     shuffle_mode: str = 'shift',
+    drift_residualise=None,   # str or None
 ):
     """Build the dict baked into the perm-RDM pickle.
 
@@ -344,6 +345,9 @@ def fingerprint(
     key from the fingerprint so pre-existing caches (which were built
     without the shuffle_mode field) still match. Any non-default mode is
     baked in explicitly, so caches from different modes never alias.
+    ``drift_residualise`` follows the same rule: omitted when None, so
+    caches predating it still match, and baked in whenever it is set, so a
+    drift-residualised run can never reuse a non-residualised null.
     """
     if shuffle_mode not in SHUFFLE_MODES:
         raise ValueError(
@@ -366,6 +370,8 @@ def fingerprint(
     }
     if shuffle_mode != 'shift':
         fp['shuffle_mode'] = shuffle_mode
+    if drift_residualise is not None:
+        fp['drift_residualise'] = str(drift_residualise)
     return fp
 
 

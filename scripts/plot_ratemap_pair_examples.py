@@ -77,6 +77,8 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+
+from mc.analyse.roi_labels import read_per_cell_table
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -96,7 +98,7 @@ from per_lag_encoding import (                                   # noqa: E402
 # ── Where the per-lag run lives ───────────────────────────────────────
 RUN_DIR = ('/Users/xpsy1114/Documents/projects/multiple_clocks/data/'
            'ephys_humans/derivatives/group/per_lag_encoding/'
-           '2026-08-04_07-25-15_reload_from_2026-06-30_18-21-57_relabelled-final')
+           '2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled')
 PER_CELL_CSV = os.path.join(RUN_DIR, 'per_cell_ALL_ROIs.csv')
 
 _STAMP = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -523,7 +525,7 @@ def plot_combined(examples, cells, cv_by_neuron, out_stem):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    per_cell = pd.read_csv(PER_CELL_CSV)
+    per_cell = read_per_cell_table(PER_CELL_CSV)
     per_cell['subject_id'] = per_cell['subject_id'].astype(str).str.zfill(2)
 
     render_candidates = '--candidates' in sys.argv

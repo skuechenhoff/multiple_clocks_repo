@@ -3,7 +3,7 @@
 """
 Location content in ripples, encode vs execute. NO offsets, NO time course.
 
-    python scripts/swr_content_main.py --step=phase
+    python scripts/swr_content_main.py phase
 
 THIS IS THE REPORTED ANALYSIS. It is deliberately self-contained: spikes
 are counted in the ripple window (and in its matched flanks, for the
@@ -37,7 +37,12 @@ SEED = 42
 N_PERM = 1000           # template-label permutations per session
 N_MATCH = 1000          # count-matched subsample draws
 ROI_SETS = {"HC_all": ["HC_anterior", "HC_mid"],
-            "HC_anterior": ["HC_anterior"], "HC_mid": ["HC_mid"]}
+            "HC_anterior": ["HC_anterior"], "HC_mid": ["HC_mid"],
+            # PFC: predicted NULL for current location -- these are the
+            # control half of the double dissociation, not a fishing trip.
+            # mPFC/mOFC cells encode the next planned location, not where
+            # the subject is standing (see the manuscript).
+            "mPFC": ["mPFC"], "mOFC": ["mOFC"]}
 PHASES = ("encode", "execute")
 MIN_RIPPLES = 20
 MIN_CELLS = 2
@@ -156,6 +161,12 @@ def main():
                 dz = zd["encode"] - zd["execute"]
                 rec.update(n_matched=int(nmin), d_z=float(np.nanmean(dz)),
                            d_z_sd_draws=float(np.nanstd(dz)))
+                # the per-phase LEVELS from the same matched draws. Without
+                # this a phase panel plots unmatched levels next to a matched
+                # contrast, and the levels understate the gap because z
+                # carries a sqrt(n) term and execute has ~2x the ripples.
+                for p_ in PHASES:
+                    rec[f"z_{p_}_matched"] = float(np.nanmean(zd[p_]))
             rows.append(rec)
         print(f"  s{s:02d}", flush=True)
 

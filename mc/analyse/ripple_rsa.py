@@ -76,6 +76,8 @@ import itertools
 
 import numpy as np
 import pandas as pd
+
+import mc.analyse.roi_labels as roi_labels
 from scipy import stats
 
 import mc.analyse.swr_units as swu
@@ -568,6 +570,7 @@ def cell_roi_table(sessions=None, data_root=None):
     """
     sessions = DSR_SESSIONS if sessions is None else sessions
     t = pd.read_csv(os.path.join(_derivatives(data_root), ROI_TABLE))
+    roi_labels.assert_final(t, roi_col=ROI_COLUMN)
     t = t[t.subject.isin(sessions)].copy()
     t = t.sort_values(["subject", "cell idx"]).reset_index(drop=True)
     return pd.DataFrame({

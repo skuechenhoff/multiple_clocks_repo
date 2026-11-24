@@ -43,7 +43,7 @@ SPATIAL_BASE = DATA_DIR / "group/spatial_peaks_simple"
 OUT_BASE = DATA_DIR / "group/manuscript_cell_results_core"
 RSA_SUBJECTS_JSON = DATA_DIR / "all_sessions_dsrRSA_grouping_summary.json"
 RSA_RUN = (DATA_DIR / "group/DSR_RSA_simple_ROI/"
-           "2026-07-30_15-58-51-fixed_cells-fixed_perms")
+           "2026-08-31_17-57-30")   # Fig 2d run, final labels
 
 CORE_ROIS = ("mPFC", "HC_anterior", "HC_mid")
 

@@ -43,6 +43,7 @@ import mc.analyse.ripple_rsa as rrsa
 import mc.analyse.swr_location as swl
 import mc.analyse.swr_content as swc
 from mc.analyse.swr_content import phase_labels as _labels
+from mc.analyse.swr_explore.goal_lag import goal_lag_locations
 
 SEED = 42
 N_PERM = 1000
@@ -51,7 +52,15 @@ N_MATCH_SCALAR = 1000   # draws for the reported fixed-window contrast
 SCALAR_WINDOWS = {"ripple": 0.0, "pm250ms": 0.25, "far": None}
 #   "far" is the complement |t| >= FAR_FIELD_S: the surround baseline
 ROI_SETS = {"HC_mid": ["HC_mid"], "HC_anterior": ["HC_anterior"],
-            "HC_all": ["HC_anterior", "HC_mid"]}
+            "HC_all": ["HC_anterior", "HC_mid"],
+            "mPFC": ["mPFC"], "mOFC": ["mOFC"]}
+# what the estimator is scored AGAINST at each offset:
+#   "current" -- the square underfoot (the reported HC analysis)
+#   "goal0"   -- the reward being sought now (the TRUE next reward)
+#   "next_uncover" -- the square the subject ACTUALLY uncovers next, right or
+#                     wrong. Separates INTENTION from the true goal: goal0 is
+#                     read from the task, next_uncover from the behaviour.
+TARGET = os.environ.get("SWR_TC_TARGET", "current")
 OFFSETS = np.round(np.arange(-0.50, 0.5001, 0.025), 4)
 PHASES = ("encode", "execute")
 MIN_RIPPLES = 20
@@ -59,6 +68,31 @@ MIN_CELLS = 2
 SMOOTH = 3              # offsets in the display-only moving average (75 ms)
 FAR_FIELD_S = 0.35      # |t| beyond this is the "surround" baseline
 N_CLUST = 10000         # sign-flip permutations for the cluster test
+
+
+def _next_uncover(steps_s, occ):
+    """Location of the NEXT uncover after each occupancy interval; -1 if none.
+
+    This is what the subject DOES, not what the task wants -- so comparing it
+    with `goal0` separates a prospective intention signal from a
+    representation of the true goal.
+    """
+    st = steps_s.sort_values("t_s").reset_index(drop=True)
+    t = st.t_s.to_numpy(float)
+    unc = np.flatnonzero(st.is_uncover.to_numpy(float) == 1)
+    if not len(unc):
+        return np.full(len(occ), -1, int)
+    tu, lu = t[unc], st["loc"].to_numpy(float)[unc]
+    gn_u = st.grid_num.to_numpy(float)[unc]
+    k = occ.step_idx.to_numpy()
+    gn_o = st.grid_num.to_numpy(float)[k]
+    j = np.searchsorted(tu, occ.start_s.to_numpy(float), side="left")
+    out = np.full(len(occ), -1, int)
+    ok = (j < len(tu))
+    out[ok] = lu[j[ok]].astype(int)
+    # never cross a configuration boundary
+    out[ok & (gn_u[np.clip(j, 0, len(tu) - 1)] != gn_o)] = -1
+    return out
 
 
 def _smooth(y, k=SMOOTH):
@@ -242,7 +276,13 @@ def main():
             continue
         t_rip, d_rip, k = t_rip[inside], d_rip[inside], k[inside]
         half = d_rip / 2.0
-        loc = occ["loc"].to_numpy()[k].astype(int)
+        if TARGET == "current":
+            loc = occ["loc"].to_numpy()[k].astype(int)
+        elif TARGET == "next_uncover":
+            loc = _next_uncover(steps[steps.session == s], occ)[k]
+        else:
+            g_ = int(TARGET.replace("goal", ""))
+            loc = goal_lag_locations(steps[steps.session == s], occ)[k, g_]
         grid = occ.cv_group.to_numpy()[k]
         ph = ph_i[k]
         grids = np.unique(occ.cv_group.to_numpy())
@@ -268,6 +308,7 @@ def main():
             ok_all = np.ones(len(t_rip), bool)
             for E in Es:
                 ok_all &= np.isfinite(E).all(axis=1)
+            ok_all &= (loc > 0)
             idx = {p_: np.flatnonzero(masks[p_] & ok_all) for p_ in PHASES}
             nmin = min(len(v) for v in idx.values())
             if nmin < MIN_RIPPLES:
@@ -280,7 +321,7 @@ def main():
 
             zm = {p_: np.full((N_MATCH, len(OFFSETS)), np.nan) for p_ in PHASES}
             zu = {p_: np.full(len(OFFSETS), np.nan) for p_ in PHASES}
-            li = loc - 1
+            li = np.clip(loc - 1, 0, 8)
             # fixed-window statistics, accumulated as the offsets stream past.
             # "ripple" is the ripple window itself (offset 0); "pm250ms" is the
             # per-ripple statistic AVERAGED over every offset within +-250 ms,
@@ -365,7 +406,7 @@ def main():
 
     R = pd.DataFrame(rows)
     d = os.path.join(rrsa._derivatives(), "group", "swr",
-                     f"timecourse_by_phase_{datetime.date.today()}")
+                     f"timecourse_by_phase_{TARGET}_{datetime.date.today()}")
     os.makedirs(d, exist_ok=True)
 
     # display-only smoothing, done here so the figure plots exactly what it gets
@@ -378,7 +419,7 @@ def main():
     summarise(d)
     summarise_scalar(d)
 
-    json.dump(dict(seed=SEED, n_perm=N_PERM, n_match=N_MATCH,
+    json.dump(dict(seed=SEED, n_perm=N_PERM, n_match=N_MATCH, target=TARGET,
                    n_cluster_perm=N_CLUST,
                    n_match_scalar=N_MATCH_SCALAR,
                    scalar_windows=SCALAR_WINDOWS,

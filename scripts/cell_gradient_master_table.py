@@ -46,6 +46,7 @@ locations.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +55,8 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
 import pandas as pd
+
+from mc.analyse.roi_labels import read_per_cell_table
 from nilearn.image import new_img_like, smooth_img
 
 
@@ -319,15 +322,17 @@ def refresh_coordinates(cells, roi_table=ROI_TABLE, verbose=True):
     return out
 
 
-def build_master():
-    src = pd.read_csv(CELL_TABLE)
+def build_master(cell_table=CELL_TABLE):
+    src = read_per_cell_table(cell_table)
     cells = src[src.roi == CELL_ROI].copy()
     cells = refresh_coordinates(cells)
     prof_cols = [f'r_lag{a:03d}_noctrl' for a in LAGS_DEG]
     R = cells[prof_cols].to_numpy(float)
     keep = np.isfinite(R).any(1)
     cells, R = cells[keep].reset_index(drop=True), R[keep]
-    R_ctrl = cells[[f'r_lag{a:03d}_ctrl' for a in LAGS_DEG]].to_numpy(float)
+    # per-repeat tables have no _ctrl variant (NaN here; Fig 3d never uses it)
+    R_ctrl = cells.reindex(
+        columns=[f'r_lag{a:03d}_ctrl' for a in LAGS_DEG]).to_numpy(float)
     coords = cells[['MNI_x', 'MNI_y', 'MNI_z']].to_numpy(float)
 
     out = cells[['neuron', 'subject_id', 'MNI_x', 'MNI_y', 'MNI_z']].copy()
@@ -517,11 +522,17 @@ def make_plots(master, group_tbl, out_dir):
 # Main
 # ---------------------------------------------------------------------
 def main():
+    p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    p.add_argument('--cell-table', type=Path, default=CELL_TABLE,
+                   help='per_cell_ALL_ROIs.csv from a per-lag run')
+    p.add_argument('--label', default='',
+                   help='appended to the output folder name')
+    args = p.parse_args()
     stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    out_dir = OUT_ROOT / stamp
+    out_dir = OUT_ROOT / (f'{stamp}_{args.label}' if args.label else stamp)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    master, R = build_master()
+    master, R = build_master(args.cell_table)
     master.to_csv(out_dir / 'per_cell_master.csv', index=False)
     print(f'Wrote per_cell_master.csv  ({len(master)} cells)')
 
@@ -533,7 +544,7 @@ def main():
     print('Wrote diagnostic figures A-D')
 
     config = dict(
-        cell_table=str(CELL_TABLE), harmonic_root=str(HARMONIC_ROOT),
+        cell_table=str(args.cell_table), harmonic_root=str(HARMONIC_ROOT),
         gradient_mask=str(GRADIENT_MASK), cell_roi=CELL_ROI,
         lags_deg=LAGS_DEG.tolist(), fmri_datasets=list(FMRI_DATASETS),
         fmri_symmetrise=FMRI_SYMMETRISE, fmri_smooth_fwhm_mm=FMRI_SMOOTH_FWHM_MM,

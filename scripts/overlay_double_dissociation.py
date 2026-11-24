@@ -26,6 +26,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from mc.analyse.roi_labels import read_per_cell_table
+
 sys.path.insert(0, "/Users/xpsy1114/Documents/projects/multiple_clocks/multiple_clocks_repo")
 from mc.plotting.cell_results import (
     SHOWGIRL2_DISCRETE,
@@ -161,10 +163,13 @@ DEFAULT_PER_CELL_CSV = ("/Users/xpsy1114/Documents/projects/multiple_clocks/"
                         "2026-08-28_10-23-56_phase_resid_paired_fixedlag/"
                         "per_cell.csv")
 # >>> RERUN-CHECK: hardcoded upstream run dir -- update after re-running per_lag_encoding.py
+# 2026-11-23: per-repeat rate maps (SK's choice), final ROI labels, correct
+# (execute) loops = scripts/per_lag_encoding_loopsets.py. The previous source
+# (mode estimator) was per_lag_encoding/2026-08-28_10-18-21_reload_from_
+# 2026-06-30_18-21-57_relabelled/per_cell_ALL_ROIs.csv.
 DEFAULT_PER_LAG_CSV = ("/Users/xpsy1114/Documents/projects/multiple_clocks/"
                        "data/ephys_humans/derivatives/group/"
-                       "per_lag_encoding/"
-                       "2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled/"
+                       "per_lag_loopsets_2026-11-23/per_repeat/execute/"
                        "per_cell_ALL_ROIs.csv")
 
 
@@ -194,7 +199,8 @@ def _load_curve_data(per_cell_csv, source="spatial_peaks", ctrl_mode="noctrl",
     table formats, so the source-specific parsing is kept here rather than
     making callers know about either format.
     """
-    df = pd.read_csv(per_cell_csv)
+    df = (read_per_cell_table(per_cell_csv) if source == "per_lag"
+          else pd.read_csv(per_cell_csv))
     if "roi" not in df:
         raise ValueError(f"{per_cell_csv} has no 'roi' column")
     df["roi"] = df["roi"].map(lambda roi: ROI_NAME_MAP.get(roi, roi))
@@ -626,6 +632,88 @@ def _md_table(table, columns, floatfmt=4):
     return lines
 
 
+# Lag colour bar under the x axis: the circular wheel of the fMRI angle maps
+# (same anchors as harmonic_maps_brain_overlay.CIRCULAR_ANCHORS_HEX):
+# 0 deg yellow, 90 red, 180 blue, 270 green.
+LAG_WHEEL_HEX = ['#FCE300', '#E53935', '#1E88E5', '#43A047', '#FCE300']
+PANEL_LABELS = {"HC_mid": "mid HC", "mPFC": "mPFC",
+                "HC_anterior": "anterior HC"}
+
+
+def publication_panel(records, target, out_dir, rois=("HC_mid", "mPFC"),
+                      weighting="subject"):
+    """Fig 3c: mean CV r +- SEM per lag (session-balanced by default).
+
+    Stars = each ROI's pre-defined window test (window mean minus the other
+    lags, Fisher z, one-sided; `target_vs_other_lags`), one per ROI, drawn
+    above the window lag with the highest mean (repeated at the wrapped 0 deg
+    when that lag is 0 deg) -- the contrast the Fig 3c star refers to. The
+    panel only draws `records` and `target`.
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+    x = np.asarray(LAGS_DEG_BASE + [360])
+    fig = plt.figure(figsize=(7.5 * CM, 5.5 * CM))
+    ax = fig.add_axes([0.0, 0.10, 1.0, 0.90])
+    cax = fig.add_axes([0.0, 0.055, 1.0, 0.04])
+    top = {}
+    for roi in rois:
+        C = _analysis_units(records[roi], weighting=weighting, fisher=False)
+        m = np.nanmean(C, 0)
+        se = np.nanstd(C, 0, ddof=1) / np.sqrt(np.isfinite(C).sum(0))
+        m, se = _wrap_lag(m), _wrap_lag(se)
+        col = _roi_colour(roi)
+        ax.fill_between(x, m - se, m + se, color=col, alpha=0.2, lw=0)
+        ax.plot(x, m, "-o", color=col, lw=1.6, ms=3.5,
+                label=f"{PANEL_LABELS.get(roi, roi)} "
+                      f"({np.unique(records[roi]['subjects']).size} sessions, "
+                      f"{C.shape[0] if weighting == 'cell' else records[roi]['curves'].shape[0]} cells)")
+        top[roi] = (m, se)
+    ax.axhline(0, color="black", lw=0.6, ls="--")
+    lo, hi = ax.get_ylim()
+    span = hi - lo
+    for roi in rois:
+        row = target[(target.weighting == weighting) & (target.roi == roi)
+                     & (target.test == "target_vs_other_lags")]
+        if row.empty:
+            continue
+        star = _stars(float(row.p_one_sided.iloc[0]))
+        if star == "n.s.":
+            continue
+        m, se = top[roi]
+        lags = [int(v) for v in row.target_lags_deg.iloc[0].split("+")]
+        best = max((LAGS_DEG_BASE.index(l) for l in lags), key=lambda i: m[i])
+        idx = [best] + ([len(LAGS_DEG_BASE)] if best == 0 else [])
+        for i in idx:
+            ax.text(x[i], m[i] + se[i] + 0.03 * span, star, ha="center",
+                    va="bottom", fontsize=FONT_BIG, color=_roi_colour(roi))
+    ax.set_ylim(lo, hi + 0.12 * span)
+    ax.set_xlim(-10, 370)
+    ax.set_xticks([])
+    ax.set_ylabel("CV r (mean ± SEM)", fontsize=FONT_AXIS)
+    ax.tick_params(labelsize=FONT_TICK, length=2, pad=1)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    cmap = LinearSegmentedColormap.from_list("lag_wheel", LAG_WHEEL_HEX)
+    cax.imshow(np.linspace(0, 1, 361)[None, :], aspect="auto", cmap=cmap,
+               extent=(0, 360, 0, 1))
+    cax.set_xlim(ax.get_xlim())
+    cax.set_yticks([])
+    for sp in cax.spines.values():
+        sp.set_visible(False)
+    cax.set_xticks([0, 60, 120, 180, 240, 300, 360])
+    cax.set_xticklabels(["0°", "60°", "120°", "180°", "240°", "300°", "0°"],
+                        fontsize=FONT_TICK)
+    cax.tick_params(length=2, pad=1)
+    cax.set_xlabel("Lag into the future", fontsize=FONT_AXIS, labelpad=1)
+    ax.legend(loc="upper left", bbox_to_anchor=(0.0, -0.22), ncol=1,
+              frameon=False, fontsize=FONT_TICK, handlelength=1.5)
+    suffix = "" if weighting == "subject" else "_cell_weighted"
+    for ext in ("pdf", "png", "svg"):
+        fig.savefig(out_dir / f"fig3c_lag_profile{suffix}.{ext}", dpi=DPI,
+                    bbox_inches="tight")
+    plt.close(fig)
+
+
 def make_overlay(per_cell_csv, out_dir, rois=ROIS_TO_OVERLAY,
                  source="spatial_peaks", ctrl_mode="noctrl",
                  weighting="both"):
@@ -705,6 +793,8 @@ def make_overlay(per_cell_csv, out_dir, rois=ROIS_TO_OVERLAY,
 
     target = _target_tests(records, STATS_ROIS, weightings)
     target.to_csv(out_dir / "overlay_target_window_tests.csv", index=False)
+    for w in weightings:
+        publication_panel(records, target, out_dir, weighting=w)
 
     # Two ways to report a single lag rather than the two-lag window.
     prespecified = _prespecified_lag_tests(records, STATS_ROIS, weightings)

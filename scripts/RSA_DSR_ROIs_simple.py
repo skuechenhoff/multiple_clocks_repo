@@ -250,6 +250,16 @@ states           = ['A', 'B', 'C', 'D']
 RESOLUTIONx = 1
 PLOT_FIGS = False
 N_PERMUTATIONS = 1000 # 1000 # 500 # None or 300 — None skips the perm loop (parametric p only)
+# RSA_NO_PERM=1 skips the permutation loop entirely. Used when the run is
+# only needed for its per-ROI stacked data matrices (see RSA_DUMP_MAT).
+if os.environ.get('RSA_NO_PERM', '0') == '1':
+    N_PERMUTATIONS = None
+
+# RSA_DUMP_MAT=<dir> writes each ROI's stacked (neuron x condition) matrix
+# to <dir>/mat_<roi>.npz. Because the z-scoring below is per neuron, these
+# blocks can be concatenated and re-partitioned to build an ROI-label null
+# for between-ROI contrasts without re-running the pipeline.
+DUMP_MAT_DIR = os.environ.get('RSA_DUMP_MAT', '')
 
 # Null-construction mode for the permutation loop. See
 # `mc.analyse.rsa_perm_rdms.SHUFFLE_MODES` for the full list.
@@ -288,7 +298,27 @@ PHASE_MASK_MODE = 'full'
 # extra step with no fMRI counterpart, and it is why the previous round
 # found state_phase ~ 0 everywhere: the variance had already been removed
 # before the RDMs were built. Handle phase with a REGRESSOR, as fMRI does.
-PHASE_RESIDUALISE = None  # was 'cosine'
+# Overridable from the environment: RSA_PHASE_RESID=none|cosine|cosine_2h|categorical
+PHASE_RESIDUALISE = os.environ.get('RSA_PHASE_RESID', 'none')
+if str(PHASE_RESIDUALISE).lower() in ('none', ''):
+    PHASE_RESIDUALISE = None
+
+# Per-cell LINEAR DRIFT residualisation on the raw 360-bin trace, applied to
+# data only, before averaging and downsampling. Position in sequence and
+# elapsed time within a loop are confounded by construction, because every
+# state is warped to the same number of bins: state A simply IS the first
+# quarter of the loop, so a cell that ramps through the loop mimics a
+# position code. Removing the monotone trend per trial subtracts exactly
+# that one dimension and leaves a peaked tuning profile almost untouched,
+# which is more surgical than adding an ordinal-distance regressor at the
+# RDM level (that regressor correlates r = 0.74 with the position model, so
+# the two compete badly). The cell's mean firing rate is preserved.
+#   None     -> no drift removal
+#   'linear' -> subtract the least-squares linear trend across the 360 bins
+# Overridable from the environment: RSA_DRIFT_RESID=none|linear
+DRIFT_RESIDUALISE = os.environ.get('RSA_DRIFT_RESID', 'linear')
+if str(DRIFT_RESIDUALISE).lower() in ('none', ''):
+    DRIFT_RESIDUALISE = None
 
 # Per-cell repeat-correct residualisation. Loads the per-cell-residualised
 # files produced by scripts/residualise_data_by_repeat.py (regressing each
@@ -298,7 +328,7 @@ PHASE_RESIDUALISE = None  # was 'cosine'
 #   False -> load raw 'cell-*-360_bins_passed.csv' files (current default)
 #   True  -> load 'cleaned_from_reps/cell-*-360_bins_residualised.csv' files
 # Independent of PHASE_RESIDUALISE; the two stack additively.
-RESIDUALISE_REPEATS = False
+RESIDUALISE_REPEATS = os.environ.get('RSA_RESID_REPEATS', '0') == '1'
 
 # If True, ALSO run the empirical (no-permutation) RSA in all three phase-mask
 # modes and produce comparison heatmaps of the combo betas side-by-side per
@@ -344,7 +374,7 @@ PLOT_GLASSBRAINS = True
 # 2026-09-24 STATE ROUND: single-model sweep trimmed to the two models this
 # round reports; the full DSR-round list is restored by deleting the two
 # lines below this comment block.
-models = ['state', 'phase', 'reward_path', 'state_phase']
+models = ['state', 'phase']
 _models_full_dsr_round = [
     # DSR variants of interest (3 only)
     'dsr_fmri',           # full DSR  (control)
@@ -404,20 +434,10 @@ _CTRLS_FINAL = ['location', 'bttn_curr', 'bttn_next']
 # loads on `state`. PHASE_RESIDUALISE='cosine' removes the phase MAIN
 # effect at the data level but leaves state x phase untouched.
 combo_models = {
-    # 2026-09-25 ROUND: isolate how position, goal progress and their
-    # conjunction share variance, with and without the sensory/action controls.
-    # `state_phase` is the 12-way conjunction and correlates r = 0.62 with
-    # `state` and r = 0.37 with `phase` on the model RDMs, so these are
-    # deliberately collinear fits -- read them as a variance partition, not as
-    # independent effects.
-    'SxP_S_P':      ['state_phase', 'state', 'phase'],
-    'SxP_S_P_ctrl': ['state_phase', 'state', 'phase',
-                      'location', 'l2_norm', 'dsr_fmri'],
-    'S_P_ctrl':     ['state', 'phase',
-                      'location', 'l2_norm', 'dsr_fmri'],
-    # Previous round kept for reference:
-    #   'fmri_matched_state':               ['state','location','l2_norm','dsr_fmri','reward_path'],
-    #   'fmri_matched_state_ctrlStatePhase': [... , 'state_phase'],
+    # 2026-10-01 DRIFT-CONTROL ROUND: the reported model only, re-fitted
+    # on drift-residualised traces so it is directly comparable with
+    # 2026-09-25_11-45-48, which ran the identical combo without it.
+    'S_P_ctrl': ['state', 'phase', 'location', 'l2_norm', 'dsr_fmri'],
 }
 assert all(len(set(sm)) == len(sm) for sm in combo_models.values()), \
     f"Duplicate sub-model in combo_models: {combo_models}"
@@ -483,7 +503,7 @@ FDR_TEST      = 'split_halves_z'    # primary variant. Data RDM is built
 #   FDR_COMBOS    = ['ctrl_fMRI_dsrFULL', 'ctrl_fMRI-state_dsrFULL',
 #                    'ctrl_fMRI-state_dsrFULL-noL2', 'ctrl_dsrFUT']
 #   FDR_SUBMODELS = ['dsr_fmri']
-FDR_COMBOS    = ['SxP_S_P', 'SxP_S_P_ctrl', 'S_P_ctrl']
+FDR_COMBOS    = ['S_P_ctrl']
 FDR_SUBMODELS = ['state']       
 
 FDR_ALPHA     = 0.05
@@ -1383,6 +1403,26 @@ def _fig3_draw_active(ax, spec):
     _fig3_set_common_axis(ax, n_cols, row_labels, spec.get('ylabel', 'feature'))
 
 
+def _fig3_draw_catmatrix(ax, spec):
+    """Draw a matrix whose VALUES are categories, using a value->colour dict.
+
+    Used for the rolled-trajectory (DSR) model, whose entries are grid
+    location IDs. Colouring it with the same location palette as the
+    `location` model lets a reader compare the two panels directly, which a
+    continuous colormap does not allow.
+    """
+    import matplotlib.colors as mcolors
+    M = np.asarray(spec['matrix'])
+    cmap = spec['colors']
+    off = np.array([0.965, 0.965, 0.965, 1.0])
+    img = np.tile(off, (M.shape[0], M.shape[1], 1))
+    for val, col in cmap.items():
+        img[M == val] = mcolors.to_rgba(col)
+    ax.imshow(img, interpolation='nearest', aspect='auto')
+    _fig3_set_common_axis(ax, M.shape[1], list(spec['rows']),
+                          spec.get('ylabel', 'feature'))
+
+
 def _fig3_draw_continuous(ax, spec):
     mat = np.asarray(spec['matrix'], dtype=float)
     ax.imshow(mat, interpolation='nearest', aspect='auto',
@@ -1462,7 +1502,9 @@ def _save_pub_fig3_model_schematics(run_dir, run_config,
                 x0 / fig_w, y0 / fig_h,
                 matrix_in / fig_w, matrix_in / fig_h,
             ])
-            if spec['kind'] == 'dsr':
+            if spec['kind'] == 'catmatrix':
+                _fig3_draw_catmatrix(ax, spec)
+            elif spec['kind'] == 'dsr':
                 _fig3_draw_dsr(ax, spec)
             elif spec['kind'] == 'continuous':
                 _fig3_draw_continuous(ax, spec)
@@ -1607,11 +1649,15 @@ def _fig3_spec_from_design(model_name, z, cfg_i, n_cond, len_path):
 
     if model_name.startswith('dsr') or model_name == 'midnight':
         # DSR is (n_cond x n_cond*len_path): every condition carries the WHOLE
-        # rolled trajectory. Draw it as the matrix it is, conditions on y.
-        M = np.asarray(z[model_name][blk], dtype=float)
-        return {'kind': 'continuous', 'title': title, 'matrix': M,
+        # rolled trajectory, and its VALUES are grid location IDs -- the same
+        # quantity the `location` model holds. It is therefore drawn with the
+        # project's location colours rather than a continuous colormap, so the
+        # two panels are directly comparable.
+        M = np.asarray(z[model_name][blk], dtype=int)
+        return {'kind': 'catmatrix', 'title': title, 'matrix': M,
+                'colors': LOCATION_FIG3_COLORS,
                 'rows': [f'c{i}' for i in range(M.shape[0])],
-                'ylabel': 'condition', 'cmap': 'YlGnBu_r'}
+                'ylabel': 'condition'}
 
     return None
 
@@ -1745,7 +1791,9 @@ def _save_pub_fig3_models_with_rdms(run_dir, run_config, task_config_str=None,
             # --- column 0: model schematic (real example loop) ---
             ax = fig.add_axes([left_in / fig_w, y0 / fig_h,
                                (mi * 1.6) / fig_w, mi / fig_h])
-            if spec['kind'] == 'dsr':
+            if spec['kind'] == 'catmatrix':
+                _fig3_draw_catmatrix(ax, spec)
+            elif spec['kind'] == 'dsr':
                 _fig3_draw_dsr(ax, spec)
             elif spec['kind'] == 'continuous':
                 _fig3_draw_continuous(ax, spec)
@@ -1840,6 +1888,7 @@ else:
         'combo_models':         combo_models,
         'roi_label_column':     ROI_LABEL_COLUMN,
         'phase_residualise':    PHASE_RESIDUALISE,
+        'drift_residualise':    DRIFT_RESIDUALISE,
         'residualise_repeats':  RESIDUALISE_REPEATS,
         'fdr_test':             FDR_TEST,
         'fdr_combos':           FDR_COMBOS,
@@ -2054,6 +2103,36 @@ if RELOAD_RUN is None:
                 n_cells_total += 1
         print(f"Applied phase residualisation ({PHASE_RESIDUALISE}) to "
               f"{n_cells_total} cells across {len(SUBJECT_DATA)} subjects.")
+
+    # Optional per-cell linear-drift residualisation (elapsed-time control).
+    # Data only, never models. Per trial the least-squares linear trend over
+    # the 360 bins is subtracted while the trial mean is preserved.
+    if DRIFT_RESIDUALISE:
+        assert DRIFT_RESIDUALISE == 'linear', DRIFT_RESIDUALISE
+        n_cells_total = 0
+        for sub_str, sub_pack in SUBJECT_DATA.items():
+            neurons = sub_pack[f"sub-{sub_str}"]['normalised_neurons']
+            for n_lab, n_df in neurons.items():
+                arr = n_df.to_numpy(dtype=float)
+                t = np.arange(arr.shape[1], dtype=float)
+                tc = t - t.mean()
+                out = arr.copy()
+                for i in range(arr.shape[0]):
+                    y = arr[i]
+                    ok = np.isfinite(y)
+                    if ok.sum() < 3:
+                        continue
+                    yc = y[ok] - y[ok].mean()
+                    denom = float((tc[ok] ** 2).sum())
+                    if denom <= 0:
+                        continue
+                    slope = float((tc[ok] * yc).sum() / denom)
+                    out[i, ok] = y[ok] - slope * tc[ok]
+                neurons[n_lab] = pd.DataFrame(out, index=n_df.index,
+                                               columns=n_df.columns)
+                n_cells_total += 1
+        print(f"Applied LINEAR DRIFT residualisation to {n_cells_total} "
+              f"cells across {len(SUBJECT_DATA)} subjects.")
 
 
     # Containers for cross-ROI summary
@@ -2516,6 +2595,14 @@ if RELOAD_RUN is None:
                 row_labels.append((config, task_half))
 
         mat = np.hstack(rows)
+        if DUMP_MAT_DIR:
+            os.makedirs(DUMP_MAT_DIR, exist_ok=True)
+            np.savez_compressed(
+                os.path.join(DUMP_MAT_DIR, f'mat_{roi_name}.npz'),
+                mat=mat, roi=roi_name, n_neurons=n_neurons,
+                configs=np.asarray(configs, dtype=object),
+                row_labels=np.asarray(row_labels, dtype=object))
+            print(f"  [dump] {roi_name}: mat {mat.shape} -> {DUMP_MAT_DIR}")
         data_RDM = mc.analyse.my_RSA.compute_crosscorr(mat.T, plotting=PLOT_FIGS, include_diagonal=False, no_tasks=len(configs), model=f'data in {roi_name}')
 
         # z-scored ACC neurons.
@@ -3431,6 +3518,7 @@ if RELOAD_RUN is None:
                 n_perms=N_PERMUTATIONS,
                 seed=42,
                 phase_residualise=PHASE_RESIDUALISE,
+                drift_residualise=DRIFT_RESIDUALISE,
                 residualise_repeats=RESIDUALISE_REPEATS,
                 configs=configs,
                 n_conds_per_config=N_CONDS_PER_CONF,

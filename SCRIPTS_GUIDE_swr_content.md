@@ -10,7 +10,7 @@ Everything else is exploratory or infrastructure.**
 ```bash
 conda activate env_multiple_clocks
 python scripts/swr_content_main.py                 # all steps, in order
-python scripts/swr_content_main.py --step=phase    # just the reported analysis
+python scripts/swr_content_main.py phase    # just the reported analysis
 ```
 
 | step | what it does | reported? |

@@ -80,9 +80,9 @@ Profiles are POOLED FIRST, then the peak is read off — never an average
 of per-cell argmaxes, which are unreliable at this SNR. Three weightings
 are available: unweighted, consistency-weighted (by each cell's peak r),
 and subject-weighted (mean within subject, then across subjects).
-Uncertainty is the 16-84th percentile of 1000 bootstrap resamples,
-resampling cells (unweighted / consistency) or subjects (subject-
-weighted).
+Uncertainty: +-SEM across cells for the unweighted split; the 16-84th
+percentile of 1000 bootstrap resamples for the consistency-weighted
+(cells resampled) and subject-weighted (subjects resampled) splits.
 
 TWO CAVEATS THAT BELONG WITH ANY REPORT OF THIS RESULT
 ------------------------------------------------------
@@ -103,17 +103,22 @@ TWO CAVEATS THAT BELONG WITH ANY REPORT OF THIS RESULT
 
 FIGURES
 -------
-Brain: opaque fMRI-gradient backdrop; cells as spheres with a black halo,
-coloured by their group's preferred angle on the same cyclic wheel,
-jittered +-3 mm so co-located cells read individually. Saved twice —
-plain, and with thin "t-bars" marking the split axis (grey) and the
-division boundaries (black).
-Profiles: 4.5 x 3 cm, Arial >= 9 pt, bootstrap bands, grey outside-mask
-line.
+Brain (BRAIN_SCHEMES only; the manuscript shows pc1_ventral_dorsal): the
+medial fsaverage surface with a semi-transparent fMRI-gradient backdrop,
+rendered with an ORTHOGRAPHIC camera looking along x. The cells, the split
+axis (white) and the median split (black) are then drawn on top in MNI mm,
+so every cell sits at its exact (y, z) -- the same projection as the
+sagittal glass-brain views of Fig 2c -- and none can hide behind the
+cortex. Cells are never jittered; cells on one bundle share a coordinate
+and are drawn as one marker. Cells are coloured by their group's
+preferred angle on the backdrop's cyclic wheel, outside-mask cells grey.
+Profiles: 4.5 x 3 cm, Arial >= 9 pt, grey outside-mask line. Bands are
++-SEM across cells for the unweighted split (pc1_ventral_dorsal, as Fig 3c;
+changed 2026-11-23), bootstrap 16-84% for the weighted ones.
 
 OUTPUTS (in <master>/final_splits/)
-  {scheme}_{lh,rh}_medial.{png,pdf}       -- brain overlay (no bars)
-  {scheme}_{lh,rh}_medial_bars.{png,pdf}  -- brain overlay + axis/boundary
+  {scheme}_{lh,rh}_medial.{png,pdf}       -- one hemisphere, print size
+  {scheme}_medial_pair.{png,pdf}          -- lh | rh side by side
   {scheme}_profiles.{png,pdf}             -- profile overlay
   final_splits_per_cell.csv               -- per-cell group + angle
   final_splits_summary.csv                -- per-group summary
@@ -129,7 +134,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from matplotlib.cm import ScalarMappable
+from matplotlib import patheffects
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.ticker import MaxNLocator
 
@@ -147,13 +152,14 @@ mpl.rcParams['pdf.fonttype'] = 42
 # >>> RERUN-CHECK: hardcoded upstream run dir -- update after re-running cell_gradient_master_table.py
 MASTER_DIR = Path(
     '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans'
-    '/derivatives/group/cell_gradient_master/2026-08-28_15-19-35' #2026-08-22_12-18-21
+    '/derivatives/group/cell_gradient_master/2026-11-23_14-22-23_per_repeat_execute'
+    # per-repeat rate maps (2026-11-23); published mode version: 2026-08-28_15-19-35
 )
 DEFAULT_MASTER_CSV = MASTER_DIR / 'per_cell_master.csv'
 DEFAULT_OUT = MASTER_DIR / 'final_splits'
 
 # ── Render the fsaverage brain overlays? ─────────────────────────────
-# True  -> also write {scheme}_{lh,rh}_medial[_bars].{png,pdf}. Needs mne +
+# True  -> also write the medial brain panels (BRAIN_SCHEMES). Needs mne +
 #          nilearn, a working 3D backend, and an fsaverage download.
 # False -> CSVs and 2D profile plots only (all the numeric results).
 PLOT_BRAINS = True
@@ -221,16 +227,31 @@ def load_master_provenance(master_csv):
           f"per-cell sphere={prov['sphere_radius']} mm")
     return prov
 
-BACKDROP_ALPHA = 1.0        # no transparency on the rainbow gradient
-SURF_ALPHA = 0.25
-CELL_SCALE = 0.58           # coloured sphere (bigger = more pop)
-CELL_DARKEN = 0.85          # richer/darker hue for contrast vs bright backdrop
-JITTER_MM = 3.0             # spread co-located cells so they read individually
-BAR_SCALE = 0.18            # split-line thickness (a bit fatter, still not fat)
-BAR_X = 2.0                 # |x| the bars are drawn at: small = toward the
-                            # (medial-view) viewer, so bars sit ON TOP of cells
-AXIS_BAR_COLOR = (0.5, 0.5, 0.5)   # grey = split axis
-BOUND_BAR_COLOR = (0.0, 0.0, 0.0)  # black = division boundary
+# ── Brain panel: medial surface, orthographic camera, exact positions ──
+# The camera looks along x from the midline with a PARALLEL projection, so
+# where a cell lands on the image is exactly its MNI (y, z), whatever its
+# depth -- the projection of the sagittal glass-brain views in Fig 2c.
+# Checked 2026-10-06: test spheres rendered at known (y, z) land within
+# 0.07 mm of where the extent below puts them.
+# Sizes are for the panel AT PRINT SIZE (Fig 3d: ~2.1 x 3.0 cm per
+# hemisphere), so do not rescale the PDF when placing it.
+BRAIN_SCHEMES = ('pc1_ventral_dorsal',)   # the split shown in the manuscript
+SURF_ALPHA = 0.25           # see-through cortex, as in panel b
+CORTEX = 'classic'          # mne.viz.Brain curvature shading
+BACKDROP_ALPHA = 0.65       # fMRI gradient (1 = opaque)
+CELL_STYLE = 'halo'         # 'edge' (black rim) | 'halo' (+ white ring)
+CELL_DIAM_PT = 4.0          # marker diameter
+CELL_EDGE_PT = 0.25         # black rim
+CELL_HALO_PT = 0.4          # white ring outside the rim
+VIEW_FOCAL_YZ = (20.0, 10.0)    # mm, centre of the rendered view
+VIEW_HALF_HEIGHT_MM = 60.0      # camera parallel_scale
+RENDER_SIZE = (1400, 1000)      # px, render window
+CROP_Y_MM = (10.0, 72.0)        # the frontal medial wall shown in the panel
+CROP_Z_MM = (-27.0, 62.0)
+PANEL_W_CM, PANEL_H_CM = 2.1, 3.0   # one hemisphere at print size
+AXIS_LINE_COLOR = 'w'       # split axis (PC1 of the gradient mask)
+BOUND_LINE_COLOR = 'k'      # median split
+AXIS_LINE_PT, BOUND_LINE_PT = 1.0, 0.9
 
 # Cyclic wheel: -180 blue, -90 green, 0 yellow, +90 red, +180 blue.
 CIRCULAR_ANCHORS_HEX = ['#1E88E5', '#43A047', '#FCE300', '#E53935', '#1E88E5']
@@ -334,6 +355,17 @@ def boot_band(R, sel, subj, consist, weighting, nboot=1000):
             i = rng.integers(0, len(Rg), len(Rg))
             boots[b] = _prof_from(Rg[i], sg[i], cg[i], weighting)
     return np.nanpercentile(boots, 16, 0), np.nanpercentile(boots, 84, 0)
+
+
+def band(R, sel, subj, consist, weighting):
+    """Unweighted profile: mean +- SEM across cells (as Fig 3c). The
+    weighted schemes keep the 16-84th bootstrap percentile."""
+    if weighting != 'unw':
+        return boot_band(R, sel, subj, consist, weighting)
+    Rg = R[sel]
+    m = np.nanmean(Rg, 0)
+    e = np.nanstd(Rg, 0, ddof=1) / np.sqrt(np.isfinite(Rg).sum(0))
+    return m - e, m + e
 
 
 def make_labels(x, inm, n):
@@ -448,94 +480,101 @@ def compute_split_lines(c, axis_col, axis, inm, n, prov):
     return axis_line, bounds
 
 
-# ── brain overlay (opaque backdrop, haloed cells) ────────────────────
-def render_brain(c, lab, order, ang, tag, subtitle, subjects_dir,
+# ── brain panel (orthographic medial render + exact cell positions) ──
+def render_medial_surface(hemi, subjects_dir, prov):
+    """fsaverage pial, medial view, orthographic camera, gradient backdrop.
+
+    Returns the screenshot and its extent in MNI mm (left, right, bottom,
+    top) for imshow. lh medial has anterior on the right, rh on the left.
+    """
+    from mne.viz import Brain
+    sign = -1 if hemi == 'lh' else 1
+    brain = Brain('fsaverage', hemi, 'pial', background='white',
+                  size=RENDER_SIZE, subjects_dir=subjects_dir,
+                  alpha=SURF_ALPHA, cortex=CORTEX)
+    brain.add_data(backdrop_texture(hemi, subjects_dir, prov), hemi=hemi,
+                   fmin=1, fmid=181, fmax=361, colormap=CIRC_CMAP,
+                   alpha=BACKDROP_ALPHA, colorbar=False,
+                   smoothing_steps=(SURFACE_SMOOTHING_STEPS or None))
+    plotter = brain._renderer.plotter
+    cam = plotter.camera
+    cam.focal_point = (0.0, *VIEW_FOCAL_YZ)
+    cam.position = (-sign * 600.0, *VIEW_FOCAL_YZ)   # from the midline outward
+    cam.up = (0, 0, 1)
+    cam.parallel_projection = True
+    cam.parallel_scale = VIEW_HALF_HEIGHT_MM
+    plotter.renderer.ResetCameraClippingRange()
+    img = brain.screenshot()
+    brain.close()
+    half_w = VIEW_HALF_HEIGHT_MM * img.shape[1] / img.shape[0]
+    y_lo, y_hi = VIEW_FOCAL_YZ[0] - half_w, VIEW_FOCAL_YZ[0] + half_w
+    z_lo, z_hi = (VIEW_FOCAL_YZ[1] - VIEW_HALF_HEIGHT_MM,
+                  VIEW_FOCAL_YZ[1] + VIEW_HALF_HEIGHT_MM)
+    y_ext = (y_lo, y_hi) if hemi == 'lh' else (y_hi, y_lo)
+    return img, (*y_ext, z_lo, z_hi)
+
+
+def draw_cells(ax, yz, colour):
+    """One marker per recording site at its exact (y, z) in mm. Sizes are
+    in points at print size (CELL_DIAM_PT, CELL_EDGE_PT, CELL_HALO_PT)."""
+    if CELL_STYLE not in ('edge', 'halo'):
+        raise ValueError(f'Unknown CELL_STYLE {CELL_STYLE!r}')
+    if CELL_STYLE == 'halo':          # white disc behind = ring outside the rim
+        halo_diam = CELL_DIAM_PT + CELL_EDGE_PT + 2 * CELL_HALO_PT
+        ax.scatter(yz[:, 0], yz[:, 1], s=halo_diam ** 2, c='w',
+                   linewidths=0, zorder=4)
+    ax.scatter(yz[:, 0], yz[:, 1], s=CELL_DIAM_PT ** 2, c=[colour[:3]],
+               edgecolors='k', linewidths=CELL_EDGE_PT, zorder=5)
+
+
+def draw_brain_panel(ax, img, extent, hemi, coords, lab, order, ang,
+                     axis_line, boundary_lines):
+    ax.imshow(img, extent=extent, interpolation='lanczos')
+    ax.plot(axis_line[:, 1], axis_line[:, 2], color=AXIS_LINE_COLOR,
+            lw=AXIS_LINE_PT, solid_capstyle='round', zorder=8,
+            path_effects=[patheffects.Stroke(linewidth=AXIS_LINE_PT + 0.5,
+                                             foreground='0.35'),
+                          patheffects.Normal()])
+    for bl in boundary_lines:
+        ax.plot(bl[:, 1], bl[:, 2], color=BOUND_LINE_COLOR, lw=BOUND_LINE_PT,
+                solid_capstyle='round', zorder=8)
+    in_hemi = coords[:, 0] < 0 if hemi == 'lh' else coords[:, 0] > 0
+    colours = {g: angles_to_colours([ang[g]])[0] for g in order}
+    colours['outside'] = GREY
+    for g in ['outside'] + list(order):            # groups on top of grey
+        # cells on one bundle share a coordinate exactly: draw each site once
+        yz = np.unique(coords[in_hemi & (lab == g)][:, 1:3], axis=0)
+        draw_cells(ax, yz, colours[g])
+    ax.set_xlim(CROP_Y_MM if hemi == 'lh' else CROP_Y_MM[::-1])
+    ax.set_ylim(CROP_Z_MM)
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+
+def render_brain(c, lab, order, ang, tag, subjects_dir,
                  axis_line, boundary_lines, out_dir, prov):
     """Backdrop built from `prov` (the master run's own sampling settings),
     so cells and map always share one convention."""
-    from mne.viz import Brain
     coords = c[['MNI_x', 'MNI_y', 'MNI_z']].to_numpy(float)
-    cols = np.tile(np.array(GREY + (1.0,)), (len(c), 1))
-    for g in order:
-        cols[lab == g] = angles_to_colours([ang[g]])[0]
-    for hemi in ('lh', 'rh'):
-        try:
-            brain = Brain('fsaverage', hemi, 'pial', background='white',
-                          size=(1000, 900), subjects_dir=subjects_dir,
-                          alpha=SURF_ALPHA)
-        except TypeError:
-            brain = Brain('fsaverage', hemi, 'pial', background='white',
-                          size=(1000, 900), subjects_dir=subjects_dir)
-        data = backdrop_texture(hemi, subjects_dir, prov)
-        if np.isfinite(data).any():
-            try:
-                brain.add_data(data, hemi=hemi, fmin=1, fmid=181, fmax=361,
-                               colormap=CIRC_CMAP, alpha=BACKDROP_ALPHA,
-                               colorbar=False,
-                               smoothing_steps=(SURFACE_SMOOTHING_STEPS or None))
-            except TypeError:
-                brain.add_data(data, hemi=hemi, fmin=1, fmid=181, fmax=361,
-                               colormap=CIRC_CMAP, alpha=BACKDROP_ALPHA,
-                               colorbar=False)
-        keep = coords[:, 0] <= 0 if hemi == 'lh' else coords[:, 0] >= 0
-        rng = np.random.default_rng(hash((hemi, tag)) & 0xFFFF)
-        cj = coords[keep] + rng.uniform(-JITTER_MM, JITTER_MM, coords[keep].shape)
-        for cc, col in zip(cj, cols[keep]):
-            dark = tuple(np.clip(np.asarray(col[:3]) * CELL_DARKEN, 0, 1))
-            brain.add_foci(cc[None], coords_as_verts=False, hemi=hemi,
-                           color=dark, scale_factor=CELL_SCALE)
-        try:
-            brain.show_view('medial')
-        except Exception:
-            pass
-        # version WITHOUT bars
-        png = str(out_dir / f'{tag}_{hemi}_medial.png')
-        brain.save_image(png)
-        # add the split axis (grey) + boundary bars (black), version WITH bars.
-        # Draw bars at a small fixed |x| so they sit in front of the cells in
-        # the medial view (viewer looks from the midline outward).
-        sign = -1 if hemi == 'lh' else 1
-
-        def to_h(p):
-            q = np.asarray(p, float).copy(); q[:, 0] = sign * BAR_X
-            return q
-        brain.add_foci(to_h(axis_line), coords_as_verts=False, hemi=hemi,
-                       color=AXIS_BAR_COLOR, scale_factor=BAR_SCALE)
-        for bl in boundary_lines:
-            brain.add_foci(to_h(bl), coords_as_verts=False, hemi=hemi,
-                           color=BOUND_BAR_COLOR, scale_factor=BAR_SCALE)
-        try:                              # foci can reset the camera; re-apply
-            brain.show_view('medial')
-        except Exception:
-            pass
-        png_bars = str(out_dir / f'{tag}_{hemi}_medial_bars.png')
-        brain.save_image(png_bars)
-        try:
-            brain.close()
-        except Exception:
-            pass
-        _brain_cbar(png, hemi, subtitle)
-        _brain_cbar(png_bars, hemi, subtitle + ' | axis=grey, boundary=black')
-        print(f'  wrote {png} + _bars (+pdf)')
-
-
-def _brain_cbar(png, hemi, subtitle,
-                prefix='cell group preferred lag (deg) on fMRI-gradient backdrop.'):
-    img = plt.imread(png)
-    fig = plt.figure(figsize=(img.shape[1]/300, img.shape[0]/300 + 0.7), dpi=300)
-    gs = fig.add_gridspec(2, 1, height_ratios=[img.shape[0], 70],
-                          hspace=0.02, left=0, right=1, bottom=0, top=1)
-    a = fig.add_subplot(gs[0]); a.imshow(img); a.axis('off')
-    cax = fig.add_subplot(gs[1]); pos = cax.get_position()
-    cax.set_position([0.24, pos.y0, 0.5, pos.height * 0.32])
-    sm = ScalarMappable(cmap=CIRC_CMAP, norm=Normalize(-180, 180))
-    cb = fig.colorbar(sm, cax=cax, orientation='horizontal')
-    cb.set_ticks([-180, -90, 0, 90, 180])
-    cb.set_label(f'{prefix}  {subtitle}  [{hemi}]', fontsize=7)
-    cb.ax.tick_params(labelsize=7)
-    fig.savefig(png, dpi=300, bbox_inches='tight')
-    fig.savefig(png.replace('.png', '.pdf'), bbox_inches='tight')
+    renders = {hemi: render_medial_surface(hemi, subjects_dir, prov)
+               for hemi in ('lh', 'rh')}
+    for hemi, (img, extent) in renders.items():
+        fig, ax = plt.subplots(figsize=(PANEL_W_CM * CM, PANEL_H_CM * CM))
+        fig.subplots_adjust(0, 0, 1, 1)
+        draw_brain_panel(ax, img, extent, hemi, coords, lab, order, ang,
+                         axis_line, boundary_lines)
+        for ext in ('pdf', 'png'):
+            fig.savefig(out_dir / f'{tag}_{hemi}_medial.{ext}', dpi=600)
+        plt.close(fig)
+    fig, axs = plt.subplots(1, 2, figsize=(2 * PANEL_W_CM * CM, PANEL_H_CM * CM))
+    fig.subplots_adjust(0, 0, 1, 1, wspace=0.02)
+    for ax, hemi in zip(axs, ('lh', 'rh')):
+        draw_brain_panel(ax, *renders[hemi], hemi, coords, lab, order, ang,
+                         axis_line, boundary_lines)
+    for ext in ('pdf', 'png'):
+        fig.savefig(out_dir / f'{tag}_medial_pair.{ext}', dpi=600)
     plt.close(fig)
+    print(f'  wrote {tag}_{{lh,rh}}_medial + {tag}_medial_pair (pdf/png)')
 
 
 # ── profile overlay (bootstrap bands + grey outside line) ────────────
@@ -543,13 +582,13 @@ def render_profiles(c, R, subj, consist, lab, order, tag, weighting, out_dir):
     fig, ax = plt.subplots(figsize=(4.5 * CM, 3 * CM), constrained_layout=True)
     out = lab == 'outside'
     po = profile(R, out, subj, consist, weighting)
-    lo, hi = boot_band(R, out, subj, consist, weighting)
+    lo, hi = band(R, out, subj, consist, weighting)
     ax.fill_between(L, lo, hi, color='0.6', alpha=0.18, linewidth=0)
     ax.plot(L, po, '-', color='0.55', lw=1.0)
     for g in order:
         sel = lab == g
         p = profile(R, sel, subj, consist, weighting)
-        lo, hi = boot_band(R, sel, subj, consist, weighting)
+        lo, hi = band(R, sel, subj, consist, weighting)
         col = angles_to_colours([int(L[np.nanargmax(p)])])[0]
         ax.fill_between(L, lo, hi, color=col, alpha=0.2, linewidth=0)
         ax.plot(L, p, '-', color=col, lw=1.2)
@@ -813,11 +852,10 @@ def main(argv=None):
         per_cell[f'{tag}_angle'] = [ang.get(g, np.nan) for g in lab]
         summary_rows += summarize_scheme(tag, col, axis, lab, order, rename, w,
                                          n, R, subj, consist, fmri, inm)
-        if args.plot_brains:
+        if args.plot_brains and tag in BRAIN_SCHEMES:
             axis_line, boundary_lines = compute_split_lines(
                 c, col, axis, inm, n, prov)
-            render_brain(c, lab, order, ang, tag,
-                         f'{tag} [{w}]: {sub}, outside=grey', subjects_dir,
+            render_brain(c, lab, order, ang, tag, subjects_dir,
                          axis_line, boundary_lines, out, prov)
         render_profiles(c, R, subj, consist, lab, order, tag, w, out)
         stat_rows.append(lagwise_vs_zero(c, R, lab, order, rename, tag))

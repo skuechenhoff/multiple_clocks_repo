@@ -55,6 +55,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from mc.analyse.roi_labels import read_per_cell_table
+
 REPO = '/Users/xpsy1114/Documents/projects/multiple_clocks/multiple_clocks_repo'
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, 'scripts'))
@@ -74,7 +76,7 @@ from per_lag_encoding import (
 
 
 # ── Settings ──────────────────────────────────────────────────────────
-RELOAD_RUN = '2026-06-30_18-21-57'
+RELOAD_RUN = '2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled'  # final labels
 
 # EXCL_NAME also dispatches to a named-mode auto-builder when it matches
 # one of these reserved names; otherwise we fall back to the manual
@@ -90,12 +92,12 @@ EXCL_MODE = 'exclude'          # 'exclude' or 'include_only'
 _DATA = '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans/derivatives'
 
 STATE_TUNED_SOURCE_CSV    = (f'{_DATA}/group/encoding_state_sustained_cv/'
-                              '2026-06-25_14-38-13/state_sustained_cv_results.csv')
+                              '2026-09-24_18-35-23/state_sustained_cv_results.csv')   # final labels
 STATE_TUNED_CRITERION_COL = 'sig_sustained'   # perm-sig sustained-state cell
 STATE_TUNED_CRITERION_VAL = True               # use 'sig_sustained_fdr' for FDR-strict
 
 RSA_CELLS_SOURCE_CSV      = (f'{_DATA}/group/DSR_RSA_simple_ROI/'
-                              '2026-06-22_16-17-15-final-DSR/roi_electrode_coords.csv')
+                              '2026-08-31_17-57-30/roi_electrode_coords.csv')   # Fig 2d RSA run, final labels
 
 # ── Manual fallback (when EXCL_NAME is NOT a reserved name) ──────────
 EXCL_NEURONS_LIST: list[str] = []
@@ -203,7 +205,7 @@ def main():
         raise FileNotFoundError(f"Run dir not found: {run_dir}")
     csv_path = os.path.join(run_dir, 'per_cell_ALL_ROIs.csv')
     print(f"Loading {csv_path}")
-    per_cell = pd.read_csv(csv_path)
+    per_cell = read_per_cell_table(csv_path)
     print(f"  {len(per_cell)} cells across {per_cell.roi.nunique()} ROIs")
 
     flagged = _build_flagged_set(per_cell)

@@ -18,6 +18,8 @@ import os
 import numpy as np
 import pandas as pd
 
+import mc.analyse.roi_labels as roi_labels
+
 
 DEFAULT_DATA_DIR = (
     "/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans/"
@@ -93,6 +95,7 @@ def load_roi_table(data_dir=DEFAULT_DATA_DIR,
     if missing:
         raise ValueError(
             f"ROI table {path} missing columns: {missing}")
+    roi_labels.assert_final(df)
     df = df.copy()
     df["subject"] = df["subject"].astype(int)
     df["cell idx"] = df["cell idx"].astype(int)

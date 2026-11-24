@@ -88,6 +88,105 @@ ANALYSES = {
         "location_by_phase",
         "location in ripples split by encode/execute and by what the square is",
         "see output -- C0 and C1 per phase and subtype"),
+    "goal_lag": (
+        "goal_lag",
+        "TEST b: do ripples carry the upcoming GOAL SEQUENCE (rewards ahead)?",
+        "running -- coarse real-time plan lag, mPFC/mOFC/HC"),
+    "warped_lag": (
+        "warped_lag",
+        "TEST c: the 12-bin future-lag code measured with ripple spikes only",
+        "running -- template from all data, measurement from ripples"),
+    "loading": (
+        "loading",
+        "TEST L1: is the plan MORE represented AFTER a ripple than before?",
+        "running -- paired pre/post inside one subgoal; sham + current controls"),
+    "discovery_lag": (
+        "discovery_lag",
+        "SK's model: rewards indexed by how many DISCOVERIES ago they were found",
+        "running -- only already-known squares are tested"),
+    "intention_ripple": (
+        "intention_ripple",
+        "lock to UNCOVERS: does pre-uncover mPFC intention predict ripples after?",
+        "running -- SK's event-locked idea"),
+    "consolidation": (
+        "consolidation",
+        "ripples as STORAGE: is the just-uncovered square represented after it?",
+        "running -- split by whether a ripple followed the uncover"),
+    "discovery_locked": (
+        "discovery_locked",
+        "does the newly-discovered-reward signal change AROUND a ripple?",
+        "running -- time-resolved follow-up to `consolidation`"),
+    "method_check": (
+        "method_check",
+        "VALIDATION: does the estimator recover HC current location OUTSIDE ripples?",
+        "running -- if this fails, every null in this project is uninterpretable"),
+    "preferred_lag": (
+        "preferred_lag_firing",
+        "do cells TAGGED lag-0 fire at their square? (per-lag encoding tags)",
+        "running -- LOO preferred square, all cells, no significance filter"),
+    "lag_group": (
+        "lag_group_ripple",
+        "COLLAPSED: are lag-0 cells more ripple-driven than future-lag cells?",
+        "running -- no preferred location needed, so far better powered"),
+    "storage_planning": (
+        "storage_vs_planning",
+        "do lag-0 cells fire at STORAGE and future-lag cells at PLANNING?",
+        "running -- continuous lag strength, all cells"),
+    "cross_task": (
+        "cross_task",
+        "WHY NEGATIVE? is the place template transferable across configurations?",
+        "running -- tests SK's lag-divergence hypothesis directly"),
+    "template_quality": (
+        "template_quality",
+        "is the mPFC new-reward effect carried by a transferring MINORITY?",
+        "running -- per-cell transferability distribution + median split"),
+    "future_shift": (
+        "future_shift",
+        "across a ripple, does activity move from NOW to the UPCOMING squares? "
+        "(same-block references)",
+        "NULL (mPFC -0.04, P = .86; HFB +0.07, P = .57); both fail the gate, "
+        "HC passes and shows no shift"),
+    "ripple_templates": (
+        "ripple_templates",
+        "is mPFC's 'now' code visible when its profile is built IN ripples?",
+        "NULL in mPFC (-0.08, P = .81); HC gate passes; mOFC ripple-only "
+        "template +0.52, P = .047 (exploratory)"),
+    "path_content": (
+        "path_content",
+        "after a correct uncover, do HC ripples carry the path just walked "
+        "or the path ahead? (T4, CHANGELOG 2026-10-29)",
+        "HC first traversal PAST-FUT +0.44, P = .043 (storage side); flips to "
+        "FUT +0.35, P = .006 in execution. ⚠ same-block templates are mostly "
+        "execution maps for learning events (median 87% for learning "
+        "ripples): the phase flip may be the template (CHANGELOG 2026-11-20)"),
+    "discovery_cells": (
+        "discovery_cells",
+        "do lag-0 cells fire at the moment of discovery, reward-locked, and "
+        "does that depend on depth / ripples? (N1, N2; CHANGELOG 2026-10-30)",
+        "NULL for lag-0 (own p = .12, wrong sign); mPFC new-square +0.66 "
+        "reward-locked but gone when stillness-matched (p = .47)"),
+    "context_content": (
+        "context_content",
+        "D3: rewarded squares in ripples away from uncovers; D4: cortex <-> HC "
+        "position-in-sequence direction, binding, code timeline "
+        "(CHANGELOG 2026-11-15)",
+        "D4a reversed; D4b null; D5 (before ripples) null. D4c timeline "
+        "retracted (CHANGELOG 2026-11-19). ⚠ D3 uses same-block templates "
+        "and is NOT location content; it reverses the reported phase "
+        "contrast (CHANGELOG 2026-11-20, "
+        "scripts/exploratory/location_estimator_reconcile.py)"),
+    "reactivation": (
+        "reactivation",
+        "do learning ripples replay the co-firing of the block's later "
+        "execution? (C1, Peyrache reactivation; CHANGELOG 2026-11-14 (b))",
+        "NULL incl. the HC positive control (insensitive, not negative): mPFC "
+        "specific matched +0.0006, P = .52"),
+    "lag0_cells": (
+        "lag0_cells",
+        "are lag-0 cells ripple-locked, and do they carry the square at "
+        "discovery? claim 2 a/b in lag-0 cells (F1, F3; CHANGELOG 2026-11-14)",
+        "NULL: no lag-0 x ripple firing (|rho| <= .08), no lag-0 x discovered-"
+        "square evidence; per-cell lag-0 r has ~0 split-half reliability (F2)"),
     "phase_timecourse": (
         "timecourse_by_phase",
         "peri-ripple location TIME COURSE, encode vs execute (descriptive)",

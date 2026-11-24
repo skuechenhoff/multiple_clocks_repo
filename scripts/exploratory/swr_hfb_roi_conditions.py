@@ -115,7 +115,40 @@ PHASES = {
 MEDIAL_GROUP = "MedialFrontal"
 
 
-def _peri_values(cond_dir, roi_part_lut, roi, conds, unit, t_ms, tr, ix, counts):
+def load_partitioned(cond_dir, partition_dir):
+    """Conditions traces with each family row relabelled to its partition ROI.
+
+    Returns (t_ms, traces, index, ripple counts). The index carries the
+    partition label in `roi` (and `_roi_part`), so `pooled_cond_curves`
+    selects on it unchanged; MedialFrontal is kept as itself.
+    """
+    A = pd.read_csv(os.path.join(partition_dir, "derivation_assignment.csv"))
+    part = A.set_index(["session", "cx_pair"])["roi_part"]
+
+    z = np.load(os.path.join(cond_dir, "timecourses.npz"))
+    t_ms, tr = z["t_ms"], z["traces"]
+    ix = pd.read_csv(os.path.join(cond_dir, "timecourse_index.csv"))
+    ix["is_real"] = ix.is_real.astype(bool)
+    if "trace_row" not in ix.columns:
+        ix["trace_row"] = np.arange(len(ix))
+    # The family rows are the originals; the MedialFrontal rows are duplicates
+    # of them under a derived name. Both are kept, the families relabelled to
+    # partition ROIs and MedialFrontal kept as itself, so the table covers the
+    # regions AND the group the figure plots.
+    fam = ix[ix.roi.isin(("mPFC", "mOFC"))].copy()
+    fam["_roi_part"] = pd.MultiIndex.from_arrays(
+        [fam.session, fam.cx_pair]).map(part)
+    mfr = ix[ix.roi == MEDIAL_GROUP].copy()
+    mfr["_roi_part"] = MEDIAL_GROUP
+    ix = pd.concat([fam, mfr], ignore_index=True)
+    # `pooled_cond_curves` selects on a column called `roi`; the partition
+    # label is written into it so the imported function needs no change.
+    ix["roi"] = ix["_roi_part"]
+    counts = pd.read_csv(os.path.join(cond_dir, "ripple_counts.csv"))
+    return t_ms, tr, ix, counts
+
+
+def _peri_values(roi, conds, unit, t_ms, tr, ix, counts):
     """Per-unit coupling value for one ROI x condition set."""
     sub = ix[ix._roi_part == roi]
     if not len(sub):
@@ -141,30 +174,7 @@ def run(cond_dir=None, partition_dir=None, out_dir=None, unit="session",
             "so that 'encoding' means up to but not including the first fully "
             "correct loop.")
     partition_dir = partition_dir or _latest(G, "hfb_roi_partition_")
-
-    A = pd.read_csv(os.path.join(partition_dir, "derivation_assignment.csv"))
-    part = A.set_index(["session", "cx_pair"])["roi_part"]
-
-    z = np.load(os.path.join(cond_dir, "timecourses.npz"))
-    t_ms, tr = z["t_ms"], z["traces"]
-    ix = pd.read_csv(os.path.join(cond_dir, "timecourse_index.csv"))
-    ix["is_real"] = ix.is_real.astype(bool)
-    if "trace_row" not in ix.columns:
-        ix["trace_row"] = np.arange(len(ix))
-    # The family rows are the originals; the MedialFrontal rows are duplicates
-    # of them under a derived name. Both are kept, the families relabelled to
-    # partition ROIs and MedialFrontal kept as itself, so the table covers the
-    # regions AND the group the figure plots.
-    fam = ix[ix.roi.isin(("mPFC", "mOFC"))].copy()
-    fam["_roi_part"] = pd.MultiIndex.from_arrays(
-        [fam.session, fam.cx_pair]).map(part)
-    mfr = ix[ix.roi == MEDIAL_GROUP].copy()
-    mfr["_roi_part"] = MEDIAL_GROUP
-    ix = pd.concat([fam, mfr], ignore_index=True)
-    # `pooled_cond_curves` selects on a column called `roi`; the partition
-    # label is written into it so the imported function needs no change.
-    ix["roi"] = ix["_roi_part"]
-    counts = pd.read_csv(os.path.join(cond_dir, "ripple_counts.csv"))
+    t_ms, tr, ix, counts = load_partitioned(cond_dir, partition_dir)
 
     present = [r for r in ix._roi_part.dropna().unique()
                if r not in ("Unassigned",)]
@@ -183,7 +193,7 @@ def run(cond_dir=None, partition_dir=None, out_dir=None, unit="session",
     vals = {}          # (roi, phase, cond) -> {unit: value}
     for roi, (ph, spec), k in itertools.product(rois, PHASES.items(),
                                                 COND_KEYS):
-        vals[(roi, ph, k)] = _peri_values(cond_dir, part, roi, spec[k], unit,
+        vals[(roi, ph, k)] = _peri_values(roi, spec[k], unit,
                                           t_ms, tr, ix, counts)
 
     rows = []

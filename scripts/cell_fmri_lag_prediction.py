@@ -53,6 +53,8 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
 import pandas as pd
+
+from mc.analyse.roi_labels import read_per_cell_table
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.cm import ScalarMappable
 from scipy import stats
@@ -61,7 +63,7 @@ from scipy import stats
 # ── Settings ─────────────────────────────────────────────────────────
 CSV_PATH = Path('/Users/xpsy1114/Documents/projects/multiple_clocks/data'
                 '/ephys_humans/derivatives/group/per_lag_encoding'
-                '/2026-08-04_07-25-15_reload_from_2026-06-30_18-21-57_relabelled'
+                '/2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled'
                 '/per_cell_ALL_ROIs.csv')
 # Keep this flag aligned with ``harmonic_angle_maps.py``. True reads maps in
 # ``unit_vector_derived/``; False reads the original magnitude-weighted maps.
@@ -501,7 +503,7 @@ def harmonic_cell_preference(r_values, p_values=None):
 
 
 # ── Load per-cell CSV (dataset-independent, config-independent) ──────
-df_all = pd.read_csv(CSV_PATH)
+df_all = read_per_cell_table(CSV_PATH)
 mpfc = df_all[df_all['roi'] == CELL_ROI].copy()
 print(f"Loaded {len(mpfc)} '{CELL_ROI}' cells from {CSV_PATH.name}")
 

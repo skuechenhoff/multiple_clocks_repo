@@ -29,6 +29,8 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+
+from mc.analyse.roi_labels import read_per_cell_table
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -48,7 +50,7 @@ from per_lag_encoding import (          # noqa: E402
 # ── Settings ──────────────────────────────────────────────────────────
 RUN_DIR = ('/Users/xpsy1114/Documents/projects/multiple_clocks/data/'
            'ephys_humans/derivatives/group/per_lag_encoding/'
-           '2026-08-04_07-25-15_reload_from_2026-06-30_18-21-57_relabelled-final')
+           '2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled')
 PER_CELL_CSV = os.path.join(RUN_DIR, 'per_cell_ALL_ROIs.csv')
 
 N_CELLS_PER_SELECTION = 10
@@ -241,7 +243,7 @@ def _build_cell_maps(seq, nid):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    df = pd.read_csv(PER_CELL_CSV)
+    df = read_per_cell_table(PER_CELL_CSV)
     df['subject_id'] = df['subject_id'].astype(str).str.zfill(2)
 
     # 1) Candidate pool per selection (gap thresholds only). Collect the

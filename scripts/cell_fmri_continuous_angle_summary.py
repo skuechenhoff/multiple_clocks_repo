@@ -29,6 +29,8 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 
+from mc.analyse.roi_labels import read_per_cell_table
+
 
 # ---------------------------------------------------------------------
 # Inputs and settings
@@ -36,7 +38,7 @@ import pandas as pd
 CELL_TABLE = Path(
     '/Users/xpsy1114/Documents/projects/multiple_clocks/data'
     '/ephys_humans/derivatives/group/per_lag_encoding'
-    '/2026-08-04_07-25-15_reload_from_2026-06-30_18-21-57_relabelled'
+    '/2026-08-28_10-18-21_reload_from_2026-06-30_18-21-57_relabelled'
     '/per_cell_ALL_ROIs.csv'
 )
 FMRI_RESULTS_ROOT = Path(
@@ -204,7 +206,7 @@ def add_recording_site_ids(table):
 
 
 def load_cell_data():
-    source = pd.read_csv(CELL_TABLE)
+    source = read_per_cell_table(CELL_TABLE)
     cells = source.loc[source['roi'].eq(CELL_ROI)].copy().reset_index(drop=True)
     correlation_columns = [
         f'r_lag{int(angle):03d}_{CORRELATION_KIND}'

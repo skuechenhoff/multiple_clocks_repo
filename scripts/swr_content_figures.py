@@ -32,7 +32,8 @@ import matplotlib.pyplot as plt
 
 import mc.analyse.ripple_rsa as rrsa
 from mc.plotting.cell_results import (get_roi_colour, roi_display,
-                                      LOCATION_COLORS, OBSERVED_VALUE_COLOR)
+                                      LOCATION_COLORS, OBSERVED_VALUE_COLOR,
+                                      PHASE_COLORS)
 
 ROIS = ["HC_anterior", "HC_mid", "mPFC", "mOFC", "PCC"]
 SEED_FIG = 42     # jitter only; never affects a statistic
@@ -82,10 +83,13 @@ def _phase_contrast():
     return F[F.window == "ripple"], src
 
 
+SAVE_EXT = ("jpeg",)      # add "pdf" back when figures are final
+
+
 def save(fig, d, name):
-    for ext in ("pdf", "jpeg"):
+    for ext in SAVE_EXT:
         fig.savefig(os.path.join(d, f"{name}.{ext}"))
-    print(f"  {name}.pdf / .jpeg")
+    print(f"  {name}." + " / .".join(SAVE_EXT))
 
 
 def _bar(ax, labels, vals, errs=None, colors=None, ylab=""):
@@ -2127,7 +2131,7 @@ def figure19(d, xlim_ms=250, smooth=True):
     plt.close(fig)
 
 
-def figure20(d):
+def figure20(d, rois=None, tag=None):
     """The phase effect as bars: why mHP looks stronger but tests weaker.
 
     Left: mean z per phase per ROI, +- s.e.m. across sessions.
@@ -2138,10 +2142,13 @@ def figure20(d):
     if F is None:
         print("  Fig 20 skipped: run `swr_content_explore.py phase_contrast`")
         return
-    rois = ["HC_all", "HC_anterior", "HC_mid"]
-    LAB = {"HC_all": "HC pooled", "HC_anterior": "aHP", "HC_mid": "mHP"}
+    if rois is None:
+        rois = ["HC_all", "HC_anterior", "HC_mid"]
+    LAB = {"HC_all": "HC pooled", "HC_anterior": "aHP", "HC_mid": "mHP",
+           "mPFC": "mPFC", "mOFC": "mOFC"}
     col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
-           "HC_mid": get_roi_colour("HC_mid")}
+           "HC_mid": get_roi_colour("HC_mid"),
+           "mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC")}
 
     plt.rcParams.update({"font.size": 8, "axes.titlesize": 9,
                          "axes.labelsize": 8, "xtick.labelsize": 7.5,
@@ -2153,7 +2160,9 @@ def figure20(d):
 
     # ── a: each phase against zero
     a, w = ax[0], .36
-    for i, ph in enumerate(("z_encode", "z_execute")):
+    suff = "_matched" if all(f"z_{p_}_matched" in F.columns
+                             for p_ in ("encode", "execute")) else ""
+    for i, ph in enumerate((f"z_encode{suff}", f"z_execute{suff}")):
         m, e, ps = [], [], []
         for r in rois:
             v = F[F.roi == r][ph].dropna()
@@ -2203,7 +2212,7 @@ def figure20(d):
         "are session means; error bars s.e.m. across sessions.",
         fontsize=8, y=1.10)
     fig.tight_layout()
-    save(fig, d, "fig20_phase_effect_bars")
+    save(fig, d, "fig20_phase_effect_bars" + (f"_{tag}" if tag else ""))
     plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
                          "axes.labelsize": 9, "xtick.labelsize": 8,
                          "ytick.labelsize": 8, "legend.fontsize": 8})
@@ -2225,6 +2234,11 @@ def figure21(d, with_pooled=False):
     if F is None:
         print("  Fig 21 skipped: run `swr_content_explore.py phase_contrast`")
         return
+    # prefer the COUNT-MATCHED per-phase levels: plotting unmatched levels
+    # beside a matched contrast understates the gap, because z carries a
+    # sqrt(n) term and execute has ~2x the ripples
+    suff = "_matched" if all(f"z_{p_}_matched" in F.columns
+                             for p_ in ("encode", "execute")) else ""
     rois = (["HC_all"] if with_pooled else []) + ["HC_anterior", "HC_mid"]
     LAB = {"HC_all": "HC pooled", "HC_anterior": "aHP", "HC_mid": "mHP"}
     col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
@@ -2243,7 +2257,7 @@ def figure21(d, with_pooled=False):
     for i, r in enumerate(rois):
         g = F[F.roi == r]
         m, e, ps = [], [], []
-        for c in ("z_encode", "z_execute"):
+        for c in (f"z_encode{suff}", f"z_execute{suff}"):
             v = g[c].dropna()
             m.append(v.mean()); e.append(stats.sem(v))
             ps.append(stats.ttest_1samp(v, 0)[1])
@@ -2278,7 +2292,8 @@ def figure21(d, with_pooled=False):
     plt.close(fig)
 
 
-def figure21_compact(d, size_cm=2.5, with_pooled=False):
+def figure21_compact(d, size_cm=2.5, with_pooled=False, rois=None,
+                     tag=None):
     """The phase panel at 2.5 x 2.5 cm, for use as a small subpanel.
 
     At this size there is no room for a legend or for "n.s." labels, so ROI
@@ -2290,10 +2305,15 @@ def figure21_compact(d, size_cm=2.5, with_pooled=False):
     if F is None:
         print("  Fig 21c skipped: run `swr_content_explore.py phase_contrast`")
         return
-    rois = (["HC_all"] if with_pooled else []) + ["HC_anterior", "HC_mid"]
-    LAB = {"HC_all": "HC", "HC_anterior": "aHP", "HC_mid": "mHP"}
+    suff = "_matched" if all(f"z_{p_}_matched" in F.columns
+                             for p_ in ("encode", "execute")) else ""
+    if rois is None:
+        rois = (["HC_all"] if with_pooled else []) + ["HC_anterior", "HC_mid"]
+    LAB = {"HC_all": "HC", "HC_anterior": "aHP", "HC_mid": "mHP",
+           "mPFC": "mPFC", "mOFC": "mOFC"}
     col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
-           "HC_mid": get_roi_colour("HC_mid")}
+           "HC_mid": get_roi_colour("HC_mid"),
+           "mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC")}
     STAR = "#F7931E"          # project palette 'B'; the contrast marker
 
     plt.rcParams.update({"font.size": 6, "axes.labelsize": 6,
@@ -2304,7 +2324,7 @@ def figure21_compact(d, size_cm=2.5, with_pooled=False):
     for i, r in enumerate(rois):
         g = F[F.roi == r]
         m, e, ps = [], [], []
-        for c in ("z_encode", "z_execute"):
+        for c in (f"z_encode{suff}", f"z_execute{suff}"):
             v = g[c].dropna()
             m.append(v.mean()); e.append(stats.sem(v))
             ps.append(stats.ttest_1samp(v, 0)[1])
@@ -2331,7 +2351,8 @@ def figure21_compact(d, size_cm=2.5, with_pooled=False):
     a.set_ylabel("location (z)", labelpad=2)
     lo, hi = a.get_ylim()
     a.set_ylim(min(lo, -.06), hi + .10 * (hi - lo))
-    a.set_yticks([0, 0.5])
+    lo2, hi2 = a.get_ylim()
+    a.set_yticks([v for v in (-1.0, -0.5, 0, 0.5, 1.0) if lo2 <= v <= hi2])
     a.tick_params(length=2.5, width=.8, pad=1.5)
     for sp in ("top", "right"):
         a.spines[sp].set_visible(False)
@@ -2339,9 +2360,1717 @@ def figure21_compact(d, size_cm=2.5, with_pooled=False):
         a.spines[sp].set_linewidth(.9)
     fig.tight_layout(pad=.15)
     save(fig, d, f"fig21_phase_panel_{size_cm:g}cm"
-         + ("_with_pooled" if with_pooled else ""))
+         + (f"_{tag}" if tag else "")
+         + ("_with_pooled" if with_pooled and tag is None else ""))
     print("   " + "\n   ".join(txt))
     print(f"   yellow star = encode-minus-known contrast P < 0.05")
     plt.rcParams.update({"font.size": 9, "axes.labelsize": 9,
                          "xtick.labelsize": 8, "ytick.labelsize": 8})
     plt.close(fig)
+
+
+def figure22(d, phase="encode"):
+    """TEST (b): goal-sequence content in ripples, by how many rewards ahead.
+
+    Left: evidence for the location at goal-lag g. Right: the same minus its
+    matched flank (the ripple-specific part). One line per ROI, session mean
+    +- s.e.m., stars = P < 0.05 uncorrected.
+    """
+    src = _latest("goal_lag_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 22 skipped: run `swr_content_explore.py goal_lag`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = ["HC_all", "mPFC", "mOFC"]
+    LAB = {"HC_all": "HC pooled", "mPFC": "mPFC", "mOFC": "mOFC"}
+    col = {"HC_all": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    LAGNAME = ["0\nseeking\nnow", "1\n+1 ahead\n(=3 back)",
+               "2\n+2 ahead\n(=2 back)", "3\n+3 ahead\n= JUST\nCOLLECTED"]
+
+    plt.rcParams.update({"font.size": 8, "axes.titlesize": 9,
+                         "axes.labelsize": 8, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7.5, "legend.fontsize": 7})
+    fig, ax = plt.subplots(1, 2, figsize=(15 * CM, 6.6 * CM), sharey=True)
+    for pi, (col_p, ttl) in enumerate(
+            ((f"z_{phase}", "a  evidence for the goal-lag location"),
+             (f"c1_{phase}", "b  ripple minus its matched flank"))):
+        a = ax[pi]
+        dodge = np.linspace(-.10, .10, len(rois))
+        for i, rn in enumerate(rois):
+            m, e, ps = [], [], []
+            for g in (0, 1, 2, 3):
+                v = R[(R.roi == rn) & (R.lag == g)][col_p].dropna()
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1] if len(v) >= 5 else np.nan)
+            x = np.arange(4) + dodge[i]
+            n = R[(R.roi == rn) & (R.lag == 0)][col_p].dropna().shape[0]
+            a.errorbar(x, m, yerr=e, fmt="o-", ms=4.5, lw=1.4, capsize=2.5,
+                       color=col[rn], mec="white", mew=.7,
+                       label=f"{LAB[rn]} (n = {n})")
+            for xx, mm, ee, pp in zip(x, m, e, ps):
+                if np.isfinite(pp) and pp < .05:
+                    off = -(ee + .05) if mm < 0 else (ee + .05)
+                    a.text(xx, mm + off, "*", ha="center",
+                           va="top" if mm < 0 else "bottom",
+                           fontsize=12, color=col[rn])
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xticks(range(4)); a.set_xticklabels(LAGNAME)
+        a.set_xlabel("position in the A-B-C-D cycle relative to the current goal\n"
+                     "(the cycle has length 4, so +3 ahead IS 1 back)")
+        a.set_title(ttl, loc="left")
+        a.set_xlim(-.45, 3.45)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel(f"goal-sequence evidence (z)\n{phase} phase")
+    lo, hi = ax[0].get_ylim(); ax[0].set_ylim(lo - .18 * (hi - lo), hi)
+    h, l = ax[0].get_legend_handles_labels()
+    fig.legend(h, l, frameon=False, ncol=3, loc="lower center",
+               bbox_to_anchor=(.55, -.10), columnspacing=2.0)
+    fig.suptitle(
+        "Figure 22 — TEST (b): does a ripple carry the upcoming GOAL "
+        "SEQUENCE?   goal_lag[g] = rew[(state−1+g) mod 4], read at the "
+        "ripple's own moment.\n"
+        "Lag 0 is the reward being sought NOW (it coincides with the square "
+        "underfoot only 9.4% of the time, chance 11%) — so it is about "
+        "where the subject is heading, not where they are.\n"
+        "NOTE: the HC lag-2 negative is NOT explained by current-location "
+        "coding: across sessions, current-location z does not predict lag-2 z "
+        "(r = −0.09, P = 0.55). It is unexplained. EXPLORATORY.",
+        fontsize=7.6, y=1.03)
+    fig.tight_layout()
+    save(fig, d, f"fig22_goal_lag_{phase}")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure23(d):
+    """Where does the evidence actually GO? Role-collapsed confusion, per lag.
+
+    Each row is a lag TEMPLATE; each column is the ROLE the scored square plays
+    at that moment. The cell is mean evidence. Rows sum to ~0 by construction
+    (templates are z-scored to sum to zero across the nine locations), so this
+    shows how evidence is DISTRIBUTED, never its total. The diagonal-ish cell
+    (template lag g scored at goal g) is the statistic reported elsewhere.
+    """
+    src = _latest("goal_lag_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src or not os.path.exists(os.path.join(src, "confusion.csv")):
+        print("  Fig 23 skipped: no confusion.csv")
+        return
+    C = pd.read_csv(os.path.join(src, "confusion.csv"))
+    R = C[C.kind == "role"]
+    roles = ["current", "goal0", "goal1", "goal2", "goal3", "other"]
+    RL = ["current", "goal 0\n(seeking)", "goal 1\n(next)",
+          "goal 2\n(2 ahead)", "goal 3\n(just got)", "other"]
+    rois = ["HC_all", "mPFC", "mOFC"]
+    LAB = {"HC_all": "HC pooled", "mPFC": "mPFC", "mOFC": "mOFC"}
+    phases = ["first_traversal", "encode_rest", "execute"]
+    PL = {"first_traversal": "first traversal", "encode_rest": "rest of encode",
+          "execute": "execute"}
+
+    plt.rcParams.update({"font.size": 7, "axes.titlesize": 8,
+                         "xtick.labelsize": 6, "ytick.labelsize": 7})
+    fig, ax = plt.subplots(len(rois), len(phases),
+                           figsize=(19 * CM, 13 * CM))
+    vmax = 0.15
+    for ri, rn in enumerate(rois):
+        for pi, ph in enumerate(phases):
+            a = ax[ri, pi]
+            g = R[(R.roi == rn) & (R.phase == ph)]
+            M = np.full((4, len(roles)), np.nan)
+            Pm = np.full((4, len(roles)), np.nan)
+            for lag in range(4):
+                gg = g[g.lag == lag]
+                for ci, r_ in enumerate(roles):
+                    v = gg[r_].dropna() if r_ in gg else pd.Series(dtype=float)
+                    if len(v) < 5:
+                        continue
+                    M[lag, ci] = v.mean()
+                    Pm[lag, ci] = stats.ttest_1samp(v, 0)[1]
+            im = a.imshow(M, cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                          aspect="auto")
+            for i in range(4):
+                for j in range(len(roles)):
+                    if np.isfinite(Pm[i, j]) and Pm[i, j] < .05:
+                        a.text(j, i, "*", ha="center", va="center",
+                               fontsize=11, color="k")
+            a.set_xticks(range(len(roles)))
+            a.set_xticklabels(RL if ri == len(rois) - 1 else [""] * len(roles),
+                              rotation=45, ha="right", fontsize=6)
+            a.set_yticks(range(4))
+            a.set_yticklabels([f"lag {i}" for i in range(4)]
+                              if pi == 0 else [""] * 4)
+            n = int(g.n.median()) if len(g) else 0
+            a.set_title(f"{LAB[rn]} — {PL[ph]}" if ri == 0 or pi == 0
+                        else PL[ph], fontsize=7.5, loc="left")
+            if pi == 0:
+                a.set_ylabel(f"{LAB[rn]}\ntemplate lag", fontsize=7.5)
+    fig.colorbar(im, ax=ax, shrink=.5, pad=.02,
+                 label="mean evidence (arb.)")
+    fig.suptitle(
+        "Figure 23 — WHERE DOES THE EVIDENCE GO? Rows = which lag's "
+        "template was used; columns = the role the scored square plays.\n"
+        "Rows sum to ~0 by construction, so this shows the DISTRIBUTION of "
+        "evidence, not its total. * = P < 0.05 uncorrected, 72 cells per "
+        "panel-row. EXPLORATORY.",
+        fontsize=8, y=1.02)
+    save(fig, d, "fig23_confusion_roles")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "xtick.labelsize": 8, "ytick.labelsize": 8})
+    plt.close(fig)
+
+
+def figure24(d):
+    """TEST (c): the 12-bin warped future-lag profile, measured in ripples.
+
+    Rows = ROI, columns = phase. Solid = evidence level (count-matched across
+    phases); dashed = ripple minus its matched flank, i.e. the ripple-SPECIFIC
+    part. Shaded band = the a-priori lag window registered in
+    `per_lag_encoding.ROI_PREDICTED_LAGS_DEG` BEFORE this analysis existed.
+    """
+    src = _latest("warped_lag_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 24 skipped: run `swr_content_explore.py warped_lag`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = ["mPFC", "mOFC", "HC_all"]
+    LAB = {"mPFC": "mPFC", "mOFC": "mOFC", "HC_all": "HC pooled"}
+    col = {"mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC"),
+           "HC_all": "#4A4A55"}
+    AP = {"mPFC": (30, 60), "HC_all": (0, 330)}
+    phases = ["first_traversal", "encode_rest", "execute"]
+    PL = {"first_traversal": "first traversal", "encode_rest": "rest of encode",
+          "execute": "execute"}
+    lags = sorted(R.lag.unique())
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7})
+    fig, ax = plt.subplots(len(rois), len(phases), figsize=(18 * CM, 12 * CM),
+                           sharex=True, sharey="row")
+    for ri, rn in enumerate(rois):
+        for pi, ph in enumerate(phases):
+            a = ax[ri, pi]
+            for cpat, style, lab in ((f"z_{ph}_matched", "-", "level (matched)"),
+                                     (f"c1_{ph}", "--", "ripple − flank")):
+                m, e, ps = [], [], []
+                for lg in lags:
+                    g = R[(R.roi == rn) & (R.lag == lg)]
+                    v = g[cpat].dropna() if cpat in g else pd.Series(dtype=float)
+                    if len(v) < 5:
+                        m.append(np.nan); e.append(0); ps.append(np.nan); continue
+                    m.append(v.mean()); e.append(stats.sem(v))
+                    ps.append(stats.ttest_1samp(v, 0)[1])
+                m, e, ps = np.array(m), np.array(e), np.array(ps)
+                a.errorbar(lags, m, yerr=e, fmt="o" + style, ms=3, lw=1.2,
+                           capsize=1.5, color=col[rn],
+                           alpha=1.0 if style == "-" else .55, label=lab)
+                for lg, mm, ee, pp in zip(lags, m, e, ps):
+                    if np.isfinite(pp) and pp < .05:
+                        a.text(lg, mm + (ee + .06) * np.sign(mm or 1), "*",
+                               ha="center", fontsize=10, color=col[rn],
+                               va="bottom" if (mm or 1) > 0 else "top")
+            if rn in AP:
+                for v_ in AP[rn]:
+                    a.axvspan(v_ - 12, v_ + 12, color="#F7931E", alpha=.16,
+                              lw=0, zorder=0)
+            a.axhline(0, color="grey", lw=.8)
+            a.set_xticks([0, 90, 180, 270])
+            if ri == len(rois) - 1:
+                a.set_xlabel("future lag θ (deg; 90° = one subgoal)")
+            if pi == 0:
+                a.set_ylabel(f"{LAB[rn]}\nevidence (z)")
+            a.set_title(PL[ph] if ri == 0 else "", loc="left")
+            for sp in ("top", "right"):
+                a.spines[sp].set_visible(False)
+    ax[0, 0].legend(frameon=False, fontsize=6, loc="upper right")
+    fig.suptitle(
+        "Figure 24 — TEST (c): the 12-bin future-lag code measured with "
+        "RIPPLE SPIKES ONLY. Orange bands = a-priori lags, registered before "
+        "this analysis existed.\n"
+        "Same subjects/cells as the per-lag paper analysis — this is a "
+        "different MEASUREMENT WINDOW (~3% of task time), not a held-out "
+        "cohort. * = P < 0.05 uncorrected; 216 tests, ~11 expected by chance, "
+        "16 observed. EXPLORATORY.", fontsize=7.5, y=1.02)
+    fig.tight_layout()
+    save(fig, d, "fig24_warped_lag_profile")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8})
+    plt.close(fig)
+
+
+def figure25(d, xlim_ms=250, tag=None):
+    """Time-resolved, both targets, all ROIs, WITH cluster-corrected extents.
+
+    Bars under each curve mark cluster-corrected significant extents (the same
+    sign-flip test the reported HC panel uses, 5000 permutations over the full
+    +-500 ms window). `xlim_ms=500` gives the uncropped view -- worth looking
+    at, because clusters outside +-250 ms exist and a cropped axis hides them.
+    """
+    import scripts.swr_content_main as mr
+    srcs = {t: _latest(f"timecourse_by_phase_{t}_[0-9][0-9][0-9][0-9]-"
+                       "[0-9][0-9]-[0-9][0-9]") for t in ("current", "goal0")}
+    if not any(srcs.values()):
+        print("  Fig 25 skipped: no timecourse_by_phase_<target>_* dirs")
+        return
+    rois = ["HC_all", "mPFC", "mOFC"]
+    LAB = {"HC_all": "HC pooled", "mPFC": "mPFC", "mOFC": "mOFC"}
+    col = {"HC_all": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    TL = {"current": "current square", "goal0": "next reward (goal 0)"}
+    phases = ["encode", "execute"]
+    PL = {"encode": "encode", "execute": "once known"}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(2, 2, figsize=(15 * CM, 11 * CM),
+                           sharex=True, sharey="row")
+    txt = []
+    for ti, tgt in enumerate(("current", "goal0")):
+        src = srcs[tgt]
+        for pi, ph in enumerate(phases):
+            a = ax[ti, pi]
+            if not src:
+                a.set_axis_off(); continue
+            T = pd.read_csv(os.path.join(src, "timecourse_by_phase.csv"))
+            colz = "z_smooth" if "z_smooth" in T.columns else "z"
+            bars = []
+            for rn in rois:
+                W = (T[(T.roi == rn) & (T.phase == ph)]
+                     .pivot_table(index="session", columns="offset_s",
+                                  values=colz).dropna())
+                Wr = (T[(T.roi == rn) & (T.phase == ph)]
+                      .pivot_table(index="session", columns="offset_s",
+                                   values="z").dropna())
+                if not len(W):
+                    continue
+                off = W.columns.to_numpy() * 1000
+                m = W.mean(0).to_numpy()
+                se = (W.std(0, ddof=1) / np.sqrt(len(W))).to_numpy()
+                a.plot(off, m, "-", color=col[rn], lw=1.3,
+                       label=f"{LAB[rn]} (n = {len(W)})")
+                a.fill_between(off, m - se, m + se, color=col[rn], alpha=.16,
+                               lw=0)
+                # cluster test on the UNSMOOTHED per-session curves
+                o2 = Wr.columns.to_numpy()
+                t_obs, mass, p_cl, thr = mr._cluster_test(
+                    Wr.to_numpy(), np.random.default_rng(SEED_FIG),
+                    n_clust=5000)
+                if p_cl < .05:
+                    for e in mr._extents(t_obs, o2, thr, mass):
+                        if e["is_largest"]:
+                            bars.append((rn, e["start_s"] * 1000,
+                                         e["stop_s"] * 1000, p_cl))
+                txt.append(f"{TL[tgt]}/{PL[ph]}/{LAB[rn]}: cluster p={p_cl:.3f}")
+            lo, hi = a.get_ylim()
+            for bi, (rn, x0, x1, p_cl) in enumerate(bars):
+                y = hi - (.05 + .07 * bi) * (hi - lo)
+                a.plot([x0, x1], [y, y], "-", color=col[rn], lw=3,
+                       solid_capstyle="butt")
+                a.text(x1 + 8, y, f"p={p_cl:.3f}", fontsize=5.5,
+                       color=col[rn], va="center")
+            a.axvline(0, color=OBSERVED_VALUE_COLOR, ls=":", lw=1)
+            a.axhline(0, color="grey", lw=.8)
+            a.set_xlim(-xlim_ms, xlim_ms)
+            if ti == 1:
+                a.set_xlabel("ms from ripple")
+            if pi == 0:
+                a.set_ylabel(f"{TL[tgt]}\nevidence (z)")
+            if ti == 0:
+                a.set_title(PL[ph], loc="left")
+            for sp in ("top", "right"):
+                a.spines[sp].set_visible(False)
+    ax[0, 1].legend(frameon=False, loc="upper right")
+    fig.suptitle(
+        "Figure 25 \u2014 time-resolved ripple content, both targets, with "
+        "cluster-corrected extents (5000 sign-flip permutations over the full "
+        "\u00b1500 ms).\n"
+        "Bars = largest significant cluster for that ROI. Counts matched "
+        "between phases within session. EXPLORATORY.",
+        fontsize=7.6, y=1.04)
+    fig.tight_layout()
+    save(fig, d, "fig25_timecourse_both_targets" + (f"_{tag}" if tag else ""))
+    print("   " + "\n   ".join(txt))
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure26(d):
+    """TEST L1: does the representation step up AFTER a ripple? (It does not.)
+
+    Paired post-minus-pre, 250 ms windows inside one subgoal interval. Filled =
+    real ripples, open = sham events (random times in the same subgoal, away
+    from ripples). The sham is the point of the figure: where ripple and sham
+    agree, the effect is within-subgoal drift, not ripples.
+    """
+    src = _latest("loading_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 26 skipped: run `swr_content_explore.py loading`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = ["HC_all", "mPFC", "mOFC"]
+    LAB = {"HC_all": "HC pooled", "mPFC": "mPFC", "mOFC": "mOFC"}
+    col = {"HC_all": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    targets = ["goal0", "goal1", "current"]
+    TL = {"goal0": "next reward", "goal1": "reward after", "current": "current sq"}
+    phases = [("d_first_traversal", "first traversal"),
+              ("d_encode_rest", "rest of encode"), ("d_execute", "execute")]
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, len(targets), figsize=(17 * CM, 6 * CM),
+                           sharey=True)
+    for ti, tgt in enumerate(targets):
+        a = ax[ti]
+        x = np.arange(len(phases))
+        for ri, rn in enumerate(rois):
+            for kind, mk, alpha in (("ripple", "o", 1.0), ("sham", "s", .35)):
+                m, e, ps = [], [], []
+                for c, _ in phases:
+                    g = R[(R.roi == rn) & (R.target == tgt)
+                          & (R["kind"] == kind)]
+                    v = g[c].dropna() if c in g else pd.Series(dtype=float)
+                    if len(v) < 5:
+                        m.append(np.nan); e.append(0); ps.append(np.nan); continue
+                    m.append(v.mean()); e.append(stats.sem(v))
+                    ps.append(stats.ttest_1samp(v, 0)[1])
+                xx = x + (ri - 1) * .22 + (0 if kind == "ripple" else .09)
+                a.errorbar(xx, m, yerr=e, fmt=mk, ms=4, capsize=2, lw=1,
+                           color=col[rn], alpha=alpha, mfc=col[rn] if
+                           kind == "ripple" else "white",
+                           label=f"{LAB[rn]} {kind}" if ti == 0 else None)
+                for x_, mm, ee, pp in zip(xx, m, e, ps):
+                    if np.isfinite(pp) and pp < .05:
+                        a.text(x_, mm - ee - .08, "*", ha="center", va="top",
+                               fontsize=10, color=col[rn])
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xticks(x); a.set_xticklabels([p[1] for p in phases],
+                                           rotation=20, ha="right")
+        a.set_title(TL[tgt], loc="left")
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("post minus pre (z)\npositive = loading")
+    ax[0].legend(frameon=False, ncol=2, fontsize=5.5, loc="lower left")
+    fig.suptitle(
+        "Figure 26 — TEST L1: no loading. Post-minus-pre across a ripple, "
+        "250 ms windows inside one subgoal interval, paired within event.\n"
+        "Filled = ripples, open = SHAM events at random times in the same "
+        "subgoal. Where the two agree the effect is within-subgoal drift, not "
+        "ripples — which is what mPFC/next-reward/execute shows "
+        "(−0.50 ripple vs −0.39 sham). 72 tests. EXPLORATORY.",
+        fontsize=7.5, y=1.06)
+    fig.tight_layout()
+    save(fig, d, "fig26_loading_prepost")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure27(d):
+    """SK's loading model tested directly: rewards indexed by discoveries-ago.
+
+    The model predicts that during the FIRST TRAVERSAL all of back[1..3] are
+    represented CONCURRENTLY in mPFC -- that is a pattern, not a single cell,
+    so the figure shows all three together rather than a best point.
+    """
+    src = _latest("discovery_lag_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 27 skipped: run `swr_content_explore.py discovery_lag`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = ["mPFC", "mOFC", "HC_all"]
+    LAB = {"mPFC": "mPFC", "mOFC": "mOFC", "HC_all": "HC pooled"}
+    col = {"mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC"),
+           "HC_all": "#4A4A55"}
+    cols = [("z_first", "first traversal"),
+            ("c1_first", "first traversal,\nripple − flank"),
+            ("z_later", "later traversals")]
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, len(cols), figsize=(16 * CM, 6 * CM), sharey=True)
+    for ci, (c, ttl) in enumerate(cols):
+        a = ax[ci]
+        for ri, rn in enumerate(rois):
+            m, e, ps, ns = [], [], [], []
+            for bk in (1, 2, 3):
+                g = R[(R.roi == rn) & (R.back == bk)]
+                v = g[c].dropna() if c in g else pd.Series(dtype=float)
+                if len(v) < 5:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); ns.append(0)
+                    continue
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1]); ns.append(len(v))
+            x = np.arange(3) + (ri - 1) * .14
+            a.errorbar(x, m, yerr=e, fmt="o-", ms=4.5, lw=1.3, capsize=2.5,
+                       color=col[rn],
+                       label=f"{LAB[rn]} (n = {ns[0]})" if ci == 0 else None)
+            for xx, mm, ee, pp in zip(x, m, e, ps):
+                if np.isfinite(pp) and pp < .05:
+                    off = -(ee + .06) if mm < 0 else (ee + .06)
+                    a.text(xx, mm + off, "*", ha="center",
+                           va="top" if mm < 0 else "bottom", fontsize=11,
+                           color=col[rn])
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xticks(range(3))
+        a.set_xticklabels(["1\njust found", "2\none before", "3\ntwo before"])
+        a.set_xlabel("discovered how many discoveries ago")
+        a.set_title(ttl, loc="left", fontsize=7.5)
+        a.set_xlim(-.45, 2.45)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("evidence for that reward (z)")
+    ax[0].legend(frameon=False, loc="lower left")
+    fig.suptitle(
+        "Figure 27 — the loading model tested directly: is each "
+        "ALREADY-DISCOVERED reward represented at its recency index?\n"
+        "Prediction was that mPFC shows all three POSITIVE and concurrently "
+        "during the first traversal. It does not (+0.12, −0.12, −0.24; "
+        "all n.s.). Every significant cell is NEGATIVE and is what "
+        "current-location coding produces for other squares. 36 tests. "
+        "EXPLORATORY.", fontsize=7.5, y=1.06)
+    fig.tight_layout()
+    save(fig, d, "fig27_discovery_lag")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure28(d):
+    """The intention test: is the square ABOUT TO BE UNCOVERED represented?
+
+    Locked to the uncover, not to ripples. `strict` keeps only events where
+    that square is NEITHER the one the subject already stands on NOR the true
+    goal -- so neither current-location leakage nor goal coding can produce it.
+    """
+    src = _latest("intention_ripple_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 28 skipped: run `swr_content_explore.py intention_ripple`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = ["HC_all", "mPFC", "mOFC"]
+    LAB = {"HC_all": "HC pooled", "mPFC": "mPFC", "mOFC": "mOFC"}
+    col = {"HC_all": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    phases = ["all", "encode", "execute"]
+    PL = {"all": "all", "encode": "encode", "execute": "once known"}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, len(rois), figsize=(16 * CM, 6.2 * CM),
+                           sharey=True)
+    for ri, rn in enumerate(rois):
+        a = ax[ri]
+        for mi, (c, lab, ls) in enumerate(
+                (("z_intent", "all uncovers", "-"),
+                 ("z_intent_strict", "strict: not current, not goal", "--"))):
+            m, e, ps, ns = [], [], [], []
+            for ph in phases:
+                g = R[(R.roi == rn) & (R.phase == ph)]
+                v = g[c].dropna() if c in g else pd.Series(dtype=float)
+                if len(v) < 5:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); ns.append(0)
+                    continue
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1]); ns.append(len(v))
+            x = np.arange(len(phases)) + (mi - .5) * .14
+            a.errorbar(x, m, yerr=e, fmt="o" + ls, ms=4.5, lw=1.3, capsize=2.5,
+                       color=col[rn], alpha=1.0 if mi == 0 else .6,
+                       mfc=col[rn] if mi == 0 else "white", label=lab)
+            for xx, mm, ee, pp in zip(x, m, e, ps):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + ee + .05, "*", ha="center", va="bottom",
+                           fontsize=11, color=col[rn])
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xticks(range(len(phases)))
+        a.set_xticklabels([PL[p_] for p_ in phases])
+        n0 = R[(R.roi == rn) & (R.phase == "all")].shape[0]
+        a.set_title(f"{LAB[rn]} (n = {n0})", loc="left")
+        a.set_xlim(-.45, len(phases) - .55)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("evidence for the square about\nto be uncovered (z)")
+    ax[0].legend(frameon=False, loc="lower left")
+    fig.suptitle(
+        "Figure 28 \u2014 locked to the UNCOVER, not the ripple: before the "
+        "press, is the square about to be uncovered represented?\n"
+        "Dashed = strict (that square is neither the one underfoot nor the "
+        "true goal), so neither current-location leakage nor goal coding can "
+        "explain it.\n"
+        "\u26a0 Even strict does not control spatial PROXIMITY \u2014 the next "
+        "square is usually adjacent, and adjacent templates correlate. "
+        "EXPLORATORY.", fontsize=7.5, y=1.10)
+    fig.tight_layout()
+    save(fig, d, "fig28_intention")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure29(d):
+    """mPFC holds a newly discovered reward location -- only when it is new.
+
+    a: evidence for the just-uncovered square, by what the uncover WAS. In all
+       three the subject is standing on that square during the window, so
+       "codes where you are" predicts all three equal.
+    b: the same split by whether a ripple followed. The signal is WEAKER with a
+       ripple, so ripples are not the delivery mechanism.
+    """
+    src = _latest("consolidation_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 29 skipped: run `swr_content_explore.py consolidation`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    R = R[R.phase == "all"]
+    rois = ["mPFC", "mOFC", "HC_all"]
+    LAB = {"mPFC": "mPFC", "mOFC": "mOFC", "HC_all": "HC pooled"}
+    col = {"mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC"),
+           "HC_all": "#4A4A55"}
+    evs = ["first_discovery", "repeat_correct", "incorrect"]
+    EL = ["first discovery\n(new reward)", "correct,\nalready known",
+          "incorrect\nuncover"]
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, 2, figsize=(15 * CM, 6.4 * CM), sharey=True)
+
+    a = ax[0]
+    for ri, rn in enumerate(rois):
+        m, e, ps = [], [], []
+        for ev in evs:
+            v = R[(R.roi == rn) & (R.event == ev)].z_all.dropna()
+            if len(v) < 5:
+                m.append(np.nan); e.append(0); ps.append(np.nan); continue
+            m.append(v.mean()); e.append(stats.sem(v))
+            ps.append(stats.ttest_1samp(v, 0)[1])
+        x = np.arange(len(evs)) + (ri - 1) * .16
+        n = R[(R.roi == rn) & (R.event == "first_discovery")].shape[0]
+        a.errorbar(x, m, yerr=e, fmt="o-", ms=5, lw=1.4, capsize=3,
+                   color=col[rn], label=f"{LAB[rn]} (n = {n})")
+        for xx, mm, ee, pp in zip(x, m, e, ps):
+            if np.isfinite(pp) and pp < .05:
+                a.text(xx, mm + ee + .05, "*", ha="center", va="bottom",
+                       fontsize=12, color=col[rn])
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(evs))); a.set_xticklabels(EL)
+    a.set_ylabel("evidence for the square\njust uncovered (z)")
+    a.set_title("a  only a NEW reward is held", loc="left")
+    a.legend(frameon=False, loc="lower left")
+    a.set_xlim(-.5, len(evs) - .5)
+
+    a = ax[1]
+    for ri, rn in enumerate(rois):
+        for ki, (c, lab, mk) in enumerate(((f"z_without", "no ripple", "o"),
+                                           (f"z_with", "ripple", "s"))):
+            m, e, ps = [], [], []
+            for ev in evs:
+                v = R[(R.roi == rn) & (R.event == ev)][c].dropna()
+                if len(v) < 5:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); continue
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1])
+            x = np.arange(len(evs)) + (ri - 1) * .18 + (ki - .5) * .08
+            a.errorbar(x, m, yerr=e, fmt=mk, ms=4, capsize=2, lw=1,
+                       color=col[rn], mfc=col[rn] if ki else "white",
+                       label=f"{LAB[rn]}, {lab}" if ri == 0 or True else None)
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(evs))); a.set_xticklabels(EL)
+    a.set_title("b  weaker WITH a ripple, not stronger", loc="left")
+    a.legend(frameon=False, fontsize=5.5, ncol=3, loc="lower left")
+    a.set_xlim(-.5, len(evs) - .5)
+    for aa in ax:
+        for sp in ("top", "right"):
+            aa.spines[sp].set_visible(False)
+    fig.suptitle(
+        "Figure 29 — after an uncover, does PFC hold the square that was "
+        "just uncovered?  Window t+50 ms to t+1 s.\n"
+        "The subject stands on that square in ALL THREE event types, so "
+        "current-location coding predicts all three equal. mPFC first "
+        "discovery vs repeat correct: +0.77, P = 0.0035.\n"
+        "⚠ first discoveries also differ in trial number and novelty of "
+        "the PLACE, not only of the reward. EXPLORATORY.",
+        fontsize=7.5, y=1.10)
+    fig.tight_layout()
+    save(fig, d, "fig29_consolidation")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure30(d, xlim_ms=500):
+    """The newly-discovered-reward signal, aligned to ripples. It does not move.
+
+    Ripples between a first discovery and the next uncover; target is the
+    square whose reward was just discovered. If a ripple delivered that
+    location the curve would rise after 0; if it interrupted it, dip. Neither
+    happens -- shown because a flat curve IS the result here, and a null is
+    only informative if you can see the error bars.
+    """
+    src = _latest("discovery_locked_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 30 skipped: run `swr_content_explore.py discovery_locked`")
+        return
+    T = pd.read_csv(os.path.join(src, "timecourse.csv"))
+    S = pd.read_csv(os.path.join(src, "summary.csv"))
+    rois = ["mPFC", "mOFC", "HC_all"]
+    LAB = {"mPFC": "mPFC", "mOFC": "mOFC", "HC_all": "HC pooled"}
+    col = {"mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC"),
+           "HC_all": "#4A4A55"}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, len(rois), figsize=(16 * CM, 6 * CM), sharey=True)
+    for ri, rn in enumerate(rois):
+        a = ax[ri]
+        W = (T[T.roi == rn].pivot_table(index="session", columns="offset_s",
+                                        values="z").dropna())
+        if not len(W):
+            a.set_axis_off(); continue
+        off = W.columns.to_numpy() * 1000
+        m = W.mean(0).to_numpy()
+        se = (W.std(0, ddof=1) / np.sqrt(len(W))).to_numpy()
+        a.plot(off, m, "-", color=col[rn], lw=1.4)
+        a.fill_between(off, m - se, m + se, color=col[rn], alpha=.2, lw=0)
+        a.axvline(0, color=OBSERVED_VALUE_COLOR, ls=":", lw=1.1)
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xlim(-xlim_ms, xlim_ms)
+        a.set_xlabel("ms from ripple")
+        g = S[S.roi == rn]
+        sub = ""
+        if len(g):
+            g = g.iloc[0]
+            sub = (f"at ripple {g.z_at_ripple:+.2f} (P={g.p_at_ripple:.2f})\n"
+                   f"post−pre {g.post_minus_pre:+.2f} "
+                   f"(P={g.p_pp:.2f}); cluster P={g.p_cluster:.2f}")
+        a.set_title(f"{LAB[rn]} (n = {len(W)})\n{sub}", loc="left", fontsize=7)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("evidence for the square whose\nreward was just discovered (z)")
+    med = int(T.n_events.median())
+    fig.suptitle(
+        "Figure 30 — does the newly-discovered-reward signal change around "
+        f"a ripple? No. Ripples between a first discovery and the next uncover "
+        f"(median {med} per session).\n"
+        "A delivering ripple predicts a rise after 0; an interrupting one a "
+        "dip. Neither occurs, and no cluster survives in any ROI. "
+        "NULL RESULT, shown with its error bars. EXPLORATORY.",
+        fontsize=7.5, y=1.08)
+    fig.tight_layout()
+    save(fig, d, "fig30_discovery_locked")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure31(d):
+    """METHOD CHECK: the estimator recovers HC current location OUTSIDE ripples.
+
+    Same templates, same statistic, window width matched to the median ripple
+    and window COUNT matched between the two types -- so neither can explain a
+    difference. If the non-ripple bars were flat, every null in this project
+    would be uninterpretable; they are not.
+    """
+    src = _latest("method_check_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 31 skipped: run `swr_content_explore.py method_check`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = ["HC_all", "HC_anterior", "HC_mid", "mPFC", "mOFC"]
+    LAB = {"HC_all": "HC pooled", "HC_anterior": "aHP", "HC_mid": "mHP",
+           "mPFC": "mPFC", "mOFC": "mOFC"}
+    col = {"HC_all": "#4A4A55", "HC_anterior": get_roi_colour("HC_anterior"),
+           "HC_mid": get_roi_colour("HC_mid"), "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    phases = ["encode", "execute"]
+    PL = {"encode": "encode", "execute": "execute (once known)"}
+
+    def star(p):
+        return "***" if p < .001 else "**" if p < .01 else "*" if p < .05 else ""
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8.5,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 7})
+    fig, ax = plt.subplots(1, 2, figsize=(16 * CM, 6.6 * CM), sharey=True)
+    w = .36
+    for pi, ph in enumerate(phases):
+        a = ax[pi]
+        for wi, (c, lab, alpha) in enumerate(
+                (("z_nonripple", "NON-ripple windows", .45),
+                 ("z_ripple", "ripple windows", 1.0))):
+            m, e, ps = [], [], []
+            for rn in rois:
+                v = R[(R.roi == rn) & (R.phase == ph)][c].dropna()
+                if len(v) < 5:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); continue
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1])
+            x = np.arange(len(rois)) + (wi - .5) * w
+            a.bar(x, m, w, yerr=e, capsize=2.5, edgecolor="none",
+                  color=[col[rn] for rn in rois], alpha=alpha, label=lab)
+            for xx, mm, ee, pp in zip(x, m, e, ps):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + ee + .02, star(pp), ha="center",
+                           va="bottom", fontsize=8)
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xticks(range(len(rois)))
+        a.set_xticklabels([LAB[rn] for rn in rois], rotation=20, ha="right")
+        a.set_title(PL[ph], loc="left")
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("current-location evidence (z)")
+    h, l = ax[0].get_legend_handles_labels()
+    import matplotlib.patches as mpatches
+    h = [mpatches.Patch(facecolor="#4A4A55", alpha=.45),
+         mpatches.Patch(facecolor="#4A4A55", alpha=1.0)]
+    ax[0].legend(h, l, frameon=False, loc="upper right")
+    fig.suptitle(
+        "Figure 31 — METHOD CHECK: the same estimator applied to ripple "
+        "windows and to tiled NON-ripple windows (≥1 s from any ripple).\n"
+        "Window width matched to the median ripple; window COUNT matched "
+        "between types, so neither width nor n can explain a difference.\n"
+        "Hippocampus encodes the current location during EXECUTE outside "
+        "ripples (+0.145, P = 0.043) — the published result is recovered. "
+        "Ripple minus non-ripple is n.s. in execute (+0.06, P = 0.68).",
+        fontsize=7.6, y=1.11)
+    fig.tight_layout()
+    save(fig, d, "fig31_method_check")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure32(d):
+    """Do the per-lag-encoding tags carry information? Two tests.
+
+    a: does a cell fire more at its PREFERRED SQUARE (chosen on training
+       configurations), split by whether its preferred lag is 0?
+    b: is a cell more ripple-driven, by lag group and phase?
+    c: the same modulation against all 12 preferred lags -- a real lag code
+       should be a smooth harmonic, not a lag-0-vs-rest step.
+    """
+    s1 = _latest("preferred_lag_firing_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    s2 = _latest("lag_group_ripple_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not s1 or not s2:
+        print("  Fig 32 skipped: run `preferred_lag` and `lag_group`")
+        return
+    C = pd.read_csv(os.path.join(s1, "per_cell.csv"))
+    M = pd.read_csv(os.path.join(s2, "per_cell.csv"))
+    rois = ["HC", "mPFC", "mOFC"]
+    col = {"HC": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    phases = ["encode", "execute"]
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, 3, figsize=(19 * CM, 6.2 * CM))
+
+    # a -- preferred-square selectivity, ordinary task time
+    a = ax[0]
+    for ri, rn in enumerate(rois):
+        for gi, (lab, sel) in enumerate((("lag 0", True), ("lag != 0", False))):
+            m, e, ps = [], [], []
+            for ph in phases:
+                g = C[(C.roi == rn) & (C.phase == ph) & (C.window == "all")]
+                v = (g[g.pref_lag == 0] if sel else g[g.pref_lag != 0]).sel.dropna()
+                if len(v) < 5:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); continue
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1])
+            x = np.arange(len(phases)) + (ri - 1) * .22 + (gi - .5) * .09
+            a.errorbar(x, m, yerr=e, fmt="o" if gi == 0 else "s", ms=4,
+                       capsize=2, lw=1, color=col[rn],
+                       mfc=col[rn] if gi == 0 else "white",
+                       label=f"{rn}, {lab}")
+            for xx, mm, ee, pp in zip(x, m, e, ps):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + ee + .004, "*", ha="center", va="bottom",
+                           fontsize=10, color=col[rn])
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(phases))); a.set_xticklabels(phases)
+    a.set_ylabel("selectivity for the\npreferred square")
+    a.set_title("a  fires at its preferred square?", loc="left")
+    a.legend(frameon=False, fontsize=5.5, ncol=2, loc="lower left")
+
+    # b -- ripple modulation by lag group
+    a = ax[1]
+    for ri, rn in enumerate(rois):
+        for gi, (lab, sel) in enumerate((("lag 0", True), ("lag != 0", False))):
+            m, e, ps = [], [], []
+            for ph in phases:
+                g = M[(M.roi == rn) & (M.phase == ph)]
+                v = (g[g.pref_lag == 0] if sel else g[g.pref_lag != 0]).ripmod.dropna()
+                if len(v) < 5:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); continue
+                m.append(v.mean()); e.append(stats.sem(v))
+                ps.append(stats.ttest_1samp(v, 0)[1])
+            x = np.arange(len(phases)) + (ri - 1) * .22 + (gi - .5) * .09
+            a.errorbar(x, m, yerr=e, fmt="o" if gi == 0 else "s", ms=4,
+                       capsize=2, lw=1, color=col[rn],
+                       mfc=col[rn] if gi == 0 else "white")
+            for xx, mm, ee, pp in zip(x, m, e, ps):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + ee + .006, "*", ha="center", va="bottom",
+                           fontsize=10, color=col[rn])
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(phases))); a.set_xticklabels(phases)
+    a.set_ylabel("ripple modulation\n(in − out)/(in + out)")
+    a.set_title("b  more driven by ripples?", loc="left")
+
+    # c -- continuous, all 12 lags
+    a = ax[2]
+    for rn in rois:
+        g = M[(M.roi == rn) & (M.phase == "execute")]
+        prof = g.groupby("pref_lag").ripmod.agg(["mean", "sem"])
+        a.errorbar(prof.index, prof["mean"], yerr=prof["sem"], fmt="o-",
+                   ms=3, lw=1, capsize=1.5, color=col[rn], label=rn)
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks([0, 90, 180, 270])
+    a.set_xlabel("preferred lag (deg)")
+    a.set_ylabel("ripple modulation")
+    a.set_title("c  ripple-drive is not organised by lag", loc="left")
+    a.legend(frameon=False, loc="lower right")
+    for aa in ax:
+        for sp in ("top", "right"):
+            aa.spines[sp].set_visible(False)
+    fig.suptitle(
+        "Figure 32 — do the per-lag-encoding tags carry information? "
+        "Preferred lag = argmax over the 12 stored r values, ALL 955 cells, no "
+        "significance filter.\n"
+        "a: HC cells tagged lag-0 are location-selective during execute "
+        "(+0.051, P = 0.0011) and other-lag cells are not (difference +0.055, "
+        "P = 0.0009) — the tag is real.\n"
+        "⚠ the tag is a noisy argmax over 12 CORRELATED values and is "
+        "near-uniform across cells (64-94 per bin, 80 by chance); mPFC has only "
+        "9 lag-0 cells. EXPLORATORY.", fontsize=7.4, y=1.13)
+    fig.tight_layout()
+    save(fig, d, "fig32_preferred_lag")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure33(d):
+    """Lag tuning predicts WHERE a cell fires, but not WHEN.
+
+    a: continuous -- each cell's lag-0 encoding strength against how
+       selectively it fires at its preferred square. Uses every cell instead of
+       thresholding at the argmax, which discarded ~94% of them.
+    b: the storage-vs-planning test. Null everywhere.
+    """
+    import glob as _g
+    s1 = _latest("preferred_lag_firing_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    s2 = _latest("storage_vs_planning_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not s1 or not s2:
+        print("  Fig 33 skipped: run `preferred_lag` and `storage_planning`")
+        return
+    from mc.analyse.swr_explore.preferred_lag_firing import preferred_lag_table
+    PL = preferred_lag_table()[["session", "cell", "r_lag0"]]
+    C = pd.read_csv(os.path.join(s1, "per_cell.csv")).merge(
+        PL, on=["session", "cell"], how="left")
+    S = pd.read_csv(os.path.join(s2, "per_cell.csv"))
+    rois = ["HC", "mPFC", "mOFC"]
+    col = {"HC": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, 4, figsize=(20 * CM, 5.6 * CM))
+
+    # a-c: the continuous WHERE test, one scatter per ROI (execute)
+    for i, rn in enumerate(rois):
+        a = ax[i]
+        g = C[(C.roi == rn) & (C.phase == "execute")
+              & (C.window == "all")].dropna(subset=["sel", "r_lag0"])
+        a.scatter(g.r_lag0, g.sel, s=5, color=col[rn], alpha=.35,
+                  edgecolor="none")
+        if len(g) > 5:
+            r_, p_ = stats.pearsonr(g.r_lag0, g.sel)
+            b1, b0 = np.polyfit(g.r_lag0, g.sel, 1)
+            xx = np.linspace(g.r_lag0.min(), g.r_lag0.max(), 20)
+            a.plot(xx, b0 + b1 * xx, "-", color=col[rn], lw=1.5)
+            a.set_title(f"{rn}  r = {r_:+.2f}, P = {p_:.2g}\nn = {len(g)} cells",
+                        loc="left", fontsize=7.5)
+        a.axhline(0, color="grey", lw=.7); a.axvline(0, color="grey", lw=.7)
+        a.set_xlabel("lag-0 encoding strength")
+        if i == 0:
+            a.set_ylabel("selectivity for the\npreferred square (execute)")
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+
+    # d: the WHEN test, null
+    a = ax[3]
+    preds = ["lag0_strength", "future_strength"]
+    for pi, pred in enumerate(preds):
+        m, e = [], []
+        for rn in rois:
+            g = S[S.roi == rn].dropna(subset=[pred, "store_minus_plan"])
+            if len(g) < 20:
+                m.append(np.nan); e.append(0); continue
+            r_, p_ = stats.pearsonr(g[pred], g.store_minus_plan)
+            m.append(r_)
+            e.append(1.96 / np.sqrt(len(g) - 3))      # ~95% CI on r
+        x = np.arange(len(rois)) + (pi - .5) * .22
+        a.errorbar(x, m, yerr=e, fmt="o" if pi == 0 else "s", ms=5, capsize=3,
+                   lw=1.2, color="#4A4A55",
+                   mfc="#4A4A55" if pi == 0 else "white",
+                   label="lag-0 strength" if pi == 0 else "future strength")
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(rois))); a.set_xticklabels(rois)
+    a.set_ylabel("r with (storage \u2212 planning)")
+    a.set_title("d  WHEN: null everywhere", loc="left")
+    a.legend(frameon=False, fontsize=6)
+    for sp in ("top", "right"):
+        a.spines[sp].set_visible(False)
+
+    fig.suptitle(
+        "Figure 33 \u2014 lag tuning predicts WHERE a cell fires, not WHEN.\n"
+        "a-c: a cell's lag-0 encoding strength predicts how selectively it "
+        "fires at its preferred square during execute, in all three regions "
+        "(continuous, every cell, preferred square cross-validated).\n"
+        "d: the same tuning does NOT predict engagement at storage versus "
+        "planning. The model predicts OPPOSITE signs for the two predictors; "
+        "they are not obtained. EXPLORATORY.", fontsize=7.4, y=1.14)
+    fig.tight_layout()
+    save(fig, d, "fig33_where_not_when")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure34(d):
+    """Are the lag-tuning contrasts ripple-dependent? No.
+
+    a: does lag tuning predict a cell's engagement NEAR a ripple minus AWAY
+       from one, at storage and at planning events?
+    b: the most direct version -- post-ripple minus pre-ripple engagement.
+    Plotted as correlations with 95% CIs, because the claim being tested is
+    that these are non-zero, and a CI shows what the data can exclude.
+    """
+    src = _latest("storage_vs_planning_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 34 skipped: run `swr_content_explore.py storage_planning`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_cell.csv"))
+    rois = ["HC", "mPFC", "mOFC"]
+    col = {"HC": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+    preds = [("lag0_strength", "lag-0 strength", "o"),
+             ("future_strength", "future strength", "s")]
+    panels = [("storage_rip_minus_norip", "a  storage: near a ripple\n"
+               "    minus away from one"),
+              ("planning_rip_minus_norip", "b  planning: near a ripple\n"
+               "    minus away from one"),
+              ("ripple_post_minus_pre", "c  post-ripple minus\n"
+               "    pre-ripple")]
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, len(panels), figsize=(16 * CM, 6.2 * CM),
+                           sharey=True)
+    for pi, (meas, ttl) in enumerate(panels):
+        a = ax[pi]
+        for qi, (pred, plab, mk) in enumerate(preds):
+            m, e, ps, ns = [], [], [], []
+            for rn in rois:
+                g = R[R.roi == rn].dropna(subset=[pred, meas]) \
+                    if meas in R.columns else pd.DataFrame()
+                if len(g) < 20:
+                    m.append(np.nan); e.append(0); ps.append(np.nan); ns.append(0)
+                    continue
+                r_, p_ = stats.pearsonr(g[pred], g[meas])
+                m.append(r_); ps.append(p_); ns.append(len(g))
+                e.append(1.96 / np.sqrt(len(g) - 3))     # ~95% CI on r
+            x = np.arange(len(rois)) + (qi - .5) * .20
+            a.errorbar(x, m, yerr=e, fmt=mk, ms=5, capsize=3, lw=1.2,
+                       color="#4A4A55", mfc="#4A4A55" if qi == 0 else "white",
+                       label=plab if pi == 0 else None)
+            for xx, mm, pp in zip(x, m, ps):
+                if np.isfinite(pp) and pp < .05:
+                    a.text(xx, mm + .035, "*", ha="center", va="bottom",
+                           fontsize=11)
+        a.axhline(0, color="grey", lw=1.0)
+        a.set_xticks(range(len(rois))); a.set_xticklabels(rois)
+        a.set_title(ttl, loc="left", fontsize=7.5)
+        a.set_xlim(-.5, len(rois) - .5)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("correlation of lag tuning with\nthe ripple-dependent "
+                     "contrast (r)")
+    ax[0].legend(frameon=False, loc="lower left")
+    n_hc = R[R.roi == "HC"].shape[0]
+    fig.suptitle(
+        "Figure 34 — are the lag-tuning contrasts RIPPLE-DEPENDENT? No. "
+        "Each point is a correlation with its ~95% CI; a real effect would sit "
+        "clear of zero.\n"
+        "1 of 18 tests reaches P < 0.05 (HC, a, future strength, r = −0.089) "
+        "against ~1 expected by chance. Panel c, the most direct test, is null "
+        "everywhere.\n"
+        f"mPFC leans positive at storage (+0.15, P = 0.065) and planning "
+        f"(+0.13, P = 0.11) — a lead, not a result. n = {n_hc} HC, 148 mPFC, "
+        "141 mOFC cells. EXPLORATORY.", fontsize=7.4, y=1.13)
+    fig.tight_layout()
+    save(fig, d, "fig34_ripple_dependent")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure35(d, xlim_ms=500):
+    """fig30 split by WHICH reward was discovered (A, B, C, D).
+
+    On the first traversal, A is discovered with nothing known, B with one
+    known, and so on -- so the four curves differ in how much of the plan
+    already exists when the ripple happens.
+
+    ⚠ VERY underpowered: the pooled version has ~104 events per session and
+    this divides them four ways. Shown because the A->D ordering is where a
+    knowledge effect would live, not because any single curve is testable.
+    """
+    src = _latest("discovery_locked_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 35 skipped: run `swr_content_explore.py discovery_locked`")
+        return
+    T = pd.read_csv(os.path.join(src, "timecourse.csv"))
+    if "reward" not in T.columns:
+        print("  Fig 35 skipped: rerun discovery_locked for the reward split")
+        return
+    rois = ["mPFC", "mOFC", "HC_all"]
+    LAB = {"mPFC": "mPFC", "mOFC": "mOFC", "HC_all": "HC pooled"}
+    # project convention for states A-D
+    RC = {1: "#F15A29", 2: "#F7931E", 3: "#C7C6E2", 4: "#6B60AA"}
+    RL = {1: "A (nothing known)", 2: "B (1 known)", 3: "C (2 known)",
+          4: "D (3 known)"}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, len(rois), figsize=(17 * CM, 6.2 * CM),
+                           sharey=True)
+    for ri, rn in enumerate(rois):
+        a = ax[ri]
+        # pooled, as the reference
+        W0 = (T[(T.roi == rn) & (T.reward == 0)]
+              .pivot_table(index="session", columns="offset_s",
+                           values="z").dropna())
+        if len(W0):
+            a.plot(W0.columns.to_numpy() * 1000, W0.mean(0).to_numpy(), "-",
+                   color="#999999", lw=2.2, alpha=.8, zorder=1,
+                   label=f"all ({len(W0)})")
+        ns = []
+        for rw in (1, 2, 3, 4):
+            W = (T[(T.roi == rn) & (T.reward == rw)]
+                 .pivot_table(index="session", columns="offset_s",
+                              values="z").dropna())
+            if len(W) < 5:
+                ns.append(0); continue
+            off = W.columns.to_numpy() * 1000
+            m = W.mean(0).to_numpy()
+            se = (W.std(0, ddof=1) / np.sqrt(len(W))).to_numpy()
+            a.plot(off, m, "-", color=RC[rw], lw=1.2,
+                   label=f"{RL[rw]} ({len(W)})")
+            a.fill_between(off, m - se, m + se, color=RC[rw], alpha=.12, lw=0)
+            ns.append(int(T[(T.roi == rn) & (T.reward == rw)].n_events.median()))
+        a.axvline(0, color=OBSERVED_VALUE_COLOR, ls=":", lw=1.1)
+        a.axhline(0, color="grey", lw=.9)
+        a.set_xlim(-xlim_ms, xlim_ms)
+        a.set_xlabel("ms from ripple")
+        med = ", ".join(str(n) for n in ns)
+        a.set_title(f"{LAB[rn]}\nmedian events/session: {med}", loc="left",
+                    fontsize=7)
+        for sp in ("top", "right"):
+            a.spines[sp].set_visible(False)
+    ax[0].set_ylabel("evidence for the square whose\nreward was just discovered (z)")
+    ax[0].legend(frameon=False, fontsize=5.8, loc="lower left")
+    fig.suptitle(
+        "Figure 35 — fig30 split by WHICH reward was just discovered. "
+        "A is found with nothing known, D with three already known, so the "
+        "curves differ in how much plan exists.\n"
+        "⚠ SEVERELY underpowered — the pooled version has ~104 events "
+        "per session and this divides them four ways (medians in each title). "
+        "No test is reported because none would be meaningful.\n"
+        "Shown to look at the A→D ordering only. EXPLORATORY.",
+        fontsize=7.4, y=1.12)
+    fig.tight_layout()
+    save(fig, d, "fig35_discovery_by_reward")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure36(d):
+    """Is the place template transferable across configurations? Barely.
+
+    a: leave-one-out -- each configuration's rate map against the mean of the
+       others, averaged over cells. This is exactly what the estimator's
+       template relies on. ~0 means the template carries no transferable
+       location information.
+    b: SK's hypothesis -- does rate-map similarity fall as the two
+       configurations time their squares more differently?
+    c: the configuration x configuration similarity matrix for one example
+       session, i.e. the 'confusion matrix' over tasks.
+    """
+    src = _latest("cross_task_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 36 skipped: run `swr_content_explore.py cross_task`")
+        return
+    R = pd.read_csv(os.path.join(src, "loo.csv"))
+    PRS = pd.read_csv(os.path.join(src, "pairs.csv"))
+    rois = ["HC", "mPFC", "mOFC"]
+    col = {"HC": "#4A4A55", "mPFC": get_roi_colour("mPFC"),
+           "mOFC": get_roi_colour("mOFC")}
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 7,
+                         "ytick.labelsize": 7, "legend.fontsize": 6.5})
+    fig, ax = plt.subplots(1, 3, figsize=(17 * CM, 6.2 * CM))
+
+    # a: transferability
+    a = ax[0]
+    for i, rn in enumerate(rois):
+        v = R[R.roi == rn].groupby("session").loo_r.mean().dropna()
+        if len(v) < 5:
+            continue
+        t, p = stats.ttest_1samp(v, 0)
+        a.bar(i, v.mean(), .6, yerr=stats.sem(v), capsize=3, color=col[rn],
+              edgecolor="none")
+        a.scatter(np.full(len(v), i) + np.random.default_rng(SEED_FIG)
+                  .uniform(-.16, .16, len(v)), v, s=6, color="k", alpha=.25,
+                  zorder=3)
+        if p < .05:
+            a.text(i, v.mean() + stats.sem(v) + .01, "*", ha="center",
+                   fontsize=12)
+        a.text(i, -0.14, f"r={v.mean():+.3f}\nP={p:.2g}", ha="center",
+               fontsize=6)
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(rois))); a.set_xticklabels(rois)
+    a.set_ylabel("rate map vs the mean of\nthe other configurations (r)")
+    a.set_title("a  is the template transferable?", loc="left")
+    a.set_ylim(-0.16, None)
+
+    # b: lag divergence
+    a = ax[1]
+    for i, rn in enumerate(rois):
+        g = PRS[PRS.roi == rn].dropna(subset=["lag_div", "map_r"])
+        if len(g) < 20:
+            continue
+        per = [stats.pearsonr(gg.lag_div, gg.map_r)[0]
+               for _, gg in g.groupby("session")
+               if len(gg) >= 6 and gg.lag_div.std() > 0]
+        rp, pp = stats.pearsonr(g.lag_div, g.map_r)
+        tt, pw = stats.ttest_1samp(per, 0) if len(per) >= 5 else (np.nan, np.nan)
+        a.errorbar(i - .13, rp, yerr=1.96 / np.sqrt(len(g) - 3), fmt="o", ms=5,
+                   capsize=3, color=col[rn],
+                   label="pooled over pairs" if i == 0 else None)
+        # 95% CI for BOTH, not 1 SEM for one and 95% for the other -- the
+        # mismatch made the within-session point look far tighter than it is
+        ci_w = stats.t.ppf(.975, len(per) - 1) * stats.sem(per)
+        a.errorbar(i + .13, np.mean(per), yerr=ci_w, fmt="s", ms=5,
+                   capsize=3, color=col[rn], mfc="white",
+                   label="within session, then across" if i == 0 else None)
+        if pp < .05:
+            a.text(i - .13, rp + .03, "*", ha="center", fontsize=11)
+    a.axhline(0, color="grey", lw=.9)
+    a.set_xticks(range(len(rois))); a.set_xticklabels(rois)
+    a.set_ylabel("r(lag divergence, map similarity)")
+    a.set_title("b  does lag divergence explain it?", loc="left")
+    a.legend(frameon=False, fontsize=6, loc="lower left")
+
+    # c: one session's configuration x configuration matrix
+    a = ax[2]
+    g = PRS[PRS.roi == "HC"]
+    best = g.session.value_counts().idxmax() if len(g) else None
+    gg = g[g.session == best]
+    grids = sorted(set(gg.g1) | set(gg.g2))
+    M = np.full((len(grids), len(grids)), np.nan)
+    ix = {v: i for i, v in enumerate(grids)}
+    for _, row in gg.iterrows():
+        M[ix[row.g1], ix[row.g2]] = M[ix[row.g2], ix[row.g1]] = row.map_r
+    np.fill_diagonal(M, np.nan)
+    v = np.nanmax(np.abs(M)) if np.isfinite(M).any() else 1
+    im = a.imshow(M, cmap="RdBu_r", vmin=-v, vmax=v)
+    fig.colorbar(im, ax=a, shrink=.75, label="map similarity (r)")
+    a.set_xticks(range(len(grids))); a.set_yticks(range(len(grids)))
+    a.set_xticklabels([f"{int(x)}" for x in grids], fontsize=6)
+    a.set_yticklabels([f"{int(x)}" for x in grids], fontsize=6)
+    a.set_title(f"c  config x config, HC, session {int(best)}", loc="left")
+    a.set_xlabel("configuration")
+    for aa in ax[:2]:
+        for sp in ("top", "right"):
+            aa.spines[sp].set_visible(False)
+    fig.suptitle(
+        "Figure 36 — the place template barely transfers across "
+        "configurations, and NOT because it is anti-correlated.\n"
+        "a: HC +0.057 (P = 1.9e-5) but tiny; mPFC and mOFC are "
+        "indistinguishable from ZERO — uninformative, not misleading.\n"
+        "b: both error bars are 95% CIs. Lag divergence predicts lower "
+        "similarity in mPFC when pooled (P = 0.034) but not within session "
+        "(P = 0.16), which is the proper test. EXPLORATORY.",
+        fontsize=7.4, y=1.12)
+    fig.tight_layout()
+    save(fig, d, "fig36_cross_task")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure37(d, session=None):
+    """Confusion matrices: three TASK models beside the three neural ones.
+
+    Top row: how similar are two configurations as TASKS -- by where the
+    subject spends time, by which rewards they share, and by the movements
+    they produce. Bottom row: how similar the rate maps are in each region.
+
+    The question is whether the bottom row is explained by the top row. For HC
+    it is (occupancy r = +0.113, trajectory +0.129, reward overlap +0.077, all
+    P < 0.03 within session). For mPFC and mOFC nothing tracks any model.
+    """
+    src = _latest("cross_task_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 37 skipped: run `swr_content_explore.py cross_task`")
+        return
+    P = pd.read_csv(os.path.join(src, "pairs.csv"))
+    if "occupancy_sim" not in P.columns:
+        print("  Fig 37 skipped: rerun cross_task for the model matrices")
+        return
+    if session is None:
+        g = P.groupby("session").agg(n=("map_r", "size"),
+                                     k=("roi", "nunique"))
+        g = g[g.k == 3].sort_values("n", ascending=False)
+        session = int(g.index[0])
+    S = P[P.session == session]
+    grids = sorted(set(S.g1) | set(S.g2))
+    ix = {v: i for i, v in enumerate(grids)}
+    n = len(grids)
+
+    def _mat(sub, col):
+        M = np.full((n, n), np.nan)
+        for _, r_ in sub.iterrows():
+            if np.isfinite(r_[col]):
+                M[ix[r_.g1], ix[r_.g2]] = M[ix[r_.g2], ix[r_.g1]] = r_[col]
+        return M
+
+    models = [("occupancy_sim", "TASK: occupancy\n(time per square)"),
+              ("reward_overlap", "TASK: shared rewards\n(0-1 of four)"),
+              ("trajectory_sim", "TASK: trajectory\n(9x9 transitions)")]
+    neur = [("HC", "HC pooled"), ("mPFC", "mPFC"), ("mOFC", "mOFC")]
+    stat = {"HC": "occ +0.11***  traj +0.13***  rew +0.08*",
+            "mPFC": "all n.s.", "mOFC": "all n.s."}
+
+    plt.rcParams.update({"font.size": 7, "axes.titlesize": 7.5,
+                         "xtick.labelsize": 6, "ytick.labelsize": 6})
+    fig, ax = plt.subplots(2, 3, figsize=(15 * CM, 11 * CM))
+    for j, (col, ttl) in enumerate(models):
+        a = ax[0, j]
+        M = _mat(S.drop_duplicates(subset=["g1", "g2"]), col)
+        v = np.nanmax(np.abs(M)) if np.isfinite(M).any() else 1
+        im = a.imshow(M, cmap="PuOr_r", vmin=-v, vmax=v)
+        fig.colorbar(im, ax=a, shrink=.72)
+        a.set_title(ttl, loc="left", fontsize=7)
+        a.set_xticks(range(n)); a.set_yticks(range(n))
+        a.set_xticklabels([int(x) for x in grids]); a.set_yticklabels([int(x) for x in grids])
+    for j, (rn, ttl) in enumerate(neur):
+        a = ax[1, j]
+        M = _mat(S[S.roi == rn], "map_r")
+        v = np.nanmax(np.abs(M)) if np.isfinite(M).any() else 1
+        im = a.imshow(M, cmap="RdBu_r", vmin=-v, vmax=v)
+        fig.colorbar(im, ax=a, shrink=.72)
+        a.set_title(f"NEURAL: {ttl}\n{stat[rn]}", loc="left", fontsize=7)
+        a.set_xticks(range(n)); a.set_yticks(range(n))
+        a.set_xticklabels([int(x) for x in grids]); a.set_yticklabels([int(x) for x in grids])
+        a.set_xlabel("configuration")
+    ax[0, 0].set_ylabel("configuration")
+    ax[1, 0].set_ylabel("configuration")
+    fig.suptitle(
+        f"Figure 37 — configuration x configuration similarity: three TASK "
+        f"models (top) and three regions (bottom). Session {session}, "
+        f"{n} configurations.\n"
+        "HC's cross-task similarity IS task similarity (occupancy +0.113, "
+        "trajectory +0.129, reward overlap +0.077; within session then across, "
+        "all P < 0.03).\n"
+        "mPFC and mOFC track NONE of the three. ⚠ one session shown; the "
+        "statistics are across all sessions. The three models are not "
+        "independent of each other. EXPLORATORY.", fontsize=7.3, y=1.07)
+    fig.tight_layout()
+    save(fig, d, "fig37_confusion_task_vs_neural")
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "xtick.labelsize": 8, "ytick.labelsize": 8})
+    plt.close(fig)
+
+
+def _roi_row_axis(a, labels):
+    a.set_xticks(range(len(labels)))
+    a.set_xticklabels(labels, rotation=35, ha="right")
+    a.axhline(0, color="grey", lw=.8)
+
+
+def _p_row(a, xs, texts, y=.98, size=5.5):
+    """P values in one row along the top of a panel, out of the data's way."""
+    for x, t in zip(xs, texts):
+        a.text(x, y, t, transform=a.get_xaxis_transform(), ha="center",
+               va="top", fontsize=size)
+
+
+def _headroom(a, frac=.45):
+    lo, hi = a.get_ylim()
+    a.set_ylim(lo, hi + frac * (hi - lo))
+
+
+def figure38(d):
+    """Across a ripple, does activity move from NOW to the UPCOMING squares?
+
+    Same-block references (`swr_explore/future_shift`, pre-registered
+    2026-10-07 FS). Every value is a per-session z against 1000 permutations of
+    the nine square labels, then mean and 95% CI across sessions.
+
+    a: gate -- evidence for the current square in ordinary still moments.
+    b: PRIMARY  I = delta(FUT - NOW), as its components: ripple, the
+       stratum-matched control, and ripple - control.
+    c: J = delta(FUT - PAST), same layout. Needed before a positive I can be
+       read as 'future' rather than 'less current'.
+    d: the role profile, ripple - control. Single roles are relative to random
+       squares, which include the current one, so only contrasts are read.
+    e: I by phase, ripple counts matched across phases.
+    f: I with all-other-traversals vs 4-nearest-traversals references.
+    """
+    from matplotlib.patches import Patch
+    src = _latest("future_shift_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 38 skipped: run `swr_content_explore.py future_shift`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = [("spikes", "mPFC", "mPFC units"), ("spikes", "mOFC", "mOFC units"),
+            ("spikes", "HC_all", "HC units"),
+            ("hfb", "MedialFrontal", "med. frontal HFB"),
+            ("hfb", "Visual", "visual HFB"), ("hfb", "HPC", "HC HFB (src)")]
+    col = {"mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC"),
+           "HC_all": "#4A4A55", "MedialFrontal": "#448363",
+           "Visual": "#B0A8C0", "HPC": "#23677E"}
+    primary = {("spikes", "mPFC"), ("hfb", "MedialFrontal")}
+    labels = [r[2] for r in rois]
+
+    def cell(sig, roi, q, phase="all", meas="z_diff", ref="block"):
+        g = R[(R.signal == sig) & (R.roi == roi) & (R.quantity == q)
+              & (R.phase == phase) & (R.ref == ref)]
+        return g[meas].dropna() if meas in g else pd.Series(dtype=float)
+
+    def ci(v):
+        return stats.t.ppf(.975, len(v) - 1) * stats.sem(v) if len(v) > 2 \
+            else np.nan
+
+    def pval(v):
+        return stats.ttest_1samp(v, 0)[1] if len(v) >= 5 else np.nan
+
+    def pf(p):
+        return f"{p:.2f}".lstrip("0") if p >= .01 else f"{p:.0e}"
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 6})
+    fig, ax = plt.subplots(2, 3, figsize=(19 * CM, 13.5 * CM))
+    jit = np.random.default_rng(SEED_FIG)
+
+    # a: gate
+    a = ax[0, 0]
+    ptx = []
+    for i, (sig, roi, lab) in enumerate(rois):
+        v = cell(sig, roi, "now", meas="z_level_ctrl")
+        a.bar(i, v.mean(), .6, yerr=ci(v), capsize=2, color=col[roi],
+              edgecolor="k" if (sig, roi) in primary else "none", lw=.9)
+        a.scatter(i + jit.uniform(-.18, .18, len(v)), v, s=3, color="k",
+                  alpha=.3, zorder=3, lw=0)
+        ptx.append(f"n={len(v)}\n{pf(pval(v))}")
+    _roi_row_axis(a, labels)
+    _headroom(a, .25)
+    _p_row(a, range(len(rois)), ptx, size=5.2)
+    a.set_ylabel("current-square evidence\nin still moments (z)")
+    a.set_title("a  gate: is the current square coded?", loc="left")
+
+    # b, c: components of I and J
+    for a, q, ttl in ((ax[0, 1], "I", "b  PRIMARY: I = Δ(future − now)"),
+                      (ax[0, 2], "J", "c  J = Δ(future − past)")):
+        ptx = []
+        for i, (sig, roi, lab) in enumerate(rois):
+            for k, (meas, off) in enumerate((("z_rip", -.24), ("z_ctrl", 0),
+                                              ("z_diff", .24))):
+                v = cell(sig, roi, q, meas=meas)
+                a.errorbar(i + off, v.mean(), yerr=ci(v),
+                           fmt=("o", "o", "D")[k], ms=(3, 3, 4)[k],
+                           mfc=("white", "#BDBDBD", col[roi])[k],
+                           mec=(col[roi], "#7F7F7F", col[roi])[k],
+                           ecolor="#666666", elinewidth=.7, capsize=1.5)
+            ptx.append(pf(pval(cell(sig, roi, q))))
+        _roi_row_axis(a, labels)
+        _headroom(a, .2)
+        _p_row(a, np.arange(len(rois)) + .24, ptx, size=5.2)
+        a.set_ylabel("post − pre (z)")
+        a.set_title(ttl, loc="left")
+    fig.legend(handles=[
+        plt.Line2D([], [], ls="", marker="o", mfc="white", mec="k", ms=3,
+                   label="ripple"),
+        plt.Line2D([], [], ls="", marker="o", mfc="#BDBDBD", mec="#7F7F7F",
+                   ms=3, label="matched still moments"),
+        plt.Line2D([], [], ls="", marker="D", mfc="k", mec="k", ms=4,
+                   label="ripple − matched (its P above each ROI)")],
+        frameon=False, loc="upper center", bbox_to_anchor=(.68, .875),
+        ncol=3, fontsize=5.8, columnspacing=1.2, handletextpad=.3)
+
+    # d: role profile
+    a = ax[1, 0]
+    roles = ["past3", "past2", "past1", "now", "fut1", "fut2", "fut3", "goal0"]
+    x = np.r_[np.arange(7), 8]
+    for (sig, roi, lab), ls in ((rois[0], "-"), (rois[3], "--"),
+                                (rois[2], "-")):
+        m = np.array([cell(sig, roi, q).mean() for q in roles])
+        e = np.array([ci(cell(sig, roi, q)) for q in roles])
+        a.plot(x[:7], m[:7], ls, marker="o", ms=2.8, color=col[roi], label=lab,
+               lw=1.1)
+        a.fill_between(x[:7], (m - e)[:7], (m + e)[:7], color=col[roi],
+                       alpha=.12, lw=0)
+        a.errorbar(x[7], m[7], yerr=e[7], fmt="s", ms=3.2, color=col[roi],
+                   capsize=1.5)
+    a.axhline(0, color="grey", lw=.8)
+    a.axvline(3, color="grey", lw=.5, ls=":")
+    a.set_xticks(x)
+    a.set_xticklabels(["−3", "−2", "−1", "now", "+1", "+2", "+3", "next\ngoal"])
+    a.set_xlabel("square along the route (visits from now)")
+    a.set_ylabel("ripple − matched, post − pre (z)")
+    a.set_title("d  where along the route does it move?", loc="left")
+    _headroom(a, .3)
+    a.legend(frameon=False, loc="upper left", ncol=2, fontsize=5.6)
+
+    # e: phase, count matched
+    a = ax[1, 1]
+    phases = ["first_traversal", "encode_rest", "execute"]
+    sel = (rois[0], rois[3], rois[2])
+    w = .26
+    xl = []
+    for j, (sig, roi, lab) in enumerate(sel):
+        n = 0
+        for k, ph in enumerate(phases):
+            v = cell(sig, roi, "I", phase=ph, meas="z_diff_matched")
+            n = len(v)
+            a.bar(j + (k - 1) * w, v.mean(), w, yerr=ci(v), capsize=1.5,
+                  color=PHASE_COLORS[k], edgecolor=col[roi], lw=.9,
+                  error_kw=dict(elinewidth=.7))
+        xl.append(f"{lab.replace(' ', chr(10), 1)}\nn={n}")
+    a.axhline(0, color="grey", lw=.8)
+    a.set_xticks(range(len(sel))); a.set_xticklabels(xl)
+    a.set_ylabel("I, ripple − matched (z)\nripple counts matched")
+    a.set_title("e  I by learning phase", loc="left")
+    _headroom(a, .3)
+    a.legend(handles=[Patch(color=PHASE_COLORS[k], label=l) for k, l in
+                      enumerate(["first traversal", "rest of encoding",
+                                 "execution"])],
+             frameon=False, loc="upper left", ncol=3, fontsize=5.6,
+             columnspacing=.8, handlelength=1)
+
+    # f: reference sensitivity
+    a = ax[1, 2]
+    for i, (sig, roi, lab) in enumerate(rois):
+        for k, (ref, mk) in enumerate((("block", "o"), ("near4", "^"))):
+            v = cell(sig, roi, "I", ref=ref)
+            a.errorbar(i + (k - .5) * .3, v.mean(), yerr=ci(v), fmt=mk, ms=3.3,
+                       color=col[roi], mfc=col[roi] if k == 0 else "white",
+                       capsize=1.5, elinewidth=.7)
+    _roi_row_axis(a, labels)
+    _headroom(a, .3)
+    a.legend(handles=[
+        plt.Line2D([], [], ls="", marker="o", color="k", ms=3.3,
+                   label="all other traversals of the block"),
+        plt.Line2D([], [], ls="", marker="^", color="k", mfc="white", ms=3.3,
+                   label="4 nearest traversals")],
+        frameon=False, loc="upper left", fontsize=5.6)
+    a.set_ylabel("I, ripple − matched (z)")
+    a.set_title("f  reference built from …", loc="left")
+
+    def line(sig, roi, q, meas="z_diff"):
+        v = cell(sig, roi, q, meas=meas)
+        t, p = stats.ttest_1samp(v, 0)
+        return f"{v.mean():+.2f} z, t({len(v) - 1}) = {t:+.2f}, P = {p:.2g}"
+
+    n_low = sum(pval(cell(s_, r_, "I", phase=ph, meas="z_diff_matched")) < .05
+                for s_, r_, _ in sel for ph in phases)
+    fig.suptitle(
+        "Figure 38 — across a hippocampal ripple, does activity move from the "
+        "current square towards the upcoming ones?\n"
+        "Same-block references, pre-registered 2026-10-07 (FS). "
+        f"PRIMARY I: mPFC units {line('spikes', 'mPFC', 'I')}; "
+        f"medial frontal HFB {line('hfb', 'MedialFrontal', 'I')} "
+        "(Bonferroni α = 0.025).\n"
+        f"Gate, current square in still moments: mPFC units "
+        f"{line('spikes', 'mPFC', 'now', 'z_level_ctrl')}; med. frontal HFB "
+        f"{line('hfb', 'MedialFrontal', 'now', 'z_level_ctrl')}; HC units "
+        f"{line('spikes', 'HC_all', 'now', 'z_level_ctrl')}.\n"
+        "Both frontal signals FAIL the gate, so their nulls are uninterpretable; "
+        "HC passes it and shows no shift either. "
+        f"Panel e: {n_low} of {len(sel) * len(phases)} bars at P < 0.05 "
+        "(sessions with >= 20 ripples in every phase only).\n"
+        "Numbers above panels a-c = two-sided P, one-sample t across sessions "
+        "(stored sign-flip P agrees). Mean ± 95% CI; dots = sessions; boxed "
+        "bars = the two primaries. HC HFB contains the ripple itself: "
+        "descriptive only.",
+        fontsize=6.4, x=.01, ha="left", y=.995)
+    fig.tight_layout(rect=(0, 0, 1, .87), h_pad=1.2)
+    save(fig, d, "fig38_future_shift")
+    fig.savefig(os.path.join(d, "fig38_future_shift.pdf"))
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def figure39(d):
+    """Is mPFC's 'now' code visible once its profile is built IN ripples?
+
+    `swr_explore/ripple_templates`, pre-registered 2026-10-07 (RT).
+    a-c: per ROI, current-square evidence (z vs 1000 label permutations, mean
+       and 95% CI across sessions) for each template -- ripple-only, matched
+       flank (same squares, dwell and data volume), all task time -- scored on
+       ripple windows and on flank windows, encode and execute.
+    d: the PRIMARY contrast, ripple-only minus flank template on encode ripple
+       windows, with templates from all phases and from encode only.
+    """
+    src = _latest("ripple_templates_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")
+    if not src:
+        print("  Fig 39 skipped: run `swr_content_explore.py ripple_templates`")
+        return
+    R = pd.read_csv(os.path.join(src, "per_session.csv"))
+    rois = [("mPFC", "mPFC units"), ("mOFC", "mOFC units"),
+            ("HC_all", "HC units")]
+    col = {"mPFC": get_roi_colour("mPFC"), "mOFC": get_roi_colour("mOFC"),
+           "HC_all": "#4A4A55"}
+    tcol = {"rip": "#0e3d3a", "flank": "#BDBDBD", "all": "#7eb1c4"}
+    tlab = {"rip": "ripple-only template", "flank": "matched-flank template",
+            "all": "all-time template (≈40× data)"}
+
+    def v_(roi, colname, tph="any"):
+        g = R[(R.roi == roi) & (R.template_phase == tph)]
+        return g[colname].dropna()
+
+    def ci(v):
+        return stats.t.ppf(.975, len(v) - 1) * stats.sem(v)
+
+    def pf(p):
+        return f"{p:.2f}".lstrip("0") if p >= .01 else f"{p:.0e}"
+
+    plt.rcParams.update({"font.size": 7.5, "axes.titlesize": 8,
+                         "axes.labelsize": 7.5, "xtick.labelsize": 6.5,
+                         "ytick.labelsize": 7, "legend.fontsize": 6})
+    fig, ax = plt.subplots(1, 4, figsize=(20 * CM, 6.8 * CM),
+                           gridspec_kw=dict(width_ratios=[1, 1, 1, .8]))
+    groups = [("ripW", "encode", "ripple\nencode"),
+              ("flankW", "encode", "flank\nencode"),
+              ("ripW", "execute", "ripple\nexecute"),
+              ("flankW", "execute", "flank\nexecute")]
+    for a, (roi, lab) in zip(ax[:3], rois):
+        for gi, (wn, ph, _) in enumerate(groups):
+            for k, tn in enumerate(("rip", "flank", "all")):
+                v = v_(roi, f"z_{tn}T_{wn}_{ph}")
+                a.errorbar(gi + (k - 1) * .22, v.mean(), yerr=ci(v), fmt="o",
+                           ms=3.2, color=tcol[tn], mec="k" if tn == "flank"
+                           else tcol[tn], mew=.4, capsize=1.5, elinewidth=.7)
+                p = stats.ttest_1samp(v, 0)[1]
+                a.text(gi + (k - 1) * .22, .98, pf(p),
+                       transform=a.get_xaxis_transform(), ha="center",
+                       va="top", fontsize=4.6, rotation=90)
+        a.axhline(0, color="grey", lw=.8)
+        a.axvspan(-.5, .5, color=col[roi], alpha=.07, lw=0)
+        a.set_xticks(range(len(groups)))
+        a.set_xticklabels([g[2] for g in groups])
+        a.set_xlim(-.5, len(groups) - .5)
+        lo, hi = a.get_ylim(); a.set_ylim(lo, hi + .35 * (hi - lo))
+        a.set_title(f"{'abc'[rois.index((roi, lab))]}  {lab} "
+                    f"(n={len(v_(roi, 'z_ripT_ripW_encode'))})", loc="left")
+        a.set_xlabel("test windows (held-out configuration)")
+    ax[0].set_ylabel("current-square evidence (z)")
+    fig.legend(handles=[plt.Line2D([], [], ls="", marker="o", ms=3.2,
+                                   color=tcol[t], mec="k" if t == "flank"
+                                   else tcol[t], mew=.4, label=tlab[t])
+                        for t in ("rip", "flank", "all")],
+               frameon=False, loc="upper left", bbox_to_anchor=(.05, .80),
+               ncol=3, fontsize=6)
+
+    a = ax[3]
+    jit = np.random.default_rng(SEED_FIG)
+    for i, (roi, lab) in enumerate(rois):
+        for k, tph in enumerate(("any", "encode")):
+            v = v_(roi, "rip_minus_flank_T_ripW_encode", tph)
+            x = i + (k - .5) * .34
+            a.bar(x, v.mean(), .3, yerr=ci(v), capsize=1.5, color=col[roi],
+                  alpha=1 if k == 0 else .45, edgecolor="k" if roi == "mPFC"
+                  and k == 0 else "none", lw=.8, error_kw=dict(elinewidth=.7))
+            a.scatter(x + jit.uniform(-.08, .08, len(v)), v, s=2.5, color="k",
+                      alpha=.3, lw=0, zorder=3)
+            a.text(x, .98, pf(stats.ttest_1samp(v, 0)[1]),
+                   transform=a.get_xaxis_transform(), ha="center", va="top",
+                   fontsize=5)
+    a.axhline(0, color="grey", lw=.8)
+    a.set_xticks(range(len(rois))); a.set_xticklabels([r[1] for r in rois],
+                                                      rotation=30, ha="right")
+    a.set_ylabel("ripple-only − flank (z)")
+    a.set_title("d  PRIMARY contrast", loc="left")
+    a.legend(handles=[Patch_(fc="k", alpha=1, label="templates: all phases"),
+                      Patch_(fc="k", alpha=.45,
+                             label="templates: encode only")],
+             frameon=False, loc="lower left", fontsize=5.6)
+
+    def line(roi, colname, tph="any"):
+        v = v_(roi, colname, tph)
+        t, p = stats.ttest_1samp(v, 0)
+        return f"{v.mean():+.2f} z, t({len(v) - 1}) = {t:+.2f}, P = {p:.2g}"
+
+    fig.suptitle(
+        "Figure 39 — does mPFC code the current square once its spatial "
+        "profile is built from ripple windows only? Pre-registered "
+        "2026-10-07 (RT).\n"
+        f"PRIMARY (mPFC, encode ripple windows, ripple-only − flank template): "
+        f"{line('mPFC', 'rip_minus_flank_T_ripW_encode')}.  Gate (HC, "
+        f"ripple-only template, encode ripple windows): "
+        f"{line('HC_all', 'z_ripT_ripW_encode')}.\n"
+        "Exploratory, uncorrected: mOFC ripple-only − flank "
+        f"{line('mOFC', 'rip_minus_flank_T_ripW_encode')}; with encode-only "
+        f"templates {line('mOFC', 'rip_minus_flank_T_ripW_encode', 'encode')}."
+        "\nAll templates leave the test configuration out; ripple-only and "
+        "flank templates come from the same ripples, squares and durations.\n"
+        "Small numbers = two-sided P across sessions. Mean ± 95% CI. "
+        "d: encode ripple windows; shaded columns in a-c are the windows d "
+        "uses.",
+        fontsize=6.4, x=.01, ha="left", y=1.0)
+    fig.tight_layout(rect=(0, 0, 1, .74), w_pad=1.5)
+    save(fig, d, "fig39_ripple_templates")
+    fig.savefig(os.path.join(d, "fig39_ripple_templates.pdf"))
+    plt.rcParams.update({"font.size": 9, "axes.titlesize": 11,
+                         "axes.labelsize": 9, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "legend.fontsize": 8})
+    plt.close(fig)
+
+
+def Patch_(**kw):
+    from matplotlib.patches import Patch
+    return Patch(**kw)

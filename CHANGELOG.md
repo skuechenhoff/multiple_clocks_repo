@@ -1,5 +1,3114 @@
 # CHANGELOG
 
+## 2026-11-24 (d) — PRE-REGISTRATION: are lag-0 cells relatively more active while the plan is loaded (encoding) than while it is executed?
+
+Written BEFORE running. Script `scripts/lag0_loading_firing.py` → `group/lag0_loading_firing_<date>/`.
+
+**SK's hypothesis.** The plan is loaded during encoding, and "now" has to be known before anything further ahead can be planned. Cells tuned to the current location should therefore fire relatively more during encoding than during correct loops: over the phase, at correct uncovers, and in ripples.
+
+**Context.**
+- We have already seen 54 correlations of lag-0 tuning with ripple firing (entry (c)), including mPFC per-repeat correct-loop tuning × encoding-ripple firing at +0.19 (permutation p = .082).
+- The F3 test (2026-11-14) was null, but it used the old tuning (mode maps, stale labels) and pooled mPFC with mOFC.
+- So x, the measures and the primary tests are fixed here.
+
+**x (tuning).** Per-cell `r_lag000_noctrl` from `per_lag_loopsets_2026-11-23/per_repeat/execute`. This is SK's a-priori "true tuning": correct loops, the most data, the Fig 3c estimator. It never sees an encoding loop. Final labels.
+
+**Cells.** PRIMARY mPFC. Secondary: mOFC, mid HC, anterior HC.
+
+**y, per cell, three families. Each is encoding − correct loops, in two readings.** Encoding / correct loops = before / from a layout's first correct loop (`phase_windows`, `phase_labels`; the same split as Fig 3c).
+
+**A. Phase firing,** inside visits.
+- *Own:* log rate ratio of encoding to correct loops, log((N+0.5)/T).
+- *Location-matched:* log((N_enc+0.5)/(E_enc+0.5)), where E_enc = Σ over squares of the cell's correct-loop rate at that square × its encoding dwell there. That is, encoding firing relative to what the cell's own correct-loop place map predicts.
+- Needs ≥ 30 s per phase.
+
+**B. Correct uncovers** (reward presses). Rate 0.05–1.0 s after the press.
+- *Own:* minus the rate −0.5…−0.05 s before it, divided by the cell's mean rate; encoding mean − correct-loop mean.
+- *Matched:* encoding uncovers paired 1:1 with correct-loop uncovers on the stillness that follows (`fin.match_session`, as N1/N2); the post-press rate difference divided by the mean rate.
+- Needs ≥ 15 events per phase (MIN_EVENTS).
+
+**C. Ripples.** Rate within ±150 ms of the peak, divided by the cell's mean rate, as F3a.
+- *Own:* minus the ripple's own flanks (0.5–1.0 s on both sides).
+- *Matched:* minus ripple-free still moments of the same phase in the same stratum (time since the last press × time to the next).
+- Encoding ripples (first traversal + rest of encoding) minus correct-loop ripples. Needs ≥ 20 ripples per phase.
+
+Each family's encoding value alone (vs its own baseline) is stored as secondary.
+
+**Test.** Spearman of x with y across cells. Null: x permuted within session, 10,000 times (`lag0_cells.spearman_within`, the F3 function). Prediction ρ > 0; reported two-sided as in F3.
+
+**PRIMARY:** mPFC, 3 families × 2 readings = 6 tests. Raw p and Holm-corrected across the 6 are reported.
+
+**Reported controls:** ρ(x, log mean rate) and ρ(y, log mean rate).
+
+## 2026-11-24 (c) — Lag-0 tuning vs ripple firing (claim 2c) with final labels, all cells, every tuning version
+
+New `scripts/lag0_tuning_vs_ripple_firing.py` (+ `_figures.py`) → `group/lag0_tuning_vs_ripple_firing_2026-11-24/`.
+
+**Method:**
+- x = per-cell `r_lag000_noctrl` from `per_lag_loopsets_2026-11-23`: mode / per-repeat × correct / all / encoding loops; final labels.
+- y = the unchanged per-cell firing measures: claim 2c's discovery ripple − no ripple, and ripple modulation in encoding and in correct-loop ripples.
+- Test: Pearson across cells, within-session permutation (imported `perm_corr`). ROIs: mPFC, mid HC, anterior HC.
+
+**Results:**
+- **Claim 2c reproduces:** +0.152, p = .059, n = 148 (published +0.15, p = .065).
+- **Nothing becomes reliable:** 1 of 54 Pearson and 2 of 54 Spearman tests at p < .05.
+- **mPFC encoding tuning × encoding-ripple firing:** +0.09, p = .22 (per-repeat).
+- **Largest mPFC value:** per-repeat correct-loop tuning × encoding-ripple firing, +0.19, p = .082 (Spearman p = .042).
+- **Reliability:** per-cell lag-0 r, encoding vs correct loops, ρ ≤ 0.11 with either estimator. The per-cell measure is capped, as in the split-half result.
+
+## 2026-11-24 (b) — Duration-matched baseline for ripple co-firing and coupling; same windows in both panels
+
+SK's questions:
+1. Why does the coupling use fixed-width windows while the co-firing uses own-length windows?
+2. Is own-length ripples vs ordinary moments really not significant?
+
+**Answer to (2).** As stored (11-23), own − ordinary IS significant for co-firing: +0.12, p < .001. I had reported only fixed − ordinary. That contrast is unmatched: ordinary moments had one width, ripples a variable one.
+
+**New, in `scripts/cofiring_window_controls.py`:**
+- **`ordinary_matched`:** ordinary moments with widths drawn from the same session's ripples of the same phase.
+- **Contrasts:** own − ordinary_matched, fixed − ordinary, own − ordinary (reference).
+- **Output:** `group/swr/cofiring_window_controls_2026-11-24/`.
+- **Reproduction:** own / fixed / ordinary reproduce the 11-23 run exactly.
+
+**Results** (encoding loops, 22 sessions):
+- **Co-firing:**
+  - ripples own +0.127 vs ordinary matched +0.114 (both p < .001); ripples − ordinary p = .26 (correct loops .94).
+  - Duration correlates with mean z equally in both: HC .37 vs .36, mPFC .28 vs .27.
+  - **There is no ripple-specific HC–mPFC co-firing.**
+- **HC now × mPFC now, firing level kept (= Fig 4h read-out):**
+  - ripples own +0.027 (p = .032) vs ordinary matched +0.011 (p = .073); ripples − ordinary p = .25.
+  - Fixed width: p = .040 (gain kept), .17 (gain removed).
+  - **The coupling is above 0 in encoding ripples but not shown to be ripple-specific.**
+
+**Figure:** `core_results_two_frames.py` panels e–f now use the same four windows and the gain-kept coupling. The windows: ripples own / ordinary matched (hatched) and ripples fixed / ordinary fixed (solid), with Δ p brackets. Re-rendered into `group/core_results_two_frames_2026-11-24/`; the `.md` is updated.
+
+## 2026-11-24 (a) — Overview figure, version 2: encoding vs correct loops, both estimators, ripple co-firing and coupling
+
+`scripts/core_results_two_frames.py` rewritten (replaces the 11-23 version) → `group/core_results_two_frames_2026-11-24/` (`.png/.pdf/.svg`, `result.json` with every plotted value, `.md` with caption, coherence check and explanation). It plots stored results only.
+
+**Panels:**
+- **a–d:** mid HC + mPFC lag profiles (session ± SEM, 0° repeated faded at 360°).
+  - Rows: estimator (mode = published Fig 3c; per-repeat = new).
+  - Columns: encoding loops / correct loops.
+  - Fig 3c window stars.
+- **e:** HC–mPFC all-cell co-firing: own-duration ripple windows, fixed-width ripple windows, ordinary moments.
+- **f:** HC now × mPFC now coupling (fixed width, gain removed) vs ordinary moments.
+
+**Coherence checks (no new analysis):**
+- **Cells:** in the 61 ripple sessions, the ripple pipeline's cells are the same 905 cells, with the same final labels, as the per-lag table.
+- **Phase split:** the lag analysis (`correct`/`rep_correct`) and the ripple analysis (`trial_correct`) give identical per-layout counts of encoding loops in all 22 coupling sessions.
+- **HC:** pooled (anterior + mid) in e–f; mid HC only in a–d.
+
+**Values:**
+- **mPFC window (30+60°) vs other lags:** p = .004 (mode) and .014 (per-repeat) in correct loops; p ≥ .61 in encoding loops.
+- **Mid HC window (0+330°) vs other lags:** p = .057 / .004 in encoding loops; .003 / < .001 in correct loops.
+- **mPFC 0° in encoding loops:** +0.052 (mode, p = .043), +0.042 (per-repeat, p = .091).
+- **mPFC current square in encoding ripples:** z = +0.31, p = .13 (26 sessions). This is SK's question: up in task time but not in ripples. The reasons are in the `.md`.
+
+## 2026-11-23 (g) — Overview figure for SK's supervisor: the two frames
+
+New `scripts/core_results_two_frames.py` → `group/core_results_two_frames_2026-11-23/` (`.png/.pdf/.svg`, `.md` with caption). It plots stored results only.
+- **a. Task time:** the new Fig 3c (per-repeat maps, correct loops, session ± SEM, window stars).
+- **b. Real time:** reported Fig 4h HC location in ripples, encoding vs correct loops.
+- **c. Real time:** HC now × mPFC now coupling (fixed width, gain removed) vs ordinary moments.
+
+SK's convention from now on:
+- the per-cell lag measure for the task-time future-angle frame;
+- the population read-out whenever events are in real time (ripples).
+
+Anterior HC is drawn in the CLAUDE.md colour `#23677E`. `overlay_double_dissociation.ROI_COLOURS` still has `#a30d6c` (the lOFC colour) for anterior HC; not changed yet.
+
+## 2026-11-23 (f) — CORRECTION: ripple co-firing was a window-length artefact; only HC now × mPFC now in encoding ripples survives
+
+New `scripts/cofiring_window_controls.py` (+ `_figures.py`) → `group/swr/cofiring_window_controls_2026-11-23/`.
+
+**The flaw.** Ripple windows use each ripple's own duration; ordinary moments use one fixed width. Longer windows carry more spikes in every cell of both regions: across ripples, r(duration, mean z) = .37 (HC) and .28 (mPFC).
+
+**All-cell HC–mPFC co-firing** (entry (e), r = 0.13, p < .001) is that artefact:
+- duration partialled out: +0.014, p = .30 (encode) and −0.007 (execute);
+- fixed-width windows: +0.020, p = .13;
+- no different from ordinary moments.
+
+**Content coupling, rerun with fixed-width windows and the per-event population gain removed:**
+- HC now × mPFC now, encoding ripples: **+0.034, p = .022** (reported own-length version .027, p = .032). Its excess over ordinary moments is p = .040 with the gain in, .17 with it removed.
+- HC now × mPFC next, correct loops: **+0.002, p = .84** (reported .028, p = .028). It is carried by shared gain. The "partner switch" from entry (c) is withdrawn.
+
+Banners added to `tuned_cofiring_hc_mpfc.md` and `now_coupling_hc_mpfc.md`.
+
+**Not affected:**
+- tuned co-firing panels b and c (centred tuning weights cancel a uniform gain; the null shuffles tuning);
+- the single-region Fig 4h location estimator (its flanks are duration-matched, and the location signal is also present at fixed-width ordinary moments).
+
+## 2026-11-23 (e) — Old tables archived, one cell-count file, manuscript value check, tuned-cell co-firing in ripples
+
+**Archive (SK: "once and for all").** `scripts/archive_stale_tables.py --move` moved 173 items (27 GB) to `derivatives/_archive_old_labels_2026-11-23/` (`manifest.csv`, `README.md`; relative paths kept, so it is reversible).
+- What moved:
+  - every result folder under `group/` holding a per-cell table with old ROI labels;
+  - the four 11-23 outputs built on them;
+  - 14 superseded label tables at the top of `derivatives/` (`human_cell_labels*.xlsx`, `ROI_assignment_27thofAug_2026/`, `neurons_MNI.csv`, `.numbers` copies, `label_qc*`).
+- Kept: `ROI_assignment/`, `neurons_with_ROI_labels.csv`, `neurons_MNI_latest.csv`, `old_electrode_tables/`.
+- Fresh audit: 52 per-cell tables in `group/`, 0 stale.
+- Repointed: `per_lag_encoding.py` (`RELOAD_FROM = None`), `per_lag_encoding_replot.py` (Aug 28 per-lag, Sep 24 sustained-state, Aug 31 RSA cell list), `manuscript_cell_results_core.py` (Aug 31 RSA run). Older exploratory scripts naming archived runs now fail loudly.
+- `atlas_roi` is the final column; `alt_final_roi` equals it for the six analysis ROIs and is NaN for the 60 other cells.
+
+**Cell counts.** New `scripts/cell_counts_summary.py` → `derivatives/CELL_COUNTS.md` + `cell_counts.json`, computed from the tables the reported analyses read:
+- cohort 984 QC / 924 analysis / 63 sessions / 42 patients;
+- per-ROI counts for Fig 2c, Fig 2d RSA, Fig 3c, Fig 3d (sites) and Fig 4h sessions.
+
+**Manuscript check** (whole Google Doc read) → `group/paper_value_check_2026-11-23.md`.
+- 20 corrections entered as tracked suggestions (Docs API `writeMode: SUGGEST`):
+  - patients 41 → 42;
+  - Fig 2c counts (old labels);
+  - Fig 3c sessions 32/35 → 33/36, mHC 232 → 233;
+  - Fig 3d outside 81 → 71;
+  - Methods RSA counts (pre-relabel set);
+  - QC panel a 58 → 36;
+  - the whole alternative-estimator supplement (old-label spatial-peaks run → Aug 28 run).
+- Flagged, not changed:
+  - supplement mPFC window-vs-other-lags now q = .054;
+  - Fig 2d mPFC q .037 (Aug 27 family) vs .033 (Aug 31);
+  - per-repeat vs mode values for Fig 3c/3d;
+  - Fig 3d is the only per-cell test (per session, ventral 30° is n.s.);
+  - LFP 180/181 and 31/32 inconsistencies;
+  - demographics unverifiable.
+
+**Tuned-cell co-firing in ripples** (SK: "just the firing of the cells with higher CV r"). New `scripts/tuned_cofiring_hc_mpfc.py` (+ `_figures.py`) → `group/swr/tuned_cofiring_hc_mpfc_2026-11-23/`.
+- Per event: T = mean((r − mean r) × z) per region.
+- Per session: r(T_HC, T_mPFC) minus a tuning-shuffle null (same function); 22 sessions.
+- All-cell HC–mPFC co-firing in ripples: r = +0.13 (p < .001) in encoding and in correct loops; ≈ 0 at ordinary moments.
+- Tuned coupling ≈ 0 everywhere:
+  - HC now × mPFC now: encoding ripples −0.003 (p = .87), correct-loop ripples +0.015 (p = .26);
+  - HC now × mPFC 30–60°: n.s.;
+  - one p = .044 (ordinary moments, negative) among about 20 tests.
+- Reading: HC and mPFC co-fire in ripples, but not organised by tuning strength.
+
+`now_coupling_hc_mpfc_figures.bar` now prints "p < .001" instead of "p = .000".
+
+## 2026-11-23 (d) — Fig 3d (gradient split) rebuilt with per-repeat maps; the split itself tested
+
+**Rebuild.** Same cells, final labels, coordinates, fMRI angles and PC1 median split (48 ventral / 39 dorsal cells, 12 / 7 sites). Only the rate-map estimator changes.
+- `cell_gradient_master_table.py` gains `--cell-table` and `--label`.
+  - `mode` → `cell_gradient_master/2026-11-23_14-22-09_mode_execute/` reproduces the published master exactly.
+  - `per_repeat` → `…_14-22-23_per_repeat_execute/`. Fig 3d panels are in `final_splits/`, guide `fig3d.md`.
+- `cell_fMRI_angle_match.py`: the profile band for the unweighted split is now ±SEM across cells (as Fig 3c); it was a 16–84 % bootstrap band.
+- **Per-repeat numbers:**
+  - Peaks unchanged: ventral 30°, dorsal 60°.
+  - Ventral 30°: r = 0.096, t(47) = 2.59, q = .013 (published 0.079, 2.44, .019).
+  - **Dorsal 60°: r = 0.084, t(38) = 1.99, p = .027, q = .054** (published 0.081, 2.21, .033). Session unit q = .032.
+
+**Direct test of the split.** New `scripts/fig3d_gradient_split_check.py` → `group/fig3d_gradient_check_2026-11-23/` (`split_check.png` + `.md`, `result.json`).
+- **Shift S** = d(dorsal) − d(ventral), with d = z(r60) − z(r30):
+  - cell t-test p = .023 (both estimators);
+  - exact site permutation (50,388 assignments) p = .11 (mode) / .092 (per-repeat);
+  - session means p = .11 / .14.
+- **Peak stability** (site bootstrap):
+  - ventral = 30° in 86 % / 93 % of draws;
+  - dorsal = 60° in 63 % / 56 %;
+  - within the dorsal group, 60° − 30° is n.s. (cell p = .40).
+- **MNI-z median split:** both groups peak at 30°, and the shift is n.s.
+- **Reading:**
+  - the ventral 30° end is solid; the dorsal 60° end and the split itself are not, once sites are the unit;
+  - this was already true for the published version, so the per-repeat estimator is not the cause;
+  - present the split as descriptive.
+- **Side observation:** the 71 outside-mask cells (more dorsal, MNI z ≈ 14) peak at 0° (t(70) = 3.04, p = .003). They, not the ventral tip, carry the new mPFC 0° code.
+
+## 2026-11-23 (c) — Final ROI labels everywhere, per-repeat maps, Fig 3c rebuilt, when mPFC codes now, HC–mPFC coupling
+
+**ROI labels (SK: "absolutely crucial").**
+- **Final assignment:** `derivatives/ROI_assignment/cells_step5_final_labels.csv` (`atlas_roi`, Aug 28 run).
+- **New module `mc/analyse/roi_labels.py`:**
+  - `read_per_cell_table` re-applies the final labels to any saved per-cell table;
+  - `assert_final` is now called by `rrsa.cell_roi_table` and `cs.load_roi_table`; both already matched.
+- **Stale source:** `per_lag_encoding/2026-08-04_…_relabelled-final` differs on 33 cells (18 mOFC→HC, 6 mOFC→mPFC, 3 mPFC→mOFC, 3 EC→HC, 3 within HC).
+  - It was read by `preferred_lag_firing.PER_CELL` (and so by storage_vs_planning, lag0_cells, discovery_cells, plan_code_vs_ripples, per_lag_encoding_by_phase, first_loops, the 11-23 encode-vs-execute / cross-phase scripts) and by the Fig 3d / fMRI-angle scripts (`cell_fmri_lag_prediction`, `cell_fmri_continuous_angle_summary`, `plot_mean_cell_lag_brain_overlay`, ratemap example scripts).
+  - All of them now read the Aug 28 table, whose r values are identical, through `read_per_cell_table`.
+  - The Fig 3c source (Aug 28) was already correct.
+- **Audit:** `scripts/audit_roi_labels.py` → `group/roi_label_audit_2026-11-23/`.
+  - 368 saved per-cell tables; 316 carry at least one stale label, almost all May–Aug runs that are superseded.
+  - Recent stale tables (not yet rerun): F2 by-phase (11-14), B1 plan-code (11-14), and the 11-23 encode-vs-execute, cross-phase and B1-lagfree outputs. Their `.md` guides carry a banner.
+
+**Per-repeat rate maps (SK's decision) + Fig 3c rebuilt.**
+- **Estimator:** `per_lag_encoding.py` now has `MAP_ESTIMATOR = 'per_repeat'`: every repeat with its own locations; dwell in bins per repeat. `'mode'` is the old one.
+- **Run:** `scripts/per_lag_encoding_loopsets.py` → `group/per_lag_loopsets_2026-11-23/`.
+  - Loop sets: execute (published) / all / encode × both estimators, final labels.
+  - Check: mode + execute reproduces the published r for 924 cells (1e-16) and the old Fig 3c tests to the digit.
+- **Fig 3c:** `overlay_double_dissociation.py` gains `publication_panel` (session-balanced ±SEM, window-test stars, lag colour bar) and now defaults to the per-repeat execute table → `per_repeat/execute/overlay_double_dissociation_noctrl/fig3c_lag_profile.pdf`.
+  - mPFC window 30+60° vs other lags: p = .005 (cell) / .014 (session); was .002 / .004.
+  - mid HC 0+330°: .0001 / .0004; was .012 / .003.
+  - **mPFC 0° is now > 0** (+0.035 cell / +0.047 session, p < .05; old n.s.). The per_repeat − mode difference at mPFC 0° is p = .028 / .046.
+  - Caveat: the estimator was switched after seeing the old result, so report mode as a sensitivity check.
+- **All loops vs execute:** mPFC 0° is unchanged; 30° and 90° weaken (30°: p = .004 / .005).
+- **Encode only:** mPFC 0° +0.034 (cell p < .05), and no future code (60° and 90° below execute, session p = .018, .032).
+
+**When does mPFC code now? (learning stage)**
+`scripts/per_lag_learning_stage.py` → `group/per_lag_learning_stage_2026-11-23/`.
+- **Method:** fixed reference (other configurations, all loops); test = the held-out configuration's loops by stage (encode / correct 1–2 / 3–5 / 6+); loop counts matched (20 draws).
+- **mPFC 0°** (session unit):
+  - encode +0.026 (p = .079), 1–2 +0.035 (.024), 3–5 +0.048 (.001), 6+ −0.009 (n.s.);
+  - 6+ − 1–2: p = .08.
+- **mPFC 30+60°:** absent in encode, builds up (trend p = .007).
+- **mid HC 0°:** strongest in encode (+0.054) and weakening (cell trend p = .004, session .12).
+
+**HC–mPFC current-square coupling.**
+`scripts/now_coupling_hc_mpfc.py` → `group/swr/now_coupling_hc_mpfc_2026-11-23/`.
+- **Method:** the reported location estimator on the same events; `events()` was split out of `location_content_ripples_by_phase.session`, reproducing it exactly.
+  - Coupling = r(HC CURRENT, mPFC CURRENT or NEXT) across events − a same-square shuffle null; 22 sessions.
+- **Results:**
+
+  | | now × now | now × next |
+  |---|---|---|
+  | encode ripples | **+0.027, p = .032** | n.s. |
+  | execute ripples | n.s. | **+0.028, p = .028** |
+
+  - Encode − execute, ripple − ordinary and the partner switch are n.s. for ripples (p = .15, .14, .21); the partner switch for ordinary moments is p = .044.
+  - mPFC CURRENT level per event: n.s. everywhere.
+- **Reading:** exploratory (about 14 tests, 4 at p < .05).
+
+## 2026-11-23 (b) — Estimator vs display, cross-phase tuning, lag tuning vs ripple firing, B1 on all loops
+
+**Q1 — why F2's lag profile looked cleaner.**
+`scripts/per_lag_estimator_comparison.py` → `per_lag_estimator_comparison_2026-11-23/`.
+- Same 155 mPFC cells and 32 sessions.
+- **Mostly the error bar:** F2 drew ±SEM, the new figures the 95% CI
+  (≈ 2 × SEM).
+- **F2's pooled estimator** (each repeat's own location instead of the per-bin
+  mode) lifts 0°, 90° and the far lags by 0.01–0.04. 60° is unchanged
+  (p = .029 vs .032); 90° is n.s. in both (p = .11 vs .30).
+- **Per-cell split-half reliability** is not better: 0° −0.09 vs −0.02; 60°
+  +0.19 vs +0.10.
+- **Recommendation:** keep the published estimator, or adopt pooling only on
+  a-priori grounds and everywhere.
+
+**Q2 — encode vs execute tuning per cell.**
+`scripts/per_lag_cross_phase_consistency.py` → `per_lag_cross_phase_2026-11-23/`.
+- The published functions, run on extra loop sets: all, odd / even execute,
+  odd / even encode.
+- **Encode vs execute, lag 0:** ρ = +0.06 (mid HC), +0.11 (mPFC), n.s.
+- **Split-half reliability of the published r:** |ρ| ≤ 0.17 at every lag;
+  lag 0 +0.04 (mid HC), −0.02 (mPFC).
+- **Reading:** per-cell lag tuning is not a stable cell property, so
+  cross-phase consistency is capped at ≈ 0. Firing-rate tertiles don't help.
+
+**Q3 — lag tuning vs ripple firing.**
+- **x and y.** x = tuning from execute / encode / all repeats; y = claim 2c's
+  measure, and in-vs-out-of-ripple firing over the whole encode / execute
+  phase.
+- **Overall:** 6 of 72 correlations at p < .05 per region (chance ≈ 3.6), no
+  pattern.
+- **Claim 2c** (mPFC lag 0):
+  - as published +0.15 (p = .065, ripple-pipeline labels, n = 148);
+  - per-lag labels +0.12 (within-session permutation p = .107);
+  - without one cell +0.08;
+  - not carried by firing rate, event counts or any one session.
+- **Bug caught during this run.** `pivot_table` sorted the cells while the
+  metadata kept first-appearance order, misaligning ROI, session and y. Caught
+  because claim 2c came out at +0.02 instead of +0.12. Fixed, with an
+  assertion that each execute value equals the published one per cell. The
+  first, misaligned results were discarded.
+
+**ROI labels differ between pipelines.** `rrsa.cell_roi_table` (ripple
+pipeline) vs the published per-lag `relabelled-final` table:
+
+| ripple pipeline | per-lag table | cells |
+|---|---|---|
+| mPFC | mOFC | 6 |
+| mOFC | mPFC | 3 |
+| HC | mOFC | 18 |
+| HC | EC | 3 |
+
+Not changed; needs one canonical table.
+
+**Q4 — B1 on all execution loops, and lag-free codes.**
+`scripts/plan_code_vs_ripples_lagfree.py` → `swr/plan_code_vs_ripples_lagfree_2026-11-23/`.
+- B1's saved block codes and B1's functions. It reproduces the
+  learning-ripples figure exactly: future mean, first 3 loops +0.31,
+  p = .006; all loops +0.19, p = .125.
+
+| code variant | first 3 loops: β (p) | all loops: β (p) |
+|---|---|---|
+| each cell's best lag, chosen on its other blocks | +0.20 (.058) | +0.07 (.62) |
+| max over lags | +0.07 (.66) | +0.06 (.52) |
+
+- First 3 − all: n.s. for every variant.
+- Pooled partial r for the future mean: +0.085 vs +0.082. The effect is tiny
+  either way.
+
+## 2026-11-23 — Encode vs known with OTHER-configuration maps: current square, per-lag profiles, path and rewards in ripples
+
+**Request (SK).**
+1. HC current square, encode vs known, in ripples and outside them, compared
+   with the published per-lag result (current-square coding in execution).
+2. The published per-lag profile on the encode loops, mid HC and mPFC, at
+   the cell and session unit.
+3. In ripples: rewards vs current square; next reward vs other rewards.
+4. Are remote / future / reward squares represented DURING ripples, and
+   ordinary place firing otherwise?
+
+All location maps come from OTHER configurations.
+
+**Part 2: `scripts/per_lag_encoding_encode_vs_execute.py`**
+→ `per_lag_encode_vs_execute_2026-11-23/`
+- **Method.** `per_lag_encoding.py` functions imported unchanged; only the
+  input rows change.
+  - encode = `correct == 0 & rep_correct == 0` (the rows the published run
+    excludes);
+  - execute = the published `all_minus_explore`;
+  - execute_matched = the first n execute rows per configuration, n = its
+    encode rows.
+- **Cells.** The published per-cell table: mid HC 232 cells / 35 sessions,
+  mPFC 155 / 32.
+- **Check.** Execute reproduces the published `r_lag*_noctrl` (max |diff|
+  1e-16, 387 cells).
+- **Deviations** (none changes r): no per-cell permutations; noctrl and the
+  12 lags only.
+- **Tests.** `lagwise_aggregation` (Fisher z): vs 0 one-sided; differences
+  paired within cell, two-sided; BH across 12 lags.
+- **Mid HC 0°.**
+  - encode +0.047 (cells p = .001; sessions p = .022);
+  - execute +0.041 (.004; .015);
+  - encode − execute +0.005 (p = .80) / −0.018 (p = .50).
+
+  **Current-square coding does not depend on phase.**
+- **mPFC 30° (cells) / 60° (sessions).**
+  - execute +0.051 (p = .003) / +0.068 (p = .016);
+  - encode −0.004 / +0.000;
+  - encode − execute −0.059 (p = .031) / −0.072 (p = .085).
+- **But the matched control kills the phase reading.** Execute with the encode
+  loop count is also ≈ 0 (−0.007 / +0.011), and encode − matched is n.s. at
+  every lag. The future code needs many repeats to be detectable.
+- **mPFC 0°.** encode +0.035 (p = .048) / +0.058 (p = .026); matched
+  sessions +0.050 (p = .027); full execute n.s. Not a significant
+  difference.
+
+**Parts 1, 3, 4: `scripts/location_content_ripples_by_phase.py`**
+→ `swr/location_content_by_phase_2026-11-23/`
+- **Method.** `swr_phase_contrast` imported: the same ripples, cells,
+  sessions, phases, other-configuration maps, ripple-duration window,
+  permutations and count-matched draws.
+- **Check.** CURRENT in ripples reproduces the reported per-session values
+  (max |diff| 1e-14).
+- **Added.**
+  - Ordinary moments: median-ripple-width windows tiled every 50 ms inside
+    visits, no ripple within 0.5 s, the same n per session as the ripples.
+  - Roles past 1–3 / next 1–3 (block visit sequence), next reward, other
+    rewards: distance-controlled (minus the other squares at the same
+    distance from the current square).
+  - Rewards − current.
+- **Current square, HC pooled** (count-matched z):
+
+  | | ripples | ordinary |
+  |---|---|---|
+  | encode | +0.57 | +0.28 (<.001) |
+  | known | +0.10 | +0.10 (.024) |
+  | encode − known | +0.46 (.008) | +0.18 (.012) |
+  | ripple − ordinary, encode | +0.28 (.065) | |
+  | ripple − ordinary, known | −0.00 (.99) | |
+
+  **The encode > known effect is not ripple-specific.** Known ripples carry
+  the current square exactly as much as ordinary moments do.
+- **Rewards − current.** Negative everywhere (encode ripples −0.50,
+  p = .001). Next − other rewards in ripples: n.s. in both phases.
+- **Other (non-next) rewards in known ripples:** −0.31 (p = .006);
+  encode − known +0.50 (p = .007).
+- **Path ahead in encode.**
+  - Ordinary moments: next 1 +0.14 (p = .002), next 2 +0.16 (p = .006), next
+    reward +0.14 (p = .031).
+  - Ripples: similar (next 3 +0.29, p = .043).
+  - Ripple − ordinary: n.s. for every square ahead and every reward.
+- **Past 1 in encode ripples:** −0.42 (p = .002); ripple − ordinary −0.38
+  (p = .006).
+
+**Reading.**
+- No support for "remote / future / reward squares during ripples, place
+  firing otherwise".
+- The forward lean during encoding is in ordinary moments too.
+- Ripples locally suppress the just-left square during encoding, and avoid
+  the non-next rewards once known.
+- Exploratory, uncorrected.
+- The earlier F2 script (`per_lag_encoding_by_phase.py`) pooled repeats
+  instead of averaging them; this run does not.
+
+## 2026-11-20 — D3 vs the reported phase contrast: the location TEMPLATE decides the sign (corrects D3)
+
+**Why.** SK: D3 said HC ripples carry the current square in execution
+(+0.62, p < .001) but not in learning (+0.14, n.s.). The reported analysis
+(`swr_phase_contrast`, Fig 20/21) says the opposite: encode +0.57
+(p < .001), once known +0.21 (n.s.), count-matched difference +0.46
+(p = .007). I reported D3 without reconciling it with the reported result.
+
+**What differs.** The two estimators differ in four ways:
+- template: D3 = the same block's other traversals (T4 / `future_shift`
+  references); reported = other configurations (leave-one-`grid_id`-out);
+- window: ±125 ms vs the ripple's own duration;
+- ripple selection: D3 is stricter;
+- count matching: D3 has none.
+
+**Test.** `scripts/exploratory/location_estimator_reconcile.py` →
+`swr/location_estimator_reconcile_2026-11-20/`. It uses the reported
+ripples, cells (HC ant + mid), sessions, statistic, 1000 permutations and
+1000 count-matched draws, and swaps one thing at a time.
+- Check: other configs × ripple duration reproduces the reported per-session
+  values (max |diff| 4e-16).
+
+Values are HC current square, z: learning / execution (all ripples), then
+learning − execution with counts matched.
+
+| template | ripple duration | ±125 ms |
+|---|---|---|
+| other configs (reported) | **+0.57** / +0.21; **+0.46 (.007)** | **+0.66** / +0.24; **+0.51 (.004)** |
+| other configs, same phase | **+0.35** / +0.21; +0.25 (.17) | **+0.56** / +0.21; **+0.42 (.017)** |
+| same block (D3) | +0.18 / **+0.63**; −0.27 (.22) | +0.15 / **+0.81**; **−0.43 (.029)** |
+| same block, same phase (n = 43) | +0.29 / +0.25; +0.17 (.43) | +0.29 / +0.36; +0.14 (.51) |
+
+**Reading.**
+- **The window and the ripple selection do not matter.** The template source
+  alone flips the sign, on the very same ripples.
+- **Same-block templates for learning ripples are mostly execution maps.** A
+  median of 87% (IQR 76–94%) of their dwell time comes from execution
+  traversals.
+- **In execution, same-block templates are built from near-identical repeats
+  of the same loop.** That is the same route, the same position in the
+  sequence and the same next move, so they score more than location: the
+  routine at that square, and configuration-specific remapping. These cannot
+  be separated here.
+- **Restricting same-block templates to the ripple's own phase removes the
+  flip** (+0.29 vs +0.25).
+- **Location in the sense of the manuscript is the other-configuration
+  template.** On that measure the reported result stands: present in encoding
+  ripples, not detectable once known. D4c (other configurations, within
+  phase) agrees: learning ripples +0.58, execution +0.22.
+
+**Consequences.**
+- D3 (2026-11-15, 2026-11-19 (b)) measures same-block content and must not be
+  read as location content.
+  - Its learning values, and every learning-vs-execution comparison, are
+    scored against execution maps.
+  - Its within-execution categories (route / reward vs other) need a rerun
+    with other-configuration templates before they mean location.
+- The same template underlies T4 `path_content` (HC first traversal
+  PAST − FUT +0.44; execution FUT +0.35) and `future_shift`. The T4
+  learning-vs-execution flip carries the same caveat.
+
+## 2026-11-19 — The position index by phase, with the PUBLISHED definition (corrects D4c)
+
+**Why.** SK: D4c's "mOFC position-selective in learning, gone in execution"
+contradicts the chapter-5 result (mOFC index in correct repeats). The two are
+different measures:
+- chapter 5 (group/position_index_2026-10-02): warped 360-bin traces of
+  correct loops; goal progress (within-state cosine) and the per-loop linear
+  ramp removed; per-cell leave-one-configuration-out encoding model; held-out
+  r of the state block; one-sided Wilcoxon of per-cell r > 0, BH across ROIs.
+- D4c: real-time state templates minus their linear A–D ramp, scored in
+  250 ms windows in still moments and ripples only.
+- The cosine goal-progress basis has zero mean within each state, so it does
+  not change state means; D4c's "selective" removes the same linear trend at
+  the level of state means. The definitions agree; the MEASUREMENT (whole
+  loop vs 250 ms still windows) does not.
+
+**What.** `scripts/position_index_by_phase.py` imports the published pipeline
+(`encoding_state_sustained_cv`) unchanged, same per-cell seeds, 10,000 circular
+shifts; only the averaged loops change: learning = loops before a block's
+first correct loop; execution = correct loops (reproduces the published r and
+q exactly); execution_matched = first n correct loops per configuration, n =
+its number of learning loops. Output:
+`group/position_index_by_phase_2026-11-19/`.
+
+**Results** (Hodges-Lehmann r, q):
+
+| ROI | learning | execution | execution, matched n | exec − learn (paired p) |
+|---|---|---|---|---|
+| EC | +.004 (.21) | **+.022 (.003)** | +.012 (.060) | +.022 (.031) |
+| mOFC | **+.012 (.001)** | **+.013 (.001)** | **+.010 (.010)** | +.002 (.68) |
+| mPFC | **+.018 (<.001)** | **+.010 (.002)** | +.002 (.30) | −.009 (.053); matched −.015 (<.001) |
+| HC ant | **+.005 (.010)** | **+.009 (.002)** | +.003 (.099) | +.004 (.27) |
+| HC mid | **+.012 (<.001)** | **+.009 (.005)** | **+.009 (<.001)** | −.003 (.56) |
+| PCC | **+.019 (<.001)** | +.003 (.32) | +.006 (.13) | −.018 (.010) |
+
+- mOFC carries the index in execution (as published) AND in learning,
+  unchanged. D4c's "gone in execution" holds only for 250 ms still moments and
+  must not be stated as a property of the code.
+- The D4c timeline ("cortex has it in learning, HC only after") does NOT
+  survive the published definition: HC mid has the index in learning; HC vs
+  mOFC change, Mann-Whitney p = .90 (matched .96). Retracted.
+- ⚠ PCC, the negative control in execution, is positive in learning. The
+  learning measure therefore carries a state-locked signal that is not a
+  position code. Preferred states are spread over A–D (not an onset
+  transient); candidate: search / error presses distributed unevenly over
+  states during learning. Learning levels are not interpretable as an index
+  until that is controlled.
+
+## 2026-11-19 (b) — context_content extended: square categories (D3) and BEFORE the ripple (D5). Exploratory.
+
+`mc/analyse/swr_explore/context_content.py`, rerun into
+`swr/context_content_2026-11-19/`. All 871 previously reported tests reproduce
+exactly. Added: D3 CURRENT and ROUTE − OTHER; D5 = every D4 code in the window
+before (−500…−50 ms) and after (+50…+500 ms) the ripple, and the HC location ×
+frontal position coupling before the ripple; coupling LEVELS and their
+learning − execution difference. Figures redrawn as bars (mean, 95% CI) on
+SK's request: D3_square_content, D4c_code_levels, D4a_direction,
+D5_before_ripples, D4b_binding.
+
+⚠ **Corrected 2026-11-20.** D3 scores against templates from the same block's
+other traversals. Those are mostly execution maps, even for learning
+ripples. They are not a location measure: see the 2026-11-20 entry. The
+numbers below are same-block content, not location content.
+
+**D3, HC, which squares** (z; still level / ripple level / ripple − matched /
+ripple − own):
+- current square, execution: +1.44 (<.001) / +0.62 (<.001) / +0.05 (.70) /
+  +0.12 (.44). Present, not ripple-specific.
+- route − other (same distance), execution: +0.36 (.019) / +0.40 (.020) /
+  +0.29 (.087) / +0.64 (.16, n = 10). Not ripple-specific.
+- reward − other (same distance), execution: +0.65 (.001) / +0.57 (<.001) /
+  **+0.32 (.023)** / +0.14 (.54, n = 24). One baseline only.
+- reward − route, execution: +0.28 (.075) / +0.26 (.093) / +0.17 (.25) /
+  +0.42 (.075). Rewards are not preferred over the rest of the route.
+- Learning: nothing positive; route − other in still moments −0.55 (.037,
+  n = 18).
+
+**D5, before the ripple:**
+- mOFC position code before learning ripples +0.91 (<.001), but as strong
+  before matched still moments (+1.04): matched −0.04 (.88), own −0.03 (.92).
+  Away-execution own +0.61 (.053), matched +0.26 (.29).
+- Frontal (mPFC + mOFC) position code before learning ripples is LOWER than
+  before matched still moments: −0.36 (.027); mPFC −0.54 (.005).
+- HC location before ripples: not elevated (learning matched −0.20, .12).
+- HC location × frontal position coupling before the ripple: every set ≈ 0
+  (largest: execution matched +0.016, .070, driven by negative still-moment
+  coupling −0.016, .001).
+- Coupling in the ±125 ms window, still moments: learning −0.004 (.51),
+  execution −0.006 (.17), learning − execution +0.002 (.85). No
+  phase-specific binding outside ripples either.
+- In the ripple flanks (±0.5–0.75 s), learning: HC location × mOFC position
+  +0.043 (.003); in the ripple itself −0.023 (.16). Not predicted, one of
+  many.
+- HC conjunction before the ripple: all sets ≈ 0 (all, matched +0.12, .44).
+
+**Reading.** No evidence that location and sequence are co-active before
+ripples, or bound in them, or bound in one phase rather than the other. The
+D4b-i matched result (+0.29, p = .012) remains a negative still-moment
+level, not a ripple conjunction.
+
+## 2026-11-15 — PRE-REGISTRATION: who drives whom, and when? (D1–D4)
+
+Written BEFORE running.
+
+**SK's model.**
+- mOFC tracks position in the sequence (state) and lOFC tracks reward.
+- At uncovers they signal the hippocampus to store the current position, and
+  that is why a ripple follows (cortex → HC, "memorise").
+- Later ripples run the other way, HC → cortex, to load the plan. Ripples
+  outside the uncover period may carry the rewarded locations, more so once
+  the sequence is known.
+- A symmetric alternative: location and sequence information are played at
+  the same time (bound), not one region sending to the other.
+
+**Shared definitions.** Session = unit, seed 42, sign-flip over sessions
+(10,000). Both readings everywhere.
+- **Phases:** learning = grid onset → start of the first fully correct repeat
+  (exclusive boundary); execution = the rest.
+- **Ripple contexts:**
+  - UNCOVER = in the pause after an uncover press, (press,
+    press + min(pause, 2 s)];
+  - AWAY = no uncover press in [t − 2 s, t + 0.5 s] (navigation presses
+    allowed).
+  - These are crossed with phase: U_L, U_E, A_L, A_E.
+- **Matched reading:** ripple minus ripple-free moments (no ripple within
+  0.5 s, 50 ms grid) of the SAME context and phase, in the same stratum of time
+  since the last press × time to the next press.
+- Ripples are aligned to their peak; the bundle stores no onset. Weakness:
+  peak timing blurs leads and lags by a few tens of ms.
+
+**D1 — does the HFB direction flip with context?**
+`scripts/exploratory/swr_hfb_direction_context.py`. Partition ROIs mOFC,
+lOFC, mPFC; 20 shifted nulls.
+- Direction index = post (0, +250] − pre [−250, 0) ms of the ripple-locked
+  epoch.
+- Own reading: real − shifted, minus the |t| ≥ 750 ms baseline. Matched
+  reading: ripple − matched moments.
+- Model prediction: at U_L ripples cortex leads (index < 0); at later ripples
+  it follows (index > 0).
+- **PRIMARY: direction(U_L) − direction(A_E) < 0, own reading, in mOFC and in
+  lOFC** (two tests, Bonferroni α = .025).
+- Secondary:
+  - mPFC;
+  - U_L − A_L (context within learning) and U_L − U_E (phase within uncover
+    ripples);
+  - the 2 × 2 interaction;
+  - time courses with cluster tests.
+
+**D2 — does the cortical response to an uncover predict the ripple that follows?**
+Same script.
+- Per uncover (correct and error), single-trial ROI HFB in 0–500 ms minus the
+  −1.5…−1.0 s baseline.
+- Excluded: any ripple in [−1.5, +0.6] s (keeps the predictor and its baseline
+  ripple-free), pauses < 1 s.
+- Outcome: a ripple in (+0.6 s, press + min(pause, 2.5 s)].
+- Per session and ROI, logistic regression on z(HFB) + log(window length) +
+  correct/error + first traversal + phase. Stillness reading adds log(pause)
+  and log(time since the previous press).
+- β for HFB per session (≥ 10 events with and ≥ 10 without a ripple),
+  sign-flip.
+- **PRIMARY: β > 0 in LEARNING uncovers, mOFC and lOFC (α = .025 each).**
+- Secondary: execution; learning − execution; mPFC (predicted ≈ 0).
+
+**D3 — do ripples AWAY from uncovers carry the rewarded squares, more once the sequence is known?**
+`mc/analyse/swr_explore/context_content.py`. HC cells, the T4
+(`path_content` / `future_shift`) machinery: same-block references, ±125 ms
+windows.
+- Per ripple, evidence for:
+  - REW: the configuration's reward squares;
+  - ROUTE: squares on the block's execution route that are not rewarded;
+  - OTHER: all non-rewarded squares.
+- The current square and its grid neighbours are excluded. REW vs ROUTE is
+  compared within equal Manhattan distance from the current square, then
+  averaged over distances.
+- Readings: stillness-matched controls (T4 strata, restricted to AWAY
+  moments); own flanks.
+- **PRIMARY: HC, AWAY ripples in EXECUTION, REW − ROUTE > 0, matched
+  reading.**
+- Secondary: learning; execution − learning (paired); REW − OTHER; UNCOVER
+  ripples; mPFC and mOFC (location templates do not transfer there, so
+  descriptive).
+
+**D4 — cortex ↔ HC with the code that works in both: position in sequence (state).**
+Same module. Sessions with ≥ 2 HC and ≥ 2 frontal cells (mPFC + mOFC
+pooled; 32 sessions). Leave-one-configuration-out templates, as in
+`state_content` (detrended state).
+- **D4a, direction.** Per ripple, frontal state evidence pre [−500, −50] and
+  post [+50, +500] ms, and HC state evidence pre and post.
+  - asymmetry = z(ρ(frontal pre, HC post)) − z(ρ(HC pre, frontal post)),
+    across ripples, minus the same with ripples paired at random (within
+    session, context and phase). Matched reading: ripple asymmetry minus
+    control-moment asymmetry.
+  - Variant: HC LOCATION evidence in place of HC state.
+  - Model prediction: asymmetry > 0 at U_L, < 0 at A_E.
+  - **PRIMARY: asymmetry(U_L) − asymmetry(A_E) > 0, own reading.**
+- **D4b, the symmetric option: is location and sequence information played at
+  the same time?**
+  - (i) Within HC, the location × state conjunction interaction
+    (`state_content`'s b_both − b_loc − b_state). With equal counts per
+    window this is a per-window linear contrast. Tested in ripples minus
+    matched moments, z vs 200 permutations of the 36 labels.
+  - (ii) ACROSS regions, in the same window: partial r(HC location evidence,
+    frontal state evidence | total activity), ripple minus matched moments.
+  - (iii) Within HC, location × state coupling by context.
+  - **PRIMARY D4b: (ii) all ripples, ripple − matched > 0.** (i) and (iii) are
+    co-primary-descriptive.
+  - Everything is also given per context.
+- Also descriptive: frontal state evidence inside ripples by context. This is
+  the side step on mOFC's unexplained "anti-location" ripple pattern.
+
+**AMENDMENT to D4, before running (SK, same day).** Son, Azab, … Küchenhoff
+et al., "Human hippocampal codes shift under feedback control during rapid
+sequence learning" (Google Doc, same dataset):
+- During learning, hippocampal cells RAMP across the four ordinal positions (a
+  relative code).
+- Position-SELECTIVE (absolute) cells appear only after learning.
+- Reward-signal cells lead the ramp's progression by ~400 ms on correct
+  presses.
+
+Consequences, fixed now:
+- (1) D4 state templates are built WITHIN phase: leave-one-configuration-out
+  over learning occupancy for learning events, and over execution occupancy for
+  execution events. A template dominated by the after-learning code would
+  otherwise measure, during learning, a code the hippocampus does not yet have.
+  No time-into-traversal detrending (it removes a ramp); a detrended variant is
+  secondary.
+- (2) Each cell's 4-state template is split into a RAMP part (its projection
+  on the linear contrast −1.5, −0.5, +0.5, +1.5) and a SELECTIVE part (the
+  rest). Evidence is computed with each part separately.
+- (3) New **D4c — when does each region acquire the position code, and do
+  ripples get it first?**
+  - Region (HC; frontal = mPFC + mOFC; mOFC alone) × phase (learning /
+    execution) × code (ramp / selective). Measured in ordinary still moments
+    (the stratified control moments) and in ripples.
+  - Paper's prediction: HC ramp in learning, selective in execution. SK's
+    prediction: the frontal selective code is already present in learning
+    (cortex has the position code first).
+  - **PRIMARY D4c: HC selective-code evidence in LEARNING ripples minus
+    matched learning moments > 0.** This is "ripples carry the absolute code
+    before the hippocampus shows it in ordinary activity".
+  - Secondary: the region × phase pattern of each code in still moments, the
+    same for frontal and mOFC, and the own (flank) reading.
+- D4a and D4b otherwise as above, using the within-phase full templates.
+  D4a's direction is also given with HC ramp and selective evidence
+  separately.
+
+**Weaknesses stated in advance.**
+- Timing shows an ordering, not information flow.
+- Ripple-by-ripple correlations rest on noisy 0.25–0.5 s windows of ~5 cells.
+- Content has never been ripple-specific, so contrasts across contexts and
+  against matched moments carry the inference.
+- Counts per context × phase will be uneven. Execution has many AWAY ripples;
+  learning has fewer UNCOVER ripples. Any cell with < 15 events is dropped.
+  - Correction, found when running: AWAY ripples are the RARE set in
+    execution. Uncovers come every few seconds there, so the 2 s look-back
+    excludes most ripples.
+  - A_E had 8 mOFC / 14 lOFC / 19 mPFC sessions in D1 (median 40–68
+    ripples); 1 ripple in session 44.
+  - The definition was kept as registered; session counts are reported.
+
+### RESULT D1, D2 (same day) — no context flip; lOFC leads at learning-uncover ripples; the uncover response does not predict the ripple
+
+`scripts/exploratory/swr_hfb_direction_context.py` →
+`swr/hfb_direction_context_2026-11-15/`:
+- `d1_curves.pkl`, `d1_counts.csv`, `d1_session_values.csv`, `d1_result.json`;
+- `d2_events.csv`, `d2_betas.csv`, `d2_result.json`;
+- `settings.json`, `D1_D2_direction_context.png`.
+
+**D1 direction index** (post − pre ±250 ms; < 0 = cortex leads), own /
+matched:
+
+| ROI | U_L | U_E | A_L | A_E | U_L − A_E (primary for mOFC, lOFC) |
+|---|---|---|---|---|---|
+| mOFC | +0.001 (.96) / +0.001 (.95) | **−0.013 (.010)** / −0.010 (.081) | −0.007 / −0.007 | −0.024 (.16) / −0.044 (.099) | **+0.006, p = .73** (n = 8) |
+| lOFC | **−0.011 (.034)** / −0.006 (.27) | −0.002 / −0.002 | −0.010 (.15) / −0.003 | +0.003 / −0.011 | **−0.016, p = .25** (n = 14) |
+| mPFC | −0.002 / −0.001 | +0.001 / +0.002 | −0.007 / −0.003 | −0.008 / +0.010 | +0.005, p = .47 |
+
+- No 2 × 2 interaction anywhere (all p ≥ .24).
+- Window means: every ROI is ripple-locked in most sets. mPFC matched is
+  strongest for A_E (+0.048, p < .001), while its own reading is flat there.
+  That is the same "slow elevation" pattern as F4.
+
+**D2** (logistic β of the 0–500 ms uncover HFB on a ripple 0.6–2.5 s later):
+
+| ROI | learning (PRIMARY for mOFC, lOFC) | execution | learning − execution |
+|---|---|---|---|
+| mOFC | **−0.14, p = .057** (9) / stillness −0.20 (.077) | +0.42 (.25, 4) | −0.44 (.25) |
+| lOFC | **−0.05, p = .50** (15) / −0.04 (.72) | +0.03 (.80) | −0.10 (.55) |
+| mPFC | +0.06 (.47) / +0.13 (.23) | −0.18 (.028) / −0.26 (.19) | +0.23 (.014) / +0.24 (.31) |
+
+**Reading.**
+- Both primaries fail. The direction of cortex–ripple timing does not flip
+  between uncover-learning and away-execution ripples in mOFC (p = .73) or
+  lOFC (p = .25).
+- A larger mOFC or lOFC response to an uncover does not make a following
+  ripple more likely. mOFC points the other way (p = .057, 9 sessions).
+- Partial support for the model, own reading only:
+  - lOFC rises before the ripple at uncover ripples during learning
+    (p = .034, not in the matched reading);
+  - mOFC rises before the ripple at uncover ripples in EXECUTION (p = .010),
+    not learning.
+- Few sessions qualify for D2 (enough uncovers with and without a ripple),
+  so it is weak.
+
+### RESULT D3, D4 (same day) — the cortex has the position-selective code during learning, the hippocampus only after; the direction primaries fail or reverse
+
+`python scripts/swr_content_explore.py context_content` →
+`swr/context_content_2026-11-15/`:
+- `d3_per_session.csv`, `d4c_levels.csv`, `d4a_direction.csv`,
+  `d4b_binding.csv`, `d4b_conjunction.csv`;
+- `result.json`, `D3_rewarded_squares.png`, `D4_state_codes.png`.
+
+51 HC / 39 frontal / 22 mOFC sessions; 31 with HC + frontal.
+- The first full run computed every per-session table but crashed in the
+  summary step (a single-key groupby in this pandas returns no tuple). Fixed;
+  `from_saved(d)` summarises and draws from the saved tables. Nothing was
+  recomputed.
+
+**D3 — reward squares in ripples away from uncovers (HC).**
+- **PRIMARY away-execution, reward − route, matched: +0.34, p = .23
+  (21 sessions).** Own reading −0.10 (p = .72).
+- All execution ripples: ripple level +0.26 (p = .093), own +0.42
+  (p = .075), matched +0.17 (p = .25).
+- Away execution − away learning: +0.47 (p = .27).
+- Reward − all non-rewarded, all execution, matched: +0.31 (p = .023), one
+  secondary among many.
+- Not supported. At most a weak tendency for execution ripples to favour the
+  rewarded squares.
+
+**D4c — position in sequence: who has which code, when** (z vs label
+permutations, still moments).
+
+| region | ramp, learning / execution | selective, learning / execution |
+|---|---|---|
+| HC | **+0.91 (p < .001)** / +0.41 (.020) | +0.17 (.25) / **+0.33 (.041)** |
+| frontal (mPFC + mOFC) | +0.80 (.001) / +0.52 (.003) | **+0.69 (p < .001)** / +0.33 (.071) |
+| mOFC | +0.73 (.012) / +0.51 (.048) | **+0.70 (.005)** / +0.09 (.67) |
+
+- The hippocampus replicates Son, Azab et al. with this estimator: a ramp
+  during learning that declines (learning − execution +0.49, p = .030); a
+  selective code only in execution.
+- The CORTEX already has the selective code during learning. mOFC's
+  selective code is strongest in learning and gone in execution.
+- Region × phase, selective code, within sessions:
+  - (mOFC L−E) − (HC L−E) **+1.34, p = .026** (17 sessions);
+  - frontal +0.75, p = .073; mPFC +0.46, p = .36.
+- **PRIMARY D4c: HC selective in learning ripples − matched: +0.25,
+  p = .073** (own +0.20, p = .22). The ripple level alone is +0.40
+  (p = .026), against +0.17 (p = .25) in learning still moments: the selective
+  code is visible in learning ripples. The ripple-specific contrast is a
+  trend.
+- Frontal selective in learning ripples is LOWER than in matched moments
+  (−0.42, p = .008).
+
+**D4a — direction** (frontal state pre → HC post vs HC pre → frontal post):
+- **PRIMARY U_L − A_E (predicted > 0): −0.131, p = .031, the OPPOSITE sign.**
+- Per set:
+  - away-execution ripples +0.088 (p = .085; matched +0.116, p = .082),
+    i.e. frontal → HC;
+  - uncover-learning −0.032 (p = .23);
+  - all ripples −0.019 (p = .042).
+- HC location in place of HC state: nothing (U_L − A_E −0.074, p = .34).
+- The model's direction (cortex → HC at learning uncovers, HC → cortex later)
+  is not supported. If anything the frontal → HC lead appears in
+  away-execution ripples. Unpredicted and two-sided.
+
+**D4b — the symmetric option.**
+- **(ii) PRIMARY HC location × frontal state, same window, all ripples,
+  matched: +0.006, p = .51.**
+  - away-learning: LESS coupled in ripples than in control moments (matched
+    −0.062, p = .008; own −0.086, p < .001);
+  - uncover-execution own +0.048 (p = .033).
+- (i) HC conjunction: all, matched +0.29 (p = .012). This is only because
+  still moments are negative (−0.45, p = .014) while ripples are ≈ 0 (+0.01);
+  own reading −0.05 (p = .74). Not a ripple conjunction.
+- (iii) HC location × HC state: away-execution own +0.22 (p = .001), matched
+  +0.11 (p = .10); elsewhere null.
+- No evidence that location and sequence are played together in ripples, in
+  either region or across regions.
+
+**Reading.**
+- The clearest result is not about ripples: the code timeline. The
+  hippocampus ramps during learning and becomes position-selective only after
+  (as in the paper). mOFC (and frontal cortex) is already position-selective
+  during learning, and the difference is significant for mOFC vs HC.
+- This fits "cortex has the sequence code first, the hippocampus acquires it".
+  Whether ripples carry it over is not settled:
+  - HC's selective code is visible inside learning ripples (+0.40, p = .026),
+    but not significantly more than in matched moments (p = .073);
+  - the ripple-by-ripple direction does not show cortex → HC at learning
+    uncovers.
+- Many tests; only the pre-registered primaries carry inference. Of those:
+  D3 null, D4a reversed (two-sided p = .031), D4b null, D4c a trend.
+
+## 2026-11-14 (b) — PRE-REGISTRATION: do ripples during learning build the plan? (B1 block dose–response, C1 co-firing reactivation) + F4 summary sets
+
+Written BEFORE running. Both tests avoid the two limits found in F1–F4: the
+per-cell lag tuning is unreliable, and there are few discovery events. Neither
+classifies single cells, and both use every learning-phase ripple
+(620 blocks, median 11 learning ripples each). Session = unit, seed 42.
+Learning = grid onset → start of the first fully correct repeat (the agreed
+exclusive boundary); execution = the rest.
+
+**B1 — more ripples while learning, stronger plan code once executing?**
+`scripts/plan_code_vs_ripples.py`, on the F2 rate-map estimator.
+- Per block (grid run) and mPFC cell: the execution maps of all OTHER
+  configurations predict this block's FIRST 3 execution loops, pooled. Same
+  dwell QC as F2.
+- Block code = mean Fisher z over the session's mPFC cells (≥ 2 finite).
+  No cell is classified.
+- Predictor: log(1 + number of hippocampal ripples in the block's learning
+  window).
+- Two readings:
+  - own: covariates log(learning duration), number of learning loops, block
+    order, run index (re-encounter);
+  - stillness-matched: log(learning still time), with still time = Σ
+    max(0, gap − 0.5 s) over inter-step gaps, in place of the duration, and the
+    same other covariates.
+- Per session (≥ 8 blocks with a code), OLS on z-scored predictors. The
+  ripple β per session is tested across sessions by sign-flip (10,000).
+- **PRIMARY: mPFC, 60°, own reading, β > 0.**
+- Secondary:
+  - lags 0 (specificity: should not, or less), 30, 90 and the full profile;
+  - all execution loops instead of the first 3;
+  - mOFC; HC (control region);
+  - MixedLM on all blocks;
+  - negative control: the PREVIOUS block's execution-ripple count as
+    predictor.
+
+**C1 — do learning ripples reactivate the co-firing of the block's later execution?**
+`mc/analyse/swr_explore/reactivation.py`, the Peyrache et al. (2009)
+reactivation strength.
+- Each cell's spike counts in 250 ms bins, z-scored with session-wide stats.
+- Template C_b = cell × cell correlation of those bins over block b's
+  EXECUTION. Bins within 0.5 s of a ripple are dropped. Diagonal zeroed.
+- For a moment t in block b's learning window:
+  R(t) = z(t)ᵀ C z(t) / (n(n − 1)), with z(t) = counts in [t − 125, t + 125] ms.
+- Two templates:
+  - own block C_b;
+  - other blocks: the mean R over C_b' of blocks with a DIFFERENT
+    configuration.
+  - specific = own − other. This removes co-firing that is common to all
+    configurations.
+- Two readings:
+  - own: ripple minus its own flanks ([t − 0.75, t − 0.5] and
+    [t + 0.5, t + 0.75] s);
+  - stillness-matched: ripple minus ripple-free moments (no ripple within
+    0.5 s, 50 ms grid) of the same learning window, in the same stratum of
+    time since last press × time to next press (`swr_hfb_discovery_lock`
+    strata).
+- **PRIMARY: mPFC (sessions with ≥ 3 cells), learning ripples, specific
+  reactivation (own − other template), stillness-matched reading, > 0.**
+- Secondary:
+  - general reactivation (own template alone);
+  - own reading;
+  - mPFC + mOFC pooled; mOFC; HC (expected positive control);
+  - post-FD-pause ripples only; execution ripples.
+
+**F4 summary sets (descriptive, for two figures).** `swr_hfb_discovery_lock`
+gains:
+- R_ALL (every ripple; matched controls drawn from all task time);
+- U_COR (every correct uncover), U_ERR (every incorrect uncover);
+- U_FT_ERR (incorrect uncovers in the first traversal).
+Same two readings and tests as F4.
+
+### RESULT F4 summary sets (same day) — mPFC: every ripple, no uncover; mOFC: ripples and errors
+
+`swr/hfb_discovery_lock_2026-11-14/` (rerun, superset of F4; F4 numbers
+unchanged). Figures
+`swr/gradient_claims_followup_2026-11-14/F5_mPFC_ripples_not_uncovers.png`
+and `F6_mOFC_uncovers_and_ripples.png`
+(`scripts/exploratory/plot_ripple_vs_uncover_locking.py`).
+
+| set | reading | mOFC (18) | mPFC (35) |
+|---|---|---|---|
+| every in-task ripple | own | +0.0174, p < .001 (−260…+90) | +0.0065, p < .001 (−140…+210) |
+| every in-task ripple | matched | +0.0221, p < .001 | +0.0202, p < .001 (−120…+180) |
+| every correct uncover | own / matched | +0.003 (.18) / +0.008 (.57) | +0.001 (.44) / 0.000 (.998) |
+| every incorrect uncover | own / matched | **+0.011 (.038)** / +0.018 (.059) | 0.000 (.98) / +0.008 (.29) |
+| incorrect, first traversal | own / matched | +0.010 (.086) / **+0.026 (.009)**, cluster +310…+410 | −0.002 (.33) / +0.012 (.13) |
+
+**Reading.**
+- mPFC HFB is locked to hippocampal ripples in both readings and in the GLM.
+  It shows no positive response to any uncover set.
+- mOFC is locked to ripples just as strongly. It also responds to incorrect
+  uncovers, most in the first traversal, and in the GLM to first
+  discoveries.
+- mOFC − mPFC differs in the uncover response (all errors own p = .018; FT
+  errors own p = .020), not in ripple locking (matched p = .94).
+
+### RESULT B1 (same day) — a trend in the predicted direction, not robust
+
+`scripts/plan_code_vs_ripples.py` → `swr/plan_code_vs_ripples_2026-11-14/`
+(`blocks.csv`, `cell_block_codes.csv`, `session_betas.csv`, `result.json`,
+`B1_plan_code_vs_ripples.png`). 1458 blocks with an execution phase, median
+11 learning ripples (58 blocks > 80). mPFC: 25 sessions, 617 blocks.
+
+| mPFC, 60°, first 3 execution loops | mean ripple β (standardised) | p |
+|---|---:|---:|
+| **PRIMARY, own reading** | **+0.168** | **.070** |
+| stillness-matched reading | +0.069 | .40 |
+| all execution loops, own / matched | +0.065 / +0.029 | .50 / .73 |
+| MixedLM, all blocks, session-centred | +0.013 (raw units) | .72 |
+| negative control: previous block's execution ripples | −0.051 | .36 |
+
+- Specificity: mPFC lag 0 +0.034 (p = .73); stack 30–90° +0.109 (.27);
+  mOFC 60° +0.072 (.52); HC lag 0 +0.004 (.97).
+- Exploratory lag profile (12 lags × 2 readings × 2 loop sets, uncorrected):
+  - 180° +0.31 (p = .005 own, .006 matched, first 3 loops; not with all
+    loops); 120° matched +0.19 (p = .041).
+  - Ripple β is ≥ 0 at 10 of 12 lags: a weak general tendency, not a
+    60°-specific one.
+
+**Reading.** Blocks with more learning ripples have, at best, a slightly
+stronger mPFC future code at the start of execution. The primary is p = .070.
+It does not survive the stillness covariate or the pooled model.
+- 180° is the strongest lag but was not predicted. Bonferroni over 12 lags
+  gives p ≈ .06.
+- Not evidence for ripples building the plan; also not strong evidence
+  against. Each block's code rests on ~5 cells × 3 loops.
+
+### RESULT C1 (same day) — null everywhere, and the HC positive control fails too
+
+`python scripts/swr_content_explore.py reactivation` →
+`swr/reactivation_2026-11-14/` (`per_session.csv`, `result.json`,
+`C1_reactivation.png`). 21 mPFC / 18 mOFC / 33 mPFC + mOFC / 48 HC sessions
+with ≥ 3 cells.
+
+| | own flanks | stillness-matched |
+|---|---|---|
+| **PRIMARY mPFC, learning ripples, specific (own − other)** | −0.0002, p = .74 | **+0.0006, p = .52** |
+| mPFC, general (all execution co-firing) | −0.0003, p = .77 | −0.0001, p = .95 |
+| mPFC + mOFC, specific | −0.0001, p = .90 | +0.0004, p = .55 |
+| mOFC, specific | −0.0005, p = .45 | −0.0000, p = .97 |
+| HC, general (expected positive control) | +0.0004, p = .38 | −0.0004, p = .25 |
+| mPFC, post-FD ripples, specific | −0.0004, p = .79 (21) | −0.0034, p = .094 (11) |
+
+- The post-FD matched reading is thin: few ripple-free still moments in those
+  short pauses (10–18 sessions).
+
+**Deviation.** Execution ripples were dropped from the pre-registered
+secondaries. The template is built from the same execution window, so the
+comparison would be circular.
+
+**Reading.** No reactivation of execution co-firing in learning ripples,
+specific or general, in any region or reading. Because HC shows none either,
+this is a sensitivity failure, not evidence against.
+- With ~5 cells, 250 ms windows and human single units that fire only ~4%
+  more in ripples, pairwise co-firing in single ripple windows carries too
+  little signal.
+- Do not cite C1 as a negative result.
+
+### EXPLORATORY (written before running, AFTER seeing B1) — B1b: future lags collapsed, and which ripples
+
+SK, after B1 panel d: β looks positive at nearly every future lag except
+270–330°. Two questions:
+1. A crude test of the future lags on average.
+2. Is the B1 relation specific to certain ripples (e.g. after correct
+   uncovers), or does it change with ripples across the whole task?
+
+mPFC only; own reading only (no still-time covariate, at SK's request).
+`scripts/plan_code_vs_ripples_types.py`, reusing B1's saved per-cell block
+codes (first 3 execution loops). No code is recomputed.
+
+**Collapsed future measures**, fixed now:
+- **F_all** = per block, the mean Fisher z over lags 30–330°: all 11 future
+  lags, the manuscript's existing "beyond-now" set. Data-independent, and the
+  primary for this step.
+- F_near = 30–90° (the manuscript's informed subset).
+- F_30-240 = the range read off panel d. POST HOC and circular; reported only
+  to answer the question as asked.
+- Also the per-session mean of the 11 per-lag ripple βs.
+
+The per-lag βs share blocks and cells, so they are not independent tests.
+Only the collapsed versions (one value per session) are tested.
+
+**Ripple subsets**, counted per block. Predictor log(1 + n); covariates as B1
+(log duration of the window the ripples come from, n learning loops, block
+order, run).
+- L_all: all learning ripples (= B1).
+- L_FT: first traversal only. L_rest: the rest of learning.
+- L_postCorrect, L_postFD, L_postError: in the pause after a correct / first
+  discovery / incorrect uncover, (press, press + min(pause, 2 s)].
+- L_other: learning ripples not in any post-uncover pause.
+- E_first3: during the first 3 execution loops (the loops the code is measured
+  on).
+- E_all: the whole execution. B_all: the whole block.
+
+Learning subsets use log(learning duration) as their covariate, E_first3 /
+E_all / B_all the duration of their own window.
+
+**Tests.** Sign-flip over sessions (10,000) of per-session ripple βs, for
+outcomes 60°, F_all, F_near, F_30-240 and every lag. BH-FDR over the family
+10 subsets × {60°, F_all}. Everything here is exploratory.
+
+### RESULT B1b (same day) — the collapsed future code tracks learning ripples; not tied to post-reward ripples
+
+`scripts/plan_code_vs_ripples_types.py` → `swr/plan_code_vs_ripples_types_2026-11-14/`
+(`blocks_with_codes.csv`, `session_betas.csv`, `result.json`,
+`B1b_future_and_ripple_types.png`). 617 blocks, 26 mPFC sessions (25 with
+≥ 8 blocks). Learning-ripple counts are identical to B1's for every block.
+
+**Future lags collapsed, learning ripples:**
+
+| outcome | mean ripple β | p | q (family) |
+|---|---:|---:|---:|
+| **F_all, code averaged over 30–330°** | **+0.310** | **.006** | .12 |
+| mean of the 11 per-lag βs | +0.098 | .009 | — |
+| F_near 30–90° | +0.148 | .12 | — |
+| F_30-240 (post hoc, circular) | +0.318 | .013 | — |
+| 60° (= B1 primary) | +0.168 | .070 | .28 |
+
+**By ripple type** (60° / F_all):
+
+| subset | median per block | 60° | F_all |
+|---|---:|---|---|
+| all learning (= B1) | 10 | +0.17, p = .070 | **+0.31, p = .006** |
+| first traversal | 9 | +0.07, .22 | **+0.17, .015** |
+| rest of learning | 0 (19% of blocks > 0) | +0.08, .67 | +0.21, .34 |
+| after correct uncovers | 2 | +0.11, .058 | +0.07, .16 |
+| after first discoveries | — | +0.08, .12 | +0.04, .35 |
+| after incorrect uncovers | — | +0.01, .90 | +0.01, .86 |
+| not after an uncover | 5 | +0.04, .67 | **+0.20, .031** |
+| execution, first 3 loops | 7 | −0.06, .25 | +0.03, .61 |
+| whole execution | 22 | −0.05, .38 | −0.02, .83 |
+| whole block | 33 | +0.01, .90 | +0.13, .21 |
+
+Nothing survives BH over the 20-test family (smallest q = .12, F_all,
+learning ripples).
+
+**Reading (exploratory).**
+- Averaged over the 11 future lags, the mPFC code at the start of execution
+  is stronger in blocks with more learning ripples (p = .006).
+- It is a learning-phase relation. Execution ripples of the same block do not
+  predict (p = .83), and counting ripples over the whole block dilutes it
+  (p = .21).
+- It is carried by first-traversal ripples and by ripples NOT following an
+  uncover. Post-reward ripples are sparse (median 2 per block) and give at
+  most a 60° trend (p = .058). The relation is therefore not specific to
+  "loading after a reward".
+- Averaging lags makes the code more reliable, which is why F_all β > the
+  60° β. It also means F_all is "overall lag-shifted spatial coding",
+  including near-past lags 270–330°. Future-specificity against lag 0 cannot
+  be tested fairly: a single lag is noisier than an 11-lag mean.
+
+**Not yet checked:**
+- the still-time covariate (it removed the 60° effect in B1: p = .40);
+- the previous-block negative control for F_all.
+
+**ALL execution loops (SK, same day).**
+`scripts/plan_code_vs_ripples_learning_figure.py` →
+`swr/plan_code_vs_ripples_learning_2026-11-14/` (`session_betas.csv`,
+`result.json`, `learning_ripples_plan_code.png`). Learning ripples, own
+reading, mPFC, 25 sessions, 617 blocks. Per-lag βs are identical to B1's
+"all" rows (same code and data).
+- F_all (30–330° averaged): **+0.19 ± 0.12, p = .125**.
+- Per lag: 30° +0.23 (p = .059), everything else p ≥ .13.
+- The F_all relation is therefore significant only for the FIRST 3 execution
+  loops (+0.31, p = .006) and fades over the whole execution.
+  - Under the hypothesis this is expected (later loops refine the plan
+    independently of the learning ripples).
+  - It also fits a chance first-3 result. It cannot be told apart here.
+- Same figure, now with both loop sets (`learning_ripples_plan_code.png`;
+  `session_betas_{first3,all}.csv`): F_all first 3 +0.31 (p = .006), all
+  +0.19 (p = .125). **Paired first 3 − all: +0.12, p = .38.** The two do not
+  differ significantly.
+
+**The mPFC lag profile on the first 3 vs last 3 execution loops (F2
+estimator).** `scripts/per_lag_encoding_first_loops.py` →
+`per_lag_encoding_by_phase/first_loops_2026-11-14_20-10-46/` (`per_cell.csv`,
+`per_session.csv`, `result.json`, `lag_profile_first_vs_last_loops.png`).
+155 mPFC cells, 32 sessions; all-loop and discovery profiles reproduce F2
+exactly.
+- With only each block's first 3 or last 3 execution loops, the 60° peak of
+  the full execution profile (+0.081, p < .05) is gone in BOTH (+0.018 /
+  +0.021). Three loops per block are too few for this estimator; the profile
+  is flat and noisy.
+- first 3 − last 3 differs only at 330° (+0.087, p = .047) and 300° (+0.089,
+  p = .061), uncorrected over 12 lags. At 330° the first 3 loops resemble
+  discovery (+0.067* vs +0.057*).
+- B1's own outcome (training on ALL other configurations' execution, testing
+  on this block), averaged over blocks: first 3 loops ≤ +0.026 at every lag
+  (only 240° p < .05); all loops 60° +0.038 (n.s.).
+  - The block-level code B1 regresses on is therefore close to the noise
+    floor on average. B1 asks whether ripples explain block-to-block variation
+    in a very weak signal.
+
+## 2026-11-14 — PRE-REGISTRATION: lag-0 cells at discovery, tuning across phases, mOFC vs mPFC HFB at discovery (F1–F4)
+
+Written BEFORE running. Follow-ups SK asked for on claims 1 and 2
+(`swr/gradient_claims_2026-10-30/`). Shared: `bundle_v2`, session = unit, seed
+42. Two readings everywhere: **own** (each event against its own baseline) and
+**stillness-matched**. lag-0 tuning = `r_lag000_noctrl` (`per_cell_ALL_ROIs`,
+2026-08-04 relabelled-final). It is computed on `all_minus_explore` repeats only
+(from the first fully correct repeat on), so it never saw a discovery loop.
+"lag-0 cells" = top 30% of `r_lag000_noctrl` within their ROI. That is a display
+split only; every test uses the continuous value.
+
+**What already existed (checked first).**
+- Claim 2 a/b (`consolidation_2026-10-01`) are arrival-locked over all cells in
+  the ROI, with no cell filter.
+- `lag_group_ripple_2026-10-01` has per-cell ripple modulation (inside vs
+  outside ripples, encode vs execute) for every cell, but tags lag-0 by argmax
+  (9 mPFC cells).
+- `discovery_cells_2026-10-30` has per-cell FD − RC template contributions.
+- No per-lag tuning has ever been computed on discovery loops.
+- `hfb_phases_50shifts_2026-10-08` has press-locked correct-uncover sets for
+  mOFC/mPFC (learning, execution), but no first-traversal-only or FD-only set,
+  and no ripple set restricted to the post-FD pause.
+- The HFB GLM (`swr_hfb_glm.py`, 2026-09-29) is MedialFrontal pooled, with no
+  phase split.
+
+**F1 — claim 2 a/b in lag-0 cells (display).** The `consolidation` estimator
+(evidence for the square just uncovered, 0.05–1.0 s, leave-one-configuration-out
+templates, z vs 1000 square-label permutations).
+- Run (i) exactly as published (arrival-locked) and (ii) reward-locked, as N2.
+- Cells: mPFC, mOFC, HC (each top 30%), side by side with all cells.
+- Events: first discovery (FD), repeat correct (RC), incorrect. FD is split by
+  a ripple in the post-reward pause (0, min(pause, 2 s)].
+- Readings for (ii): own = post − pre-press (−0.5…−0.05 s), same events.
+  Matched = FD vs RC, and FD with vs FD without a ripple, paired 1:1 on the
+  following stillness.
+- Sign-flip over sessions. Descriptive; no primary.
+
+**F2 — do cells change their tuning between discovery and execution?**
+`scripts/per_lag_encoding_by_phase.py`, with the `per_lag_encoding` rate-map
+estimator.
+- Loops: discovery = repeats before the first fully correct one (first traversal
+  included); execution = the rest (the published set).
+- Per configuration and phase, rate maps are POOLED over repeats rather than
+  averaged traces. Discovery paths differ between repeats, so the per-bin mode
+  location would blur them. Execution uses the same pooling, and its r is
+  checked against the published `r_lag000_noctrl`.
+- QC as published: dwell-weighted r, MIN_DWELL_BINS 25, ≥ 3 shared locations,
+  phase residualised within each phase subset.
+- Per cell, per lag (all 12):
+  - r_disc: LOCO within discovery.
+  - r_exe: LOCO within execution.
+  - r_x: execution maps of the training configurations predict the held-out
+    configuration's DISCOVERY map.
+  - r_x_n: the same training maps predict k EXECUTION repeats of the held-out
+    configuration, with k = its number of discovery repeats (10 random draws,
+    seed 42).
+  - Change index = r_x_n − r_x. Same training map and the same amount of
+    held-out data, so it is > 0 only if discovery firing departs from the
+    execution tuning.
+- PRIMARY (mPFC, lag 0, session = mean Fisher z over cells): (a) r_disc > 0;
+  (b) change index ≠ 0.
+- Secondary: mOFC and HC; the full lag profile in each phase; change vs lag-0
+  strength across cells.
+
+**F3 — are lag-0 cells the ones the plan is loaded into?** mPFC + mOFC cells,
+continuous lag-0.
+- **F3a, ripple-locked firing.** Per cell, the rate around ripples (50 ms bins,
+  −1…+1 s) / the cell's mean rate. Own = minus the ripple's own flanks
+  (0.5–1.0 s both sides). Matched = minus still moments with no ripple within
+  0.5 s, in the same stratum (time since last press × time to next press, the
+  `future_shift` bin edges) and the same period.
+  - Sets: first-traversal ripples (PRIMARY); ripples in the post-FD pause;
+    execution ripples; first traversal − execution.
+  - Test: across cells, Spearman of lag-0 with the response per bin, cluster
+    mass over −0.5…+0.5 s; null = lag-0 permuted within session (10,000). This
+    is `discovery_cells.cluster_corr`, the same function as N1. Also the ±150 ms
+    window as one value.
+- **F3b, the discovered square.** Per cell, its term of the evidence for the
+  square just discovered (as N2 `_cell_contrib`). Own = post − pre-press. Matched
+  = FD − stillness-matched RC. Also FD with − without a post-reward ripple
+  (matched). Spearman with lag-0, within-session permutation.
+  - ⚠ The level of evidence at FD is expected to track lag-0 (both are place
+    tuning); only the two contrasts are interpretable.
+
+**F4 — mOFC vs mPFC HFB at discovery: ripple-locked or uncover-locked?** Partition
+ROIs as in claim 1a (2026-09-28 partition), 20 shifted nulls.
+`scripts/exploratory/swr_hfb_discovery_lock.py`.
+- Sets:
+  - Ripple-locked: first-traversal ripples (R_FT, = claim 1a); ripples in the
+    post-FD pause (R_FD).
+  - Press-locked: all first-traversal uncovers (U_FT), FD (U_FD); FD with /
+    without a post-reward ripple.
+- Own reading: real − shifted null; ripples vs flank 750–1000 ms, events vs
+  −1.5…−1.0 s.
+- Matched reading: uncovers − arrow presses with the same following stillness
+  (`fin.matched_sets`); ripples − stratum-matched ripple-free still moments from
+  the same period (FT still time for R_FT; post-FD pauses for R_FD).
+- Per ROI and set: cluster sign-flip over sessions, and window means (ripple
+  ±250 ms; event 0–0.5 s). mOFC − mPFC unpaired (session-label permutation),
+  and paired in sessions with both.
+- **GLM, the disambiguation.** `swr_hfb_glm.simple`'s differenced single-beta
+  model (kernel −250…+500 ms minus a −1500…−750 ms arm) with the events split:
+  ripples post-FD / other first-traversal / later; FD / FT error / later correct
+  / later error; navigation. All compete for the same continuous HFB, per
+  derivation, mean per session and ROI.
+- PRIMARY: (Q1) R_FD ±250 ms, mOFC − mPFC, own reading. (Q2) GLM β(FD) −
+  β(post-FD ripple) per ROI: > 0 = uncover-locked, < 0 = ripple-locked.
+- Uncorrected across the two; everything else secondary.
+
+### RESULT F2 (same day) — mPFC's 60° code is not there in discovery loops; a cell's lag-0 r is not a reliable property
+
+`scripts/per_lag_encoding_by_phase.py` → `ephys_humans/derivatives/group/
+per_lag_encoding_by_phase/2026-11-14_18-29-12/` (`per_cell.csv`,
+`per_session.csv`, `result.json`, `config.json`, `F2_tuning_by_phase.png`).
+924 cells. Sanity: the pooled-map execution r vs the published
+`r_lag000_noctrl`: ρ = .75 (mPFC), .77 (mOFC, HC).
+
+**⚠ Seed bug, found and fixed before reporting.** The per-cell seed was
+`SEED + hash(neuron)`, copied from `per_lag_encoding.py`. Python salts string
+hashes per process, so two runs gave different subsample draws: the mPFC
+change at 60° was +0.051 in one run and +0.039 (p = .12) in another. Now
+`zlib.crc32`, 50 draws, and two runs agree to every digit. Superseded folders
+deleted.
+- **`per_lag_encoding.py` has the same line**
+  (`seed + (hash(nid) & 0x7FFFFFFF)`), so its per-cell permutation p values
+  are not bit-reproducible across runs. The CV r values are unaffected (no
+  randomness). Not changed.
+
+| mPFC, lag 0 (32 sessions) | mean (Fisher z) | p (sign-flip) |
+|---|---:|---:|
+| r_disc (PRIMARY a) | +0.055 | .097 (cell level p = .028) |
+| r_exe | +0.045 | .058 |
+| r_x (execution → discovery) | +0.019 | .28 |
+| r_x_n (execution → same n execution repeats) | +0.025 | .029 |
+| change = r_x_n − r_x (PRIMARY b) | −0.005 | .78 |
+
+- **Lag profiles.** mPFC execution peaks at 60° (+0.081, p < .05), as in the
+  manuscript. In discovery loops it is flat from 30° to 300°, with lag 0
+  +0.055 and 330° +0.057 (p < .05).
+- **Change index by lag (secondary, uncorrected over 12).** mPFC peaks at 60°:
+  +0.047, p = .040. Discovery firing departs from the execution tuning at 60°,
+  not at 0°. mOFC and HC show no change anywhere (HC lag 0 −0.013, p = .27).
+- **HC = positive control.** Lag-0 tuning in both phases: exe +0.044
+  (p = .018), disc +0.053 (p = .002), exe → disc +0.031 (p = .023).
+- **Same cells, both phases (lag 0, independent repeats).** ρ = +0.02 (mPFC,
+  p = .75), −0.09 (mOFC, .24), +0.007 (HC, .88).
+- **⚠ Reliability.** The same cell's execution lag-0 r from odd vs even
+  repeats correlates ρ = −0.09 (mPFC, p = .25), +0.08 (mOFC), +0.005 (HC,
+  p = .91); only EC +0.37 (p = .035). At 60°, mPFC +0.19 (p = .12). The
+  population mean is real, but a single cell's lag-0 r is mostly noise. A
+  top-30% "lag-0 cell" set is therefore close to a random draw. This caps
+  every analysis that sorts cells by lag-0 tuning (N1, F1, F3, and
+  `lag_group_ripple`'s argmax tag).
+
+**Reading.** In mPFC the lag-0 code, weak as it is, looks the same in
+discovery and execution (change ≈ 0). The 60° code, mPFC's signature, is
+absent in discovery loops and departs from the execution tuning there
+(p = .040, uncorrected). That is what a plan built after discovery predicts.
+Caveat: in discovery loops the path ahead is exploration, so the absence of a
+future code is also expected without any loading. It does not by itself say
+that ripples build it.
+
+### RESULT F4 (same day) — mOFC follows the uncovers (and ripples), mPFC only ripples; ripples right after a first discovery drive neither
+
+`scripts/exploratory/swr_hfb_discovery_lock.py` → `swr/hfb_discovery_lock_2026-11-14/`
+(`curves.pkl`, `window_values.csv`, `counts.csv`, `result_epochs.json`,
+`glm_betas.csv`, `glm_session_betas.csv`, `result_glm.json`, settings,
+`F4_epochs.png`, `F4_glm.png`). 18 mOFC / 35 mPFC sessions, 11 with both.
+
+**Epochs, window means** (ripples ±250 ms, presses 0–500 ms):
+
+| set | reading | mOFC | mPFC | mOFC − mPFC (unpaired) |
+|---|---|---|---|---|
+| ripples, first traversal | own | +0.0175, p = .004 (cluster −220…+70, p = .001) | +0.0034, p = .14 | +0.014, **p = .006** |
+| ripples, first traversal | matched | +0.0174, p = .030 | +0.0147, p < .001 (cluster −170…+250, p < .001) | +0.003, p = .79 |
+| ripples after a FD (Q1) | own | +0.0197, p = .16 | −0.0001, p = .99 | +0.020, **p = .11** |
+| ripples after a FD | matched | +0.0166, p = .11 | +0.0176, p = .31 | −0.001, p = .97 |
+| uncovers, first traversal | own | +0.0078, p = .077 | −0.0020, p = .29 | +0.010, p = .016 |
+| uncovers, first traversal | matched | +0.0243, p = .040 | +0.0074, p = .087 | +0.017, p = .10 |
+| first discoveries | own / matched | +0.001 / −0.005, n.s. | −0.001 / −0.011, n.s. | n.s. |
+| FD, no ripple / ripple follows | both | all n.s. | all n.s. | n.s. |
+
+**GLM** (β per event, window-summed z; sign-flip over sessions):
+
+| regressor | mOFC own | mOFC +still | mPFC own | mPFC +still |
+|---|---|---|---|---|
+| ripple after a FD | +0.29, p = .32 | +0.27, .35 | −0.15, .30 | −0.14, .31 |
+| other first-traversal ripple | +0.36, **.029** | +0.38, **.022** | +0.17, **.014** | +0.17, **.012** |
+| later ripple | +0.45, **< .001** | +0.45, **< .001** | +0.27, **< .001** | +0.27, **< .001** |
+| first discovery | +0.48, .074 | +0.63, **.026** | +0.03, .74 | +0.12, .20 |
+| first-traversal error | +0.73, **.006** | +0.91, **.001** | −0.23, **.049** | −0.12, .26 |
+| later correct / error / navigation | n.s. | n.s. | n.s. (error +0.34, .09) | n.s. |
+| **FD − ripple after it (Q2)** | **+0.19, p = .61** | +0.36, .37 | **+0.18, p = .30** | +0.27, .12 |
+
+- mOFC − mPFC: first-traversal error +0.95 (p < .001; +still +1.03,
+  p < .001); FD +0.45 (p = .060; +still +0.51, p = .028); later ripples +0.18
+  (p = .040).
+- mPFC: ripples after a FD − other first-traversal ripples −0.31 (p = .055;
+  +still −0.32, p = .050).
+
+**Reading.**
+- Neither primary is significant. Q1 (post-FD ripples, mOFC − mPFC) +0.020,
+  p = .11. Q2 (FD − post-FD ripple) +0.19 / +0.18, p = .61 / .30.
+- **mOFC is locked to both.** It rises before first-traversal ripples (both
+  readings; replicates claim 1a). With every event type competing in one GLM,
+  it also responds to first-traversal uncovers, most to errors (p ≤ .006) and
+  to first discoveries in the stillness model (p = .026). So its uncover
+  response is about uncovering in search, not specifically reward.
+- **mPFC is locked to ripples only.** Its ripple betas are positive in both
+  models (p ≤ .014), and it has no uncover response (FD β ≈ 0; FT error
+  negative).
+- In the stillness-matched epochs mPFC is clearly ripple-locked in the first
+  traversal (p < .001). In the own reading it is not (p = .14): its ripple
+  rise sits on a slower elevation that the own flanks absorb.
+- **The ripples right after a first discovery drive neither region**
+  (epochs and GLM n.s.). In mPFC they are, if anything, weaker than other
+  first-traversal ripples (p = .05). That is not what "the plan is loaded
+  into mPFC by the post-discovery ripples" predicts. Caveat: these are
+  10–60 ripples per session.
+- The mOFC − mPFC difference is in the uncover response, not in the ripple
+  locking (ripple betas same sign, overlapping).
+- Uncorrected across sets.
+
+### RESULT F1 + F3 (same day) — lag-0 cells are neither ripple-locked nor the carriers of the discovered square
+
+`python scripts/swr_content_explore.py lag0_cells` →
+`swr/lag0_cells_2026-11-14/`:
+- `F1_arrival_locked_top30/` (the `consolidation` output);
+- `F1_reward_locked_per_session.csv`, `F1_reward_locked_summary.csv`;
+- `F3a_cells.pkl`, `F3b_per_cell.csv`, `result.json`;
+- `F1_claim2ab_lag0_cells.png`, `F3_lag0_cells_ripples.png`.
+
+Top 30% thresholds: mPFC ≥ 0.13, mOFC ≥ 0.13, HC ≥ 0.16; 248 cells. With
+≥ 2 such cells per session, 14 mPFC / 9 mOFC / 34 HC sessions enter.
+`consolidation.main` gained `keep` (cell filter) and `out_dir`; its default
+behaviour is unchanged.
+
+**Already derivable, checked first.**
+- `lag_group_ripple_2026-10-01` per-cell ripple modulation against
+  CONTINUOUS lag-0 (Spearman, within-session permutation):
+  - mPFC + mOFC: encode ρ = +0.02 (p = .73), execute +0.07 (.28).
+  - mPFC: encode +0.12 (p = .12), enc − exe +0.12 (.17).
+  - The argmax-tag interaction (p = .004, 9 cells / 8 sessions) does not
+    carry over to the continuous measure.
+
+**F1, mPFC evidence for the square just uncovered:**
+
+| | all cells (26 sessions) | top-30% lag-0 (14) |
+|---|---|---|
+| arrival-locked FD | +0.77, p < .001 (published) | +0.56, p = .084 |
+| arrival-locked FD, ripple − none | −0.51, p = .076 (published) | **−0.77, p = .007** |
+| reward-locked FD, raw | +0.67, p = .001 | +0.29, p = .20 |
+| reward-locked FD − RC, matched | +0.15, p = .50 | −0.26, p = .40 |
+| reward-locked FD own (post − pre) | +0.19, p = .40 | −0.34, p = .13 |
+| reward-locked ripple − none, own / matched | +0.24 (.24) / +0.38 (.13) | +0.28 (.42) / +0.31 (.34) |
+
+- mOFC top-30%: only RC raw +0.74 (p = .021, 9 sessions).
+- HC top-30% behaves like all HC cells: FD +0.69 (p = .001); FD − RC matched
+  +0.39 (p = .022; all cells +0.39, p = .037).
+- The arrival-locked ripple − none of −0.77 is NOT discovery-specific (RC
+  −0.79, p = .017). It flips sign once locked to the press and to the
+  post-reward pause. It is not a finding.
+
+**F3a, ripple-locked firing**, mPFC + mOFC, 289 cells, 45 sessions:
+- Cells are not ripple-modulated on average at ±150 ms: own −0.003 (p = .86),
+  matched +0.003 (p = .90), first traversal. Same for post-FD and execution
+  ripples.
+- lag-0 predicts no response in any set or reading (all ±150 ms |ρ| ≤ 0.08,
+  p ≥ .28). No cluster p < .05 (best .075).
+- The only secondary hit is mPFC first traversal − execution, own: ρ = +0.19,
+  p = .020. It is not confirmed matched (+0.10, p = .31).
+
+**F3b, per-cell evidence for the discovered square vs lag-0:**
+- FD own ρ = +0.05 (p = .39); FD − RC matched −0.05 (.47); ripple − none
+  matched −0.003 (.97).
+- mOFC alone, FD own +0.14 (p = .091).
+
+**Reading.**
+- The cells that hold the current square during execution are not the
+  ripple-locked cells, and not the cells that carry the newly found square.
+  That holds at discovery, after it, or in ripples.
+- The top-30% lag-0 subset carries the new square no better than all cells
+  (it is weaker, fewer cells).
+- Interpret with F2: a cell's lag-0 r does not replicate across odd/even
+  execution repeats. "Lag-0 cell" is therefore not a stable cell category in
+  this data, and none of these nulls can say that no such cells exist.
+- What is real is at the population level. mPFC's raw new-square evidence
+  (+0.67, all cells) still vanishes when stillness-matched.
+
+## 2026-10-30 — PRE-REGISTRATION: the medial-frontal gradient — ripples, phases and 'now' cells (G1–G3, N1–N2)
+
+Written BEFORE running. Scripts `scripts/exploratory/swr_hfb_gradient.py`
+(G1–G3) and `mc/analyse/swr_explore/discovery_cells.py` (N1–N2). Output
+`swr/gradient_hfb_2026-10-30/`, `swr/discovery_cells_2026-10-30/`. All existing
+evidence is collected in `swr/gradient_hypothesis_overview_2026-10-30/` (a
+PDF, one page per claim; `scripts/exploratory/plot_gradient_hypothesis_overview.py`).
+
+**SK's hypothesis.** Medial PFC is ordered ventral = now / immediate future to
+dorsal = distant future. During encoding, HC replays the 'now' in ripples to
+the ventral end, perhaps as far as mOFC. During execution the more dorsal part
+plays the immediate future, independent of ripples. lOFC codes reward events,
+before or independent of ripples.
+
+**Shared.** `bundle_v2`, session = unit, seed 42. HFB = real − mean of 20
+shifted nulls (5–120 s, either sign), contacts on a different shaft from HC.
+Group tests are sign-flips over sessions, with the same function for observed
+and null. Phases: first traversal = grid onset → first t_D; rest of encoding =
+first t_D → start of the first fully correct repeat; execution = from that
+start (the agreed exclusive boundary). Anatomical axis = MNI z (data-independent,
+2026-09-06); |x| and y are secondary.
+
+**G1 — ripple-locked HFB along the medial axis × phase.** Contacts: roi_family
+mPFC|mOFC, |x| ≤ 20 mm (179 derivations, 53 sessions, z −18…+26). Per contact
+and phase: peri (±250 ms) − flank (250–750 ms); ≥ 20 ripples. PRIMARY: in
+sessions with ≥ 2 contacts spanning ≥ 5 mm in z, the OLS slope on z of
+[first traversal − execution]; mean slope vs 0. SK predicts < 0 (ventral
+contacts more ripple-locked in the first traversal, relative to execution).
+Secondary: the slope in each phase; rest of encoding; a mixed model on all
+contacts (value ~ z × phase + (1|session)); direction index (post − pre) on z
+per phase; |x| and y.
+
+**G2 — where is the reward-event signal?** All frontal contacts (G1's medial
+set + partition lOFC, FrontalPole, vlPFC_IFG). Uncover-locked HFB, baseline
+−1.5…−1.0 s, window 0–0.5 s; ≥ 10 events. PRIMARY: correct first-traversal
+uncovers, response on z, within-session slope as in G1. SK predicts < 0 (more
+ventral → larger reward response). Secondary: |x|; valence (correct − error,
+first traversal); execution; the mixed model.
+
+**G3 — lOFC: reward event or ripple?** lOFC partition contacts.
+- G3a PRIMARY: ripple-locked lOFC HFB in the pre-ripple window [−250, 0) for
+  QUIET ripples (no press in the preceding 2 s). If the lOFC lead is the event
+  response it vanishes (≈ 0); if it is ripple-bound it stays > 0. Reported
+  alongside the same measure for ripples that follow a press. Secondary:
+  direction index for both.
+- G3b: lOFC uncover response (0–0.5 s, correct first-traversal uncovers) for
+  uncovers followed by a ripple 0.5–2.0 s later vs uncovers with no ripple
+  within 2 s. 'Independent of ripples' predicts no difference (reported with
+  its CI).
+
+**N1 — 'now' cells at the moment of discovery, over time.** Cells: mPFC + mOFC
+(`per_cell_ALL_ROIs`, cell_idx − 1 → cell). Events are locked to the REWARD
+PRESS (bundle uncover table). This fixes `storage_vs_planning`'s lock to
+arrival, and its ripple split of ±0.5 s around arrival, which missed the
+post-reward ripples. First discovery (FD) = correct uncovers in the first
+traversal. Repeat correct (RC) = correct uncovers on later repeats of the same
+block: same square and action, reward already known. Per cell: rate in 100 ms
+bins, −1.5…+2.0 s, minus the cell's −1.5…−1.0 s baseline, divided by its
+task-wide mean rate; then FD − RC. Moderator lag0 = `r_lag000_noctrl`.
+PRIMARY: across cells, Spearman of lag0 with FD − RC per bin, cluster mass
+over 0–2 s (cluster-forming |t| at two-sided 0.05). Null = 10,000
+within-session permutations of lag0; one function computes observed and null.
+Prediction > 0. Secondary: mPFC and mOFC separately; FD alone; FD with vs
+without a ripple in the post-reward pause (0, min(pause, 2 s)]; z as moderator
+at the site level (cells averaged per recording coordinate; null = permuted
+site z).
+
+**N2 — the newly found square, by anatomy.** The `consolidation` estimator,
+re-run locked to the reward press and time-resolved (250 ms windows, 125 ms
+steps, −0.5…+2.0 s), for FD vs RC in mPFC, mOFC and HC. Plus per-cell
+contributions to FD − RC in 0.05–1.0 s, Spearman with z at the site level
+(null = permuted site z). Prediction: ventral sites carry more.
+
+**C4 — cell ripple modulation by depth** (added before running; SK asked for
+it in the same session). Per cell, the ripple modulation index already computed
+in `lag_group_ripple_2026-10-01` ((in − out)/(in + out), encode and execute).
+mPFC + mOFC cells; site = cells sharing a session and MNI coordinate; values
+averaged per site. PRIMARY: Spearman across sites of [encode − execute] with
+MNI z; null = 10,000 permutations of site z. SK predicts < 0 (ventral sites
+more ripple-modulated during encoding, relative to execution). Secondary:
+encode and execute separately; mPFC sites alone; mOFC vs mPFC sites (label
+permutation). Script `scripts/exploratory/swr_cell_ripple_depth.py`.
+
+### RESULT G1–G3, C4 (same day)
+
+`swr/gradient_hfb_2026-10-30/` (`contact_values.csv`, `result.json`,
+`gradient_hfb.png`) and `swr/cell_ripple_depth_2026-10-30/`. 91 medial contacts
+with ripple values in 53 sessions; 36 sessions give a G1 slope, 41 a G2 slope;
+lOFC 32 contacts in 21 sessions. Slopes are in HFB z per mm of MNI z
+(+ = dorsal).
+
+**G1 — ripple-locked HFB along the medial axis.**
+- **PRIMARY, (first traversal − execution) slope on z: +0.00016 ± 0.00016,
+  p = .33 (36).** No phase-specific gradient.
+- But a gradient in EVERY phase: ventral contacts are more ripple-locked.
+  Execution −0.00037/mm, p = .001; first traversal −0.00021, p = .10; rest of
+  encoding −0.00067, p = .054 (20). Mixed model on all medial contacts: z
+  −0.00022, p = .0009; z × phase p ≥ .76. Over the 40 mm covered that is ≈
+  0.009 z, the size of the ripple-locked effect itself (intercept +0.006).
+- Timing (direction index) does not depend on depth in any phase (p ≥ .43);
+  |x| and y are null.
+- Reading: the ventral end (mOFC-ward) carries most of the medial ripple
+  coupling, but in all phases. The encoding-specific part of SK's hypothesis is
+  not supported at contact level.
+
+**G2 — the reward response.** PRIMARY: first-traversal correct-uncover
+response on z −0.00053 ± 0.00041, p = .21 (41). Null; |x|, valence and
+execution are null too. By region: lOFC first traversal +0.025, p = .021,
+execution +0.002, p = .28; medial contacts +0.001, p = .65; vlPFC null;
+FrontalPole execution +0.007, p = .031 (exploratory). The reward response is
+regional (lOFC), not a gradient.
+
+**G3 — lOFC.**
+- **G3a PRIMARY: before QUIET ripples (no press in the preceding 2 s) lOFC is
+  already up: +0.0100 ± 0.0032, p = .0055 (20).** After-press ripples +0.0090,
+  p = .0002; difference −0.0009, p = .75. Direction (post − pre) is negative
+  but n.s. for both. So the lOFC pre-ripple rise is NOT the press/uncover
+  response. lOFC is ripple-coupled in its own right, leading or co-occurring.
+- G3b: uncover response with a ripple following 0.5–2 s later +0.033 (p =
+  .085, 15) vs no ripple +0.014 (p = .19, 15); difference −0.006, p = .63, only
+  10 sessions with both. Underpowered; no evidence either way.
+- Readings: HFB has no stillness-matched control in this pipeline (arrow
+  presses are not mapped onto HFB epochs). The readings are real − shifted
+  null and own baseline/flank, as for all HFB here.
+
+**C4 — cell ripple modulation by depth.** 88 sites (42 mPFC, 46 mOFC).
+**PRIMARY, encode − execute vs z: ρ = −0.04, p = .69.** Encode alone −0.05
+(p = .61), execute −0.07 (p = .54), mPFC sites alone +0.06 (p = .72), mOFC vs
+mPFC sites all p ≥ .70. Cell firing inside ripples does not change with depth or
+phase. Own-baseline only (in vs out of ripples); no stillness-matched version.
+
+### RESULT N1–N2 (same day) — no 'now'-cell response at discovery; the mPFC new-square signal does not survive stillness matching
+
+`mc/analyse/swr_explore/discovery_cells.py`; output
+`swr/discovery_cells_2026-10-30/` (`n1_cells.pkl`, `n2_*.csv`, `result.json`,
+`N1_discovery_cells.png`, `N2_new_square.png`). Both readings throughout (the
+standing rule).
+
+**N1 — lag-0 cells at the reward press** (289 mPFC + mOFC cells).
+- **PRIMARY (own baseline), FD − RC vs lag-0 tuning: no positive cluster.** The
+  only cluster is NEGATIVE, +0.2…+0.3 s, p = .12. mPFC alone: none. mOFC: the
+  same negative bin, p = .16.
+- Stillness-matched: FD − RC vs lag-0, NEGATIVE cluster +0.3…+0.5 s, p = .032.
+  If anything, cells with stronger lag-0 tuning respond LESS at a first
+  discovery than at a repeat.
+- **The p = .065 lead does not survive the corrected design.** FD with − without
+  a post-reward ripple vs lag-0: no cluster in either reading (own 271 cells,
+  matched 175).
+- Depth (sites): own reading, no cluster. Matched, FD − RC vs z, POSITIVE
+  +0.6…+1.0 s, p = .003 (88 sites), but within mPFC sites none (42). So dorsal
+  (mPFC) sites respond more to first discoveries than ventral (mOFC) sites,
+  the opposite of 'ventral now cells'. This is an mPFC-vs-mOFC difference, not a
+  within-mPFC gradient.
+
+**N2 — evidence for the square just uncovered, reward-locked** (0.05–1.0 s).
+
+| ROI | FD | RC | FD − RC | FD − RC, stillness-matched | FD, own (post − pre-press) |
+|---|---|---|---|---|---|
+| mPFC (26) | **+0.70, p = .0007** | +0.06 | **+0.66, p = .003** | +0.16, p = .47 | +0.19, p = .38 |
+| mOFC (22) | +0.29, p = .25 | −0.07 | +0.28, p = .24 | +0.14, p = .45 | −0.16, p = .51 |
+| HC (51) | **+0.60, p = .0005** | +0.32, p = .027 | **+0.47, p = .005** | **+0.42, p = .028** | +0.14, p = .37 |
+
+- Locking to the reward press reproduces the 2026-10-01 mPFC result
+  (+0.77 → +0.70; FD − RC +0.66). The arrival-time bug did not create it.
+- **But in mPFC it does not survive the stillness-matched reading.** Against RC
+  uncovers matched on the following stillness, FD − RC is +0.16, p = .47. The
+  own reading (post-press minus the same event's pre-press window) is null as
+  well. The subject stands on the square before pressing, so the square is
+  already represented then. mPFC's "new square" signal is at least partly the
+  longer dwell after first discoveries (1.5 s vs 0.45 s). In HC the FD − RC
+  difference survives matching (+0.42, p = .028).
+- Per-cell FD − RC contributions vs depth: mPFC + mOFC sites ρ = +0.26,
+  p = .022 (75 sites; dorsal more), mPFC sites alone ρ = −0.02, p = .90. Again
+  mPFC > mOFC, not a within-mPFC gradient, and not ventral.
+
+**Reading for claim 2.** With the timing fixed and both readings computed:
+lag-0 cells do not respond more at discovery; the ripple dependence was not
+real; and mPFC's new-square signal is explained by stillness. The surviving
+discovery-specific representation of the just-found square is hippocampal.
+
+**Claim figures.** `scripts/exploratory/plot_gradient_claims.py` →
+`swr/gradient_claims_2026-10-30/claim{1..5}_*.png/pdf`: one figure per claim,
+every panel one piece of evidence from saved per-session or per-cell values
+with the statistic that analysis reported (nothing re-tested). New panels
+appear as their results exist.
+
+**T4 re-run with the same-event reading (SK, 2026-10-30; NOT pre-registered).**
+SK asked whether the stillness-matched contrast is too strict, and set a
+standing rule: every test reports BOTH the own (same-event) baseline and the
+stillness-matched reading. Same-event reading for T4: the ripple window
+against the same ripple's own flanks (0.25–0.5 s either side, same square, no
+other ripple within them), z-scored together, through the same label
+permutation. Output `swr/plan_vs_store_2026-10-30/T4_path_content/`. The
+matched reading reproduces exactly (primary +0.435, p = .043).
+
+| HC, z vs 0 | matched | same-event |
+|---|---|---|
+| post-correct, first trav., PAST − FUT | +0.44, p = .043 (39) | +0.01, p = .99 (14) |
+| post-correct, first trav., FUT | −0.54, p = .011 | −0.47, p = .061 |
+| post-correct, first trav., PAST | +0.27, p = .11 | −0.33, p = .21 |
+| post-correct, execution, FUT | +0.35, p = .006 | +0.34, p = .19 |
+| all ripples, first trav., FUT | −0.10, p = .52 | **−0.52, p = .013** |
+| all ripples, first trav., PAST − FUT | −0.04, p = .80 | +0.42, p = .050 |
+| all ripples, execution, FUT | **+0.41, p = .001** | **+0.46, p = .030** |
+
+Reading. The own-flank rule costs data, not the matching: post-correct
+ripples cluster, so only 14–17 sessions keep ≥ 20 ripples with clear flanks.
+Across readings, the robust component is the FUTURE squares. They are
+under-represented in first-traversal ripples and over-represented in
+execution ripples. The PAST (reverse-path) component does not replicate in the
+same-event reading, so "post-correct ripples carry the path just walked"
+should not be claimed. "First-traversal ripples are not ahead of the search;
+execution ripples are" can be.
+
+**Kept for later:** 'independent of ripples'
+by ripple-masked lag maps; the explore → execute morph in warped time; mOFC
+ripple content with ripple-derived templates.
+
+## 2026-10-29 — PRE-REGISTRATION: storage vs next-step planning after correct uncovers (tests T1–T5)
+
+Written BEFORE running. Script `scripts/exploratory/swr_plan_vs_store.py`
+(T1–T3, T5); module `mc/analyse/swr_explore/path_content.py` (T4). Output
+`swr/plan_vs_store_2026-10-29/<test>/`.
+
+**Why.** A co-author reads the post-correct ripple increase as consolidation,
+not next-step planning (replay rises under uncertainty, Sagiv et al. 2025). SK:
+'loading' (the current state HC → mPFC) is itself a form of storage. It
+predicts communication at EVERY new discovery (and again at execution errors),
+not at D specifically. So the split these tests can make is STORAGE (loading
+or consolidation: tied to new information arriving) vs NEXT-STEP PLANNING
+(tied to the upcoming move and goal). No behavioural test separates loading
+from consolidation, because both store the same item.
+
+**Shared.** `bundle_v2`, pad 0.25 s, session = unit, seed 42. Ripple rate goes
+through `fin.matched_sets` (arrow presses, caliper 0.15 s / 10%) and
+`rip.peri_event_rate`. PRIMARY reading = stillness-matched (target − matched
+arrow, raw); own baseline −1.5…−1.0 s is secondary. Window 0–0.5 s; cluster =
+`rip.sliding_window_test` (0.3 s). Group test = sign-flip over sessions, the
+same function for observed and null. First traversal = `stage == 'first
+uncovers'`. Each primary is judged at α = 0.05 (they test different accounts);
+secondaries are reported uncorrected and labelled as such.
+
+**T1 — does the increase need a KNOWN next goal?** Correct first-traversal
+uncovers, D vs A–C (A–C pooled into one cell). After A–C the next reward is
+unknown; after D the next goal (A) is known for the first time.
+- T1a PRIMARY: ripple rate, D − (A–C), stillness-matched, 0–0.5 s. Next-step
+  planning predicts > 0; storage ≈ 0; an uncertainty account < 0. Reported
+  with its minimum detectable effect (80% power) and the A–C effect for scale.
+  Secondary: A, B, C, D separately; own baseline.
+- T1b PRIMARY: mPFC HFB (partition 2026-09-28) locked to the same uncovers,
+  real − mean of 20 shifted nulls (5–120 s, either sign), baseline
+  −1.5…−1.0 s, window 0–0.5 s: D − (A–C). Secondary: mOFC, lOFC,
+  MedialFrontal; ripple-locked HFB (ripples whose nearest preceding press
+  within 2 s is that uncover; peri ±250 ms minus flank 250–750 ms; ≥ 10
+  ripples per session and set); execution errors vs execution correct uncovers
+  (SK: loading predicts communication again at errors). Positive control:
+  MedialFrontal ripple-locked HFB for all correct first-traversal uncovers > 0
+  (Fig 4i).
+
+**T2 — the reward clock or the departure clock?** Correct first-traversal
+uncovers followed by ≥ 1.0 s of stillness, matched 1:1 to arrow presses on the
+same stillness. Excess = uncover − matched arrow. PRIMARY per session:
+excess in 0–0.5 s after the press − excess in the 0.5 s before the NEXT press
+(the departure). Storage predicts > 0, planning < 0. Secondary: each excess vs
+0; ≥ 1.5 s stillness with 0.75 s windows; both alignments as profiles with
+cluster tests.
+
+**T3 — behaviour.** Event-level, within session: partial Spearman (ranks
+residualised on the covariates), Fisher z, sign-flip over sessions; ≥ 20
+events per session. Ripple rate in a pause = HC ripples from the uncover to
+the next press (capped at 2 s) per clean second, averaged over derivations
+(NaN if less than half clean).
+- T3a STORAGE, PRIMARY: predictor = rate in the pause after the FIRST
+  discovery of reward X; outcome = wrong uncovers while seeking X on the NEXT
+  repeat. Covariates: pause length, state, wrong uncovers before discovering X.
+  Storage predicts ρ < 0.
+- T3b NEXT-STEP PLANNING, PRIMARY: predictor = rate in the pause after a
+  correct uncover of X on any repeat after the first traversal; outcome =
+  wrong uncovers on the IMMEDIATELY following segment (seeking X+1).
+  Covariates: pause length, state, repeat index. Planning predicts ρ < 0.
+- Secondary: path excess (arrow presses − Manhattan distance) as the outcome;
+  T3b in learning and execution separately; T3a's predictor against the
+  immediately following first-traversal segment (exploration; no prediction).
+
+**T4 — what do post-correct HC ripples carry: the path just walked or the path
+ahead?** `future_shift` machinery: same-block references, square-label
+permutation z (1000), stratum-matched still moments (phase × reward square ×
+time since arrival × time to departure). Window = the ripple ±125 ms; controls
+use the same geometry with no ripple within 0.25 s. PRIMARY: HC units, ripples
+in the stillness after a correct uncover, first traversal, PAST − FUT (mean of
+past1–3 minus fut1–3), ripple − control. Storage/reverse predicts > 0,
+planning/forward < 0. Gate: NOW in control moments > 0. Secondary: execution;
+all ripples; PAST, FUT and NOW separately; mPFC and mOFC units (expected to
+fail the gate).
+
+**T5 — novelty without reward.** First traversal; a square is NOVEL if it has
+not been uncovered before in this block. Cells: error-novel, error-familiar,
+correct-novel, correct-familiar, each vs matched arrows. PRIMARY: error novel −
+familiar (0–0.5 s, stillness-matched). Secondary: correct novel − familiar;
+correct − error within novel squares; own baseline.
+
+**Not run:** the directionality test (onset latencies), deprioritised.
+
+### RESULT (same day) — no primary supports next-step planning; the increase follows the reward, not the departure or novelty
+
+Output `swr/plan_vs_store_2026-10-29/{T1a_knowledge, T1b_hfb_state,
+T2_two_clocks, T3_behaviour, T5_novelty, T4_path_content}/`, each with
+`result.json`, csv tables and a figure. Session = unit throughout.
+
+**T1a, ripple rate, D vs A–C (first traversal, correct).**
+
+| cell | stillness-matched, 0–0.5 s | own baseline, 0–0.5 s |
+|---|---|---|
+| A–C (61) | +0.036 Hz, p = .027; cluster +0.35…+0.65 s, p = .007 | +0.031, p = .012 |
+| D (54 / 61) | −0.004, p = .89 | **+0.056, p = .0008**; cluster +0.25…+0.65, p = .003 |
+| **D − (A–C), PRIMARY** | **−0.034 [−0.083, +0.015], p = .18** | +0.025, p = .10 |
+
+The two readings disagree about D: D is the strongest state against its own
+baseline and null against its matched presses. **Power:** the minimum detectable
+D − (A–C) at 80% power is 0.069 Hz on 54 sessions, **1.95× the A–C effect
+itself**. So a D-specific increase as large as the whole post-correct effect
+could go undetected. T1a cannot decide between the accounts (SK's power concern
+confirmed).
+
+**T1b, frontal HFB, same events.**
+- **PRIMARY, mPFC uncover-locked D − (A–C): +0.000 ± 0.008 z, p = 1.00**
+  (26 sessions; MDE 0.024 z); no cluster. mPFC has no uncover response to
+  either (A–C −0.003, D −0.001), and none in execution (+0.002, p = .31).
+- Positive control passes: MedialFrontal ripple-locked HFB after correct
+  first-traversal uncovers +0.0086 z, p = .012 (Fig 4i; A–C alone +0.0115,
+  p = .0001).
+- Ripple-locked D − (A–C): mPFC +0.004 (p = .72, 19 sessions), MedialFrontal
+  +0.003 (p = .71, 26), lOFC +0.002 (p = .75, 12); mOFC 2 sessions. D alone is
+  numerically the largest ripple-locked value (MedialFrontal +0.015, p = .056).
+- Execution errors − execution correct (SK: loading predicts communication
+  again at errors): null in every ROI, uncover-locked (mPFC +0.002, p = .85;
+  MedialFrontal +0.005, p = .32) and ripple-locked (≤ 19 sessions). The ripple
+  RATE at execution errors is also n.s. (Fig 4 panels: +0.012 Hz matched,
+  p = .50).
+- Exploratory: lOFC responds to correct uncovers in the first traversal
+  (+0.029 z, p = .006, 21 sessions) but not in execution (+0.002, p = .24).
+
+**T2, reward clock vs departure clock** (≥ 1.0 s stillness, 2838 matched pairs,
+stillness 1.60 / 1.60 s).
+- **PRIMARY, excess 0–0.5 s after the uncover − excess 0.5 s before departure:
+  −0.001 ± 0.017 Hz, p = .96.** Neither window alone differs from the matched
+  presses (+0.010, p = .46; +0.011, p = .36).
+- Secondary, time-resolved: the excess forms a cluster at **+0.35…+0.65 s
+  after the uncover (p = .003)** and **no cluster in departure-locked time**.
+  The same holds at ≥ 1.5 s stillness (cluster +0.35…+0.65, p = .005; none
+  departure-locked; windowed after − before +0.024, p = .27, after alone
+  +0.032, p = .061).
+- Reading: the primary window (0–0.5 s) covers only half of the effect, which
+  sits at a fixed latency from the reward. Pause lengths vary, so a
+  departure-locked increase would be sharp in departure time and smeared in
+  uncover time; the data show the opposite. Nothing is tied to departure.
+  Stated as the secondary it is; the pre-registered primary is null.
+
+**T3, behaviour** (partial Spearman, Fisher z; negative = more ripples, better).
+
+| test | n | z | p |
+|---|---:|---:|---:|
+| **T3a storage**: first-discovery pause → errors on that reward next repeat | 57 | −0.018 ± 0.014 | .21 |
+| **T3b planning**: later-repeat pause → errors on the next segment | 61 | +0.008 ± 0.005 | .10 |
+| T3a, path excess | 61 | −0.018 ± 0.013 | .17 |
+| T3b, path excess | 61 | +0.002 ± 0.005 | .64 |
+| T3b, learning repeats | 42 | +0.026 ± 0.025 | .32 |
+| T3b, execution repeats | 61 | +0.000 ± 0.004 | .92 |
+| control: first-discovery A–C → next exploration segment | 61 | −0.004 ± 0.016 | .79 |
+
+Both primaries null. The storage sign is the predicted one, the planning sign
+is the wrong one. A ripple occurs in 41% of first-discovery pauses (median
+1.47 s) and 22% of later ones (0.45 s). Consistent with 2026-09-11: pause
+ripples do not predict behaviour.
+
+**T5, novelty without reward** (first traversal, stillness-matched).
+- **PRIMARY, error novel − familiar: +0.017 [−0.010, +0.044] Hz, p = .21.**
+  No 0–0.5 s effect. The only cluster is BEFORE the press (−0.25…−0.05 s,
+  p = .014). Own baseline +0.001, p = .98.
+- A reward on a square already tried in this block still raises the rate:
+  correct-familiar own baseline +0.049, p = .0002; matched cluster
+  +0.35…+0.75 s, p = .001. Correct novel − familiar +0.017, p = .45.
+- So the post-correct increase follows the REWARD, not a new square. This
+  closes the novelty confound flagged on 2026-10-01 for ripple rate.
+
+**T4, path content of HC ripples** (`path_content.py`; HC units, 61
+sessions, median 386 eligible ripples per session; ripple window ±125 ms vs
+stratum-matched still moments in the same post-uncover pauses).
+- **Gate passes:** NOW in control moments +0.85 z, p < .001 (post-correct);
+  +1.47, p < .001 (all).
+- **PRIMARY, post-correct, first traversal, PAST − FUT: +0.44 ± 0.21 z,
+  t(38) = 2.09, p = .043.** That is the storage/reverse direction. Its parts:
+  FUT −0.54 (p = .011), PAST +0.27 (p = .11), NOW +0.15 (p = .33). So
+  post-correct ripples during encoding are LESS like the upcoming squares than
+  matched still moments are, and lean towards the path just walked.
+- Secondary, execution: the sign flips. Post-correct FUT +0.35 (p = .006),
+  PAST − FUT −0.22 (p = .13); all execution ripples FUT +0.41 (p = .001),
+  PAST − FUT −0.29 (p = .021).
+- **POST HOC, not pre-registered** (`phase_contrast_posthoc.csv`): post-correct
+  first traversal − execution, PAST − FUT +0.70 ± 0.21, p = .002; FUT −0.94 ±
+  0.23, p = .0003, 41 sessions.
+- mPFC units: nothing (all p ≥ .06). mOFC post-correct first traversal
+  PAST − FUT +0.99 (p = .029, 15 sessions), but mOFC fails the gate in that
+  subset (NOW in controls +0.08, p = .73), so it is not interpretable.
+- ⚠ In the first traversal the upcoming squares are exploration, chosen during
+  the pause. "Less future" is therefore "not ahead of the search", not a
+  rejection of a known goal. Of all the accounts, only next-step planning
+  predicted the opposite sign here.
+
+**Reading.** No primary supports next-step planning. The one positive primary
+(T4) points to storage. During encoding, post-correct HC ripples carry the
+path just walked rather than the squares ahead. Once the route is known, they
+carry the path ahead (post hoc, p = .0003). The rate increase sits at a fixed
+latency after the reward rather than before departure (T2, secondary). It
+is not driven by square novelty (T5) and does not predict the next step
+(T3b). mPFC HFB shows no D-specific (plan-completion) response (T1b). The D
+test on ripple rate is underpowered: the MDE is ~2× the effect (T1a). Nothing
+here separates loading from consolidation, as stated in advance. The ripples
+that rise in rate (encoding) look like storage of what just happened. The
+ripples that carry the route ahead (execution) do not rise in rate.
+
+## 2026-10-08 (e) — 50 shifted nulls: OFC / mOFC vs mPFC, ripple- and uncover-locked; a bounds bug fixed
+
+`swr_hfb_ripple_coupling.py phases --lefts=OFC,mOFC --n_shifts=50
+--stability=True --sets=all,first_traversal,reward_uncover,reward_uncover_learning,reward_uncover_execution`.
+Output `swr/hfb_phases_50shifts_2026-10-08/` (`summary.csv` incl. the
+half-split stability rows, `OFC_vs_mPFC/` and `mOFC_vs_mPFC/` with
+`overview.png` and one folder per set). ~20 min, background.
+
+**Code.** `phases` rewritten: mOFC, lOFC and mPFC extracted in ONE pass
+(`roi_sums` returns sums + counts so OFC = mOFC + lOFC is formed per event);
+`--lefts`, `--sets`, `--n_shifts`, `--stability`; new uncover sets, phase by
+the uncover's repeat (`uncover_phase`: repeat <= the first fully correct one =
+learning, so the D completing the first correct loop is learning).
+**BUG FIXED in `roi_epochs`:** the left-edge check read `ci - off[0] >= 0`
+(always true), so a window running off the START of the recording wrapped to
+the end of the array -- in practice shifted-null epochs within ~2 min of the
+recording start (shifts reach −120 s). Re-running the 6-shift OFC "all" set
+with the fix reproduces p = 0.072 / paired 0.007 to three decimals; OFC peak
+moves −50 → −60 ms. Every earlier `swr_hfb_ripple_coupling.py` output
+(run, timeline, chain, 6-shift phases) carried it; effect negligible.
+
+**Outlier (SK).** mOFC "all ripples" direction +0.035 is session 62
+(BY2-YFP); its mOFC derivations LF3aOFC02-03 (MNI z −14.3) and RF2bOFC02-03
+(z −14.7), both FreeSurfer medialorbitofrontal -- exactly the mOFC median z
+(−14.7; IQR −16.8…−13.5). Not misallocated. The session also has two lOFC
+derivations (z −6.3; z +2.2, BN A12/47l), which dilute it to +0.012 in the
+collapsed OFC.
+
+**Results (50 shifts; stability = the same test on each half of them).**
+
+| pair | set | left ROI rise | mPFC rise | mPFC − left direction, p (halves) | paired p (halves) |
+|---|---|---|---|---|---|
+| OFC | all ripples | −350…+230, p<.001 | −140…+400, p<.001 | +0.0050, **0.045** (0.053 / 0.044) | **0.006** (0.007 / 0.005) |
+| OFC | first traversal | −220…+30, p=.003 | none (p=.32) | +0.0068, 0.16 (0.12 / 0.22) | 0.10 |
+| OFC | correct uncovers | none (best .066) | −440…−330, p=.047 (.033 / .071) | −0.0033, 0.37 | **0.006** (0.009 / 0.005) |
+| OFC | uncovers, learning | none | none | −0.0052, 0.47 | 0.35 |
+| OFC | uncovers, execution | none | none | −0.0023, 0.55 | **0.014** (0.014 / 0.017) |
+| mOFC | all ripples | −270…+110, p<.001 | as above | +0.0050, 0.11 (0.075 / 0.16) | 0.21 |
+| mOFC | first traversal | −220…+50, p=.002 | none | +0.0067, 0.27 | 0.20 |
+| mOFC | correct uncovers | none | as above | −0.0022, 0.60 | 0.20 |
+| mOFC | uncovers, learning | none | none | +0.0115, 0.13 | 0.38 |
+| mOFC | uncovers, execution | none | none | −0.0056, 0.19 | **0.033** (0.019 / 0.052) |
+
+Contrasts: OFC all ripples, z-scaled, OFC bigger −160…−30 ms (p = 0.045;
+paired −250…−130, p = 0.030); mOFC all ripples, z-scaled, mOFC bigger
+−150…+30 (p = 0.015). No peak-scaled contrast anywhere.
+
+**Reading.**
+- With 50 nulls the p values are stable to ~0.01 across halves.
+- All ripples: OFC rises around and before the ripple, mPFC later;
+  mPFC − OFC p = 0.045 unpaired (borderline, 0.044–0.053 across halves),
+  0.006 paired (robust). For mOFC alone the ordering is n.s.
+- First traversal: OFC and mOFC rise significantly, before/at the ripple;
+  mPFC does not rise significantly; the ordering test is n.s. (no mPFC rise to
+  order against).
+- Correct uncovers: no ROI rises against its pre-uncover baseline in any
+  phase. The paired direction index is negative (OFC rises later than mPFC
+  relative to the uncover) for all uncovers and execution uncovers --
+  consistent with a small post-uncover OFC response (peak +0.010 z at
+  +250 ms) that does not survive the cluster test. The mPFC pre-uncover
+  cluster (−440…−330 ms) is unstable across halves (0.033 / 0.071).
+- Uncorrected across sets.
+
+## 2026-10-08 (d) — the phase overview again, mOFC alone vs mPFC
+
+`swr_hfb_ripple_coupling.py phases --left=mOFC` (the left ROI is now a
+parameter; `--left=OFC` writes to the same folder name as (b)). Output
+`swr/hfb_mofc_mpfc_phases_2026-10-08/`. Identical method to (b): same
+extraction, 6 shifts, learning INCLUDES the first fully correct repeat. 18 mOFC
+/ 35 mPFC sessions in every set, 11 with both.
+
+| set | mOFC rise (cluster) | mPFC rise (cluster) | mPFC − mOFC direction | p unpaired | p paired (11) |
+|---|---|---|---:|---:|---:|
+| all ripples | −260…+100, p<.001 | −140…+340, p<.001 | +0.0056 | 0.11 | 0.16 |
+| first traversal | **−220…−40, p=.009** | none | +0.0063 | 0.30 | 0.17 |
+| learning (incl.) | −90…+80, p=.017 | none | +0.0038 | 0.45 | 0.43 |
+| execution | −160…+40, p=.003 | −110…+300, p<.001 | +0.0105 | **0.032** | 0.55 |
+| correct uncovers | none | none | −0.0028 | 0.53 | 0.14 |
+
+No time-resolved contrast is significant in any set, unpaired or paired.
+
+**Reading.** mOFC rises around ripples in every phase, and in the first
+traversal its cluster lies entirely BEFORE the ripple (−220…−40 ms) while
+mPFC has no significant rise there. The ordering (mPFC later) has the same
+sign in all four ripple sets but is significant only unpaired in execution.
+No reward-uncover response in either ROI.
+**Caveat:** with this extraction mOFC's all-ripple rise is significant
+(p < 0.001, peak 0.026 z); the region run's sliding test gave no significant
+mOFC cluster (best p = 0.082, peak 0.019 z). Same extraction-dependence as
+(c), now in a per-ROI test. Uncorrected across the five sets.
+
+## 2026-10-08 (c) — extraction audit: same ripples, same HFB, which averaging choice moves OFC vs mPFC?
+
+`scripts/exploratory/swr_hfb_extraction_audit.py`; output
+`swr/hfb_extraction_audit_2026-10-08/` (`extraction_audit.png/pdf`,
+`variants.csv`, `ripple_counts.csv`, `result.json`). ~1 min. Nothing
+re-detected: both extractions read the same `bundle_v2` ripples and HFB.
+
+**Correction to (b).** I described the phases extraction as "each ripple
+counted once". It is not: it merges only peaks that round to the same
+millisecond (27 of 77,228 rows). Same-event detections on two HC channels a
+few ms apart stay in both extractions.
+
+**Duplicates.** Cross-channel ripples within ±50 ms: 3.2% of all ripple
+rows; with each channel circularly shifted (chance) 2.3%. So ~1% are true
+co-detections (±25 ms: 1.7% vs 1.1% chance). A ±50 ms merge removes 3.5% of
+rows (incl. the chance ones).
+
+**Ripple RATE results are not affected**: `ripples.rate_by_unit` computes a
+rate per HC derivation (its own ripples over its own clean time) and averages
+derivations within a session; a ripple on two channels is never summed into
+one rate, and the unit is the session.
+
+**Variants** (one switch at a time from the region method; both ends
+reproduce their saved runs exactly):
+
+| variant | p unpaired | p paired | curve r vs region (OFC / mPFC) |
+|---|---:|---:|---|
+| region method | 0.032 | 0.016 | 1 / 1 |
+| + artifact rule: cortical channel only | 0.063 | 0.016 | 0.85 / 0.81 |
+| + the conditions run's 6 shifts (not 8) | 0.069 | 0.023 | 0.95 / 0.94 |
+| + ripples pooled, each ripple weighted once | 0.042 | 0.006 | 0.94 / 0.95 |
+| phases method (all three) | 0.072 | 0.007 | 0.73 / 0.72 |
+| phases + ±50 ms dedup | 0.085 | 0.004 | 0.72 / 0.72 |
+
+**Reading.** The artifact rule changes the per-session curves most (it lets
+in ripples whose HC channel has an artifact in the ±1 s window). But drawing
+a different random set of shifted nulls alone moves the unpaired p from 0.032
+to 0.069. The unpaired timing result is therefore within the noise of the null
+estimate; the paired result is < 0.05 in every variant (0.004–0.023).
+Group-mean curves are near-identical across all variants.
+
+## 2026-10-08 (b) — OFC vs mPFC by phase, and locked to correct uncovers
+
+`swr_hfb_ripple_coupling.py phases` (new). Output
+`swr/hfb_ofc_mpfc_phases_2026-10-08/`: `overview.png/pdf`, one subfolder per
+set with the three single figures, captions, `result.json`; `summary.json`,
+`counts.csv`. ~3.5 min. `swr_hfb_direction.py` refactored first: analyses
+(`analyse_pair`, `analyse_contrast`, no I/O), drawing onto a given axis
+(`draw_sliding/timing/contrast`), one writer (`report_pair`); `sliding` and
+`contrast` are thin wrappers and reproduce their earlier outputs exactly
+(checked: timing, clusters and contrast identical; the contrast caption file
+is now `caption_contrast.txt`).
+
+**Design.** New single-ripple extraction from `bundle_v2`: OFC = every mOFC
+or lOFC derivation (mean per ripple over those clean for the window), mPFC;
+per session the mean over ripples, real − mean of the 6 shifted nulls.
+Phases: first traversal = grid onset → first t_D; learning = grid onset →
+END of the first fully correct repeat, that repeat INCLUDED (SK's wording;
+the project default is exclusive); execution = after it. Correct uncovers:
+every correct uncover, all phases, epoch ±1.5 s, baseline −1.5…−1.0 s
+before the uncover. Ripple sets: baseline |t| ≥ 750 ms. Then the same three
+analyses per set. 27 OFC / 35 mPFC sessions in every set (17 with both).
+Uncorrected across the five sets.
+
+| set | OFC rise (cluster) | mPFC rise (cluster) | mPFC − OFC direction | p unpaired | p paired (17) | contrast |
+|---|---|---|---:|---:|---:|---|
+| all ripples | −340…+220, p<.001 | −140…+340, p<.001 | +0.0048 | 0.072 | **0.007** | paired z: OFC bigger −240…−120, p = .017 |
+| first traversal | none | none | +0.0057 | 0.22 | 0.074 | none |
+| learning (incl.) | −240…+60, p<.001 | none | +0.0054 | 0.16 | **0.011** | none |
+| execution | −260…+80 p<.001; +100…+270 p=.024 | −110…+300, p<.001 | +0.0081 | **0.027** | 0.23 | none |
+| correct uncovers | none | none | −0.0037 | 0.37 | **0.017** | paired z: OFC bigger +200…+340, p = .045 |
+
+**Reading.**
+- mPFC − OFC is positive (mPFC later) in all four ripple sets, but which
+  estimator reaches p < 0.05 flips between sets (learning: paired only;
+  execution: unpaired only). Direction consistent, significance fragile.
+- The all-ripple reference from this extraction gives unpaired p = 0.072
+  (the region run gave 0.032) and paired p = 0.007 (region run 0.015): the
+  unpaired all-ripple result depends on the extraction.
+- First traversal alone has no significant rise in either ROI (fewer
+  ripples); the OFC rise is clearest in learning and execution.
+- Locked to correct uncovers neither ROI rises against its pre-uncover
+  baseline; the paired sessions show OFC above mPFC at +200…+340 ms, in line
+  with the lOFC post-uncover response (2026-09-29 (h)). The sign of the
+  timing index reverses (OFC later relative to the uncover).
+- No unpaired time-resolved contrast is significant in any set.
+
+## 2026-10-08 — panel a) as a contrast, mPFC vs OFC over time: no time point differs
+
+`swr_hfb_direction.py contrast --left=OFC` (new; `sliding_curves` factored out
+of `sliding`, whose output is unchanged). Output
+`swr/hfb_direction_contrast_OFC_2026-10-08/` (`contrast_panel_a.pdf/png`,
+`caption.txt`, `result.json`). Also: `sliding` now draws its timing test
+(`sliding_timing.pdf/png`, `caption_timing.txt`); re-run into
+`..._sliding_{OFC,lOFC,mOFC}_2026-10-08/`, same numbers as (e).
+
+**Design.** The `sliding` curves (real − null, own baseline ≥ 750 ms, 50 ms
+sliding mean) for OFC (mOFC + lOFC, 27 sessions) and mPFC (35). Two scalings:
+as measured (z), and each ROI / its group-mean peak (shape and timing only, as
+the twin-axis panel draws it). Welch t per bin, cluster mass, ROI labels
+permuted over sessions, scaling recomputed in every permutation by the same
+function; paired check on the 17 shared sessions (sign-flip,
+`cluster_perm_time`). Figure: both components on one axis, the gap filled by
+which is bigger.
+
+**Result.** Unpaired: no cluster forms in either scaling. Paired: nothing
+significant (best: mPFC bigger −670…−580 ms, p = 0.07–0.09, far from the
+ripple). Visually OFC is above just before the ripple and mPFC above after it,
+which is what the direction index integrates (p = 0.032, (e)), but no single
+time bin carries a reliable difference.
+
+## 2026-10-07 (e) — panel a) with OFC collapsed (mOFC + lOFC): both rise, OFC earlier
+
+`swr_hfb_direction.py sliding --left={OFC,lOFC,mOFC}`; outputs
+`swr/hfb_direction_sliding_{OFC,lOFC,mOFC}_2026-10-07/`. (`..._sliding_2026-10-07/`
+from (d) is the mOFC run before the naming change and without the timing
+test; superseded by `..._sliding_mOFC_...`.) OFC = every mOFC or lOFC
+derivation, averaged per session. Same test as (d); added: the timing test the
+clusters cannot give -- the direction index (post − pre, ±250 ms, unsmoothed),
+mPFC − OFC, ROI-label permutation, plus paired on shared sessions.
+
+| left ROI | n | cluster (increase) | peak | mPFC − ROI direction | p (unpaired) | p (paired, n) |
+|---|---:|---|---|---:|---:|---:|
+| OFC (m+l) | 27 | −250 to +170 ms, p < 0.001 | −50 ms | +0.0065 | **0.032** | **0.015** (17) |
+| lOFC | 21 | −240 to +170 ms, p < 0.001 | −10 ms | +0.0077 | 0.055 | 0.043 (15) |
+| mOFC | 18 | none (best −100…−10, p = 0.08) | −50 ms | +0.0076 | 0.084 | 0.23 (11) |
+| mPFC | 35 | −150 to +400 ms, p < 0.001 | +20 ms | — | — | — |
+
+**Reading.** Pooled OFC has a significant ripple-locked rise, and mPFC's rise
+is later than OFC's (direction index, p = 0.03 / paired 0.015).
+**Caveats:** (1) collapsing OFC was chosen AFTER seeing mOFC (p = 0.08) and
+lOFC (p = 0.055) separately -- three overlapping variants were looked at, so
+p = 0.03 is not a clean single test; (2) all-task ripples include those that
+follow a press, where the press response sits before the ripple
+(2026-10-07 (b): the mPFC − mOFC ordering weakened from p = 0.03 to 0.30
+when unlabelled first-traversal ripples were added); (3) no same-ripple
+coupling between OFC and mPFC (2026-10-07 (b), (c)).
+
+## 2026-10-07 (d) — panel a) redrawn with a sliding-window test per ROI
+
+`swr_hfb_direction.py sliding`; output `swr/hfb_direction_sliding_2026-10-07/`
+(`sliding_panel_a.pdf/png`, `caption.txt`, `result.json`). All ripples (region
+run), real − shifted null, each ROI re-baselined to its OWN mean ≥ 750 ms from
+the ripple (the epoch edges; the 250–750 ms flank of the other panels would
+cancel the tested window). 50 ms sliding mean, `swr_sakon.cluster_perm_time`
+over ±750 ms (sign-flip over sessions, 10,000 perms, two-sided). Twin y-axes,
+each scaled to its ROI's peak.
+
+- mPFC (35 sessions): increase −150 to +400 ms, p < 0.001; peak +0.012 z at
+  +20 ms.
+- mOFC (18 sessions): no significant cluster; best −100 to −10 ms, p = 0.082;
+  peak +0.019 z at −50 ms.
+
+Cluster extents and peak times are descriptive -- a cluster test does not
+localise onsets, so "mOFC before, mPFC after" is not established by this.
+
+## 2026-10-07 (c) — same chain with lOFC as the sender: lOFC LEADS the ripple, but does not predict mPFC
+
+`swr_hfb_ripple_coupling.py chain --sender=lOFC` (sender is now a parameter;
+output `..._chain_lOFC_2026-10-07/`). Same design as (b): every
+first-traversal ripple, real − shifted, sign-flip over sessions. lOFC is the
+one frontal ROI with an event-locked reward response (2026-09-29 (h)).
+
+| test | n | effect | p |
+|---|---:|---|---:|
+| **link 1**: lOFC pre-ripple | 21 | +0.0120 ± 0.0029 | **0.0003** |
+| lOFC post-ripple | 21 | +0.0051 ± 0.0031 | 0.12 |
+| lOFC direction (post − pre) | 21 | −0.0069 ± 0.0024 | **0.009** |
+| **link 2**: mPFC post-ripple | 35 | +0.0058 ± 0.0028 | 0.045 |
+| ordering: mPFC − lOFC direction | 35/21 | +0.0082 | 0.066 |
+| **chain**: asymmetry (lOFC pre → mPFC post − reverse) | 15 | −0.016 ± 0.026 | **0.53** |
+
+**Reading.** Unlike mOFC, lOFC is TIME-specific: up before the ripple, not
+after (direction p = 0.009). It is the only frontal region in this branch that
+leads the ripple. But on the same ripple, lOFC-before does not predict
+mPFC-after (+0.000 vs shifted; reverse +0.016). Caveat for the lead: lOFC
+also responds to the uncover itself, and ripples follow presses (median
+0.4 s), so the pre-ripple lOFC rise may be the press/uncover response; not
+yet separated (a check: first-traversal ripples with no event in the
+preceding 2 s).
+
+## 2026-10-07 (b) — the chain, ripple-locked, EVERY first-traversal ripple: links 1 and 2 hold, the chain does not
+
+`swr_hfb_ripple_coupling.py chain` (new command). Output
+`swr/hfb_ripple_coupling_chain_2026-10-07/` (`chain_ripple_locked.png`, csv,
+`chain_curves.npz`, `result.json`). ~15 s.
+
+**Design.** No event anywhere. First traversal = grid onset → first t_D
+(`swr_windows.windows_phase3_whole`); every ripple inside counts, labelled or
+not (median 210 per session). HFB real − 6 shifted nulls, flank-normalised,
+pre [−250, 0) / post (0, +250] ms. Pre-specified by SK before the run: link 1,
+link 2, chain; the chain needs all three, so each at 0.05 uncorrected
+(intersection–union). Sign-flip over sessions.
+
+| test | n | effect | p |
+|---|---:|---|---:|
+| **link 1**: mOFC pre-ripple | 18 | +0.0152 ± 0.0048 | **0.006** |
+| mOFC post-ripple | 18 | +0.0101 ± 0.0062 | 0.12 |
+| mPFC pre-ripple | 35 | +0.0046 ± 0.0022 | 0.044 |
+| **link 2**: mPFC post-ripple | 35 | +0.0058 ± 0.0028 | **0.045** |
+| ordering: mPFC − mOFC direction (label perm) | 35/18 | +0.0063 | 0.30 |
+| **chain**: asymmetry (mOFC pre → mPFC post − reverse) | 11 | +0.020 ± 0.024 | **0.43** |
+
+**Reading.** Each ROI is up around the ripple, but neither is TIME-specific:
+mOFC is up after as well as before (direction −0.005, p = 0.40), mPFC before as
+well as after (+0.001, p = 0.68). So links 1 and 2 pass as stated, but they
+would also pass for the reverse chain. The same-ripple coupling is absent in
+both directions (−0.006 and −0.026 vs shifted). The chain is not supported.
+
+**Against 2026-10-02.** With event-LABELLED first-traversal ripples the
+mPFC − mOFC ordering was +0.015, p = 0.030; with every first-traversal ripple it
+is +0.006, p = 0.30. The ordering lives in the ripples that follow a press or
+uncover within 2 s -- where the press response sits before the ripple
+(`swr_hfb_event_latency.py`). Consistent with the press response contributing
+to the ordering; not tested directly.
+
+## 2026-10-07 (RT) — PRE-REGISTRATION: is mPFC's 'now' code visible only when its profile is measured IN ripples?
+
+Written BEFORE running. Module `mc/analyse/swr_explore/ripple_templates.py`,
+`python scripts/swr_content_explore.py ripple_templates`.
+
+**SK's idea.** mPFC ripple windows during encoding lean towards the current
+square (+0.31, P = 0.13, all-time templates). If ripples inform mPFC about
+'now' while it otherwise codes future lags, then a spatial profile built from
+all task time (mostly lagged) is the wrong template for ripple windows. A
+profile built from ripple windows alone should score the current square
+better.
+
+**Templates.** Per cell, leave-one-configuration-out (`cv_group` = `grid_id`),
+z-scored across squares, unobserved squares = 0 (abstain):
+- `rip`: rate per square from ripple windows only (each ripple's own detection
+  duration).
+- `flank`: rate from each ripple's ONE matched flank (`matched_flanks`,
+  `max_per=1`): same occupancy interval, same width. So the template has the
+  same squares, the same dwell and the same amount of data, and only 'inside a
+  ripple' differs. **This is the fair comparison.**
+- `all`: the standard all-time profile, for reference only (~40× the data).
+
+All three are built from the SAME ripples: those that have a flank (~89%).
+
+**Test windows.** The same paired ripples and their flanks, from the held-out
+configuration. Counts are z-scored per cell over both window types. Score =
+current square minus the mean of the other 8, z against 1000 permutations of
+the square labels. Session is the unit. Phases: encode / execute (the reported
+split).
+
+**PRIMARY.** mPFC, encode ripple windows: z(`rip`) − z(`flank`), paired across
+sessions, two-sided t (sign-flip P alongside).
+
+**Gate.** HC_all, encode ripple windows, z(`rip`) > 0. Budget measured
+beforehand: the median mPFC cell has 4 ripple spikes per square in a
+leave-one-configuration-out template (HC 6.5). If ripple-only templates cannot
+recover HC's known current-location code, they are too noisy and the mPFC
+comparison is uninterpretable.
+
+**Secondaries** (reported, uncorrected):
+1. z(`rip`) > 0 alone in mPFC encode.
+2. Execute phase, same contrast.
+3. The 2×2 interaction (template × window): [rip − flank template on ripple
+   windows] − [rip − flank template on flank windows]. Positive = a code that
+   exists only DURING ripples.
+4. Encode-only templates (built from the other configurations' encode windows).
+5. mOFC, HC_all.
+
+**Known limits.** Flanks are taken before the ripple where there is room
+(`matched_flanks` order), so the flank template leans pre-ripple. The
+leave-one-configuration-out rule is kept even though the budget is thin.
+Relaxing it would let the template see the held-out layout.
+
+### RESULT (same day) — null in mPFC; the gate passes; an unplanned mOFC lead
+
+`swr/ripple_templates_2026-10-07/` (per_session.csv, summary.csv,
+results_overview.json, settings.json); Figure 39
+(`ripple_content_figures_2026-10-07/fig39_ripple_templates.{jpeg,pdf}`).
+Session = unit; two-sided t (sign-flip P agrees in every row).
+
+| ROI | encode ripple windows | ripple-only T | flank T | all-time T | ripple-only − flank |
+|---|---|---|---|---|---|
+| **mPFC** (26) | z | +0.11 (P = .64) | +0.18 (.35) | +0.28 (.19) | **−0.08, t(25) = −0.25, P = .81** |
+| HC_all (51) | z | **+0.31 (P = .008)** gate passes | +0.07 (.61) | +0.55 (.001) | +0.23 (.18) |
+| mOFC (22) | z | +0.10 (.56) | −0.42 (.09) | −0.55 (.024) | +0.52 (.047) |
+
+- **PRIMARY null.** Building mPFC's spatial profile from ripple windows does
+  not make encode ripples look more 'now' than a profile built from the same
+  amount of non-ripple data (−0.08, P = 0.81). With encode-only templates it
+  is −0.21 (P = 0.47). The 2×2 interaction is null too (+0.34, P = 0.48), and
+  execute ripples are null (−0.08, P = 0.78).
+- **The gate passes.** Ripple-only templates recover HC's current-location code
+  in encode ripples (+0.31, P = 0.008) despite ~6.5 spikes per square, so the
+  budget is not what makes mPFC null. The all-time template does better in HC
+  (+0.55) because it has ~40× the data.
+- **mOFC, exploratory.** Here the sign flips with the template source. The
+  all-time template gives the known NEGATIVE (−0.55, P = 0.024; cf. −0.49 and
+  −0.544 in earlier entries), and the flank template leans the same way
+  (−0.42). The ripple-only template is positive (+0.10), so ripple-only − flank
+  = +0.52 (P = 0.047). With encode-only templates: ripple-only +0.54
+  (P = 0.008), ripple-only − flank +0.82 (P = 0.013). This would explain the
+  unexplained mOFC 'anti-location' ripple result: during ripples mOFC's spatial
+  profile is not its usual one. ⚠ Not pre-registered as primary. It is 2-3 of
+  ~108 cells, does not survive any correction, and the interaction that would
+  make it ripple-SPECIFIC is not significant (+0.58, P = 0.19). Worth a
+  targeted, pre-registered test: correlate each mOFC cell's ripple-only and
+  all-time maps (an inverted map predicts r < 0).
+
+## 2026-10-07 (FS) — PRE-REGISTRATION: does a ripple move frontal activity from NOW to the UPCOMING squares?
+
+Written BEFORE running. Module `mc/analyse/swr_explore/future_shift.py`,
+`python scripts/swr_content_explore.py future_shift`.
+
+**Why a new design (SK).** Every ripple-content test so far scored windows
+against templates built from OTHER configurations (leave-one-configuration-out).
+If mPFC codes 'now' early in a block and a lagged future later, a whole-task
+template averages two codes, and 2026-10-02 shows mPFC place maps do not
+transfer across configurations at all (r = −0.002). So here every reference
+comes from the SAME block.
+
+**References.** For an event in traversal τ of block b:
+R(L) = per-feature mean activity while the subject stood on square L, over every
+OTHER traversal of block b (primary, `block`), or the 4 nearest (`near4`,
+sensitivity). z-scored across the squares visited for >= 0.2 s (sum to zero,
+unvisited = 0). R(L) is 'what this population does when standing on L, in this
+block, now'. It assumes nothing about which lag is coded: if mPFC is lagged,
+R(L) is lagged too. Moving towards R(future square) therefore means the state
+jumped ahead along the route.
+
+**Events.** Hippocampal ripples (deduplicated at 50 ms, duration <= 150 ms)
+with the subject on ONE square throughout: pre = [t − 0.35, t − 0.10],
+post = [t + 0.10, t + 0.35] s, both inside the ripple's own occupancy interval
+(so no move and no press in between), and no other ripple within 50 ms of
+either window.
+
+**Roles** (from the block's visit sequence, which continues across traversals
+within a block): now; fut1-3 = the next three distinct squares; past1-3 = the
+previous three; goal0 = the reward being sought. A role equal to `now`, or not
+visited in the reference, is undefined. FUT = mean over the defined fut1-3, and
+PAST likewise.
+
+**Statistic.** E_w(L) = x_w · R(L), where x_w is the per-feature z-scored
+window (spike count, or mean HFB). Δq = q(post) − q(pre).
+- **I = Δ(FUT − NOW)**: became more future-like than current-like.
+- **J = Δ(FUT − PAST)**: towards the future, not just away from now.
+
+**Control (mandatory).** Every ordinary still moment, tiled every 50 ms with the
+same geometry, with no ripple within 0.25 s of either window. Each ripple is
+compared with the mean of the control events in its stratum: phase (first
+traversal / rest of encoding / execution) × reward square or not ×
+time-since-arrival bin × time-to-departure bin, edges 0.35, 0.5, 0.75, 1.0,
+1.5, 2.5 s. This removes the drift of a still period towards the next move,
+which would otherwise look like a future shift at every moment.
+
+**Inference.** Per session, z against 1000 permutations of the nine square
+labels. The same permutation is applied to ripple and control terms, and row 0
+is the identity, so observed and null go through one function. Across sessions:
+one-sample t and 10,000 sign flips, two-sided. Minimum 2 features and 20
+matched ripples. Subject-level averaging is reported as a check.
+
+**PRIMARY.** I, ripple − matched control, all phases pooled, `block`
+references. Two primaries: **mPFC units** and **MedialFrontal HFB**
+(mPFC + mOFC contacts with |x| <= 20 mm). Bonferroni over the two:
+α = 0.025.
+
+**Gate.** The positive control is evidence for `now` in the control windows,
+which must be > 0. If an ROI fails it, its references carry no location
+information and a null there is uninterpretable.
+
+**Pre-declared secondaries** (reported, not corrected into the primary):
+1. J, ripple − control: needed before any positive I can be read as 'future'.
+   A ripple that only DEGRADES the current code raises I but not J.
+2. The role profile Δ for past3 … fut3 and goal0. Components are shown
+   separately: ripple, matched control, difference.
+3. Phase split (first traversal / rest of encoding / execution), count-matched
+   (1000 draws to the common minimum), because z carries √n.
+4. `near4` references.
+5. Other ROIs: HC_all and mOFC units; Visual HFB (confound detector); HPC HFB
+   (contaminated by the ripple itself, descriptive only).
+6. Per-unit contributions to I (cell level, descriptive; cells within a session
+   are not independent).
+7. Gain diagnostic: the ripple-evoked mean change of the features. A uniform
+   rate change projects onto R(fut) − R(now) whenever the current square is
+   special, e.g. a reward square. J is protected against this; I is not.
+
+**Known limits, stated in advance.**
+- Encode is almost always ONE traversal per block (1049 of 1441 blocks), so
+  encode ripples are necessarily scored with references from the block's later,
+  mostly execution, traversals.
+- Permuted labels that land on an unvisited square contribute 0, which narrows
+  the null slightly (~7.4 of 9 squares are covered). This scales each session's
+  z by a similar factor and does not change the sign of anything.
+- Only ~22% of ripples have room for both windows on one square
+  (17,117 of 76,898 at 250 ms).
+
+### RESULT (same day) — null, and both frontal signals fail the gate
+
+`swr/future_shift_2026-10-07/` (per_session.csv, per_unit.csv,
+event_counts.csv, summary.csv, results_overview.json, settings.json);
+Figure 38 (`ripple_content_figures_2026-10-07/fig38_future_shift.{jpeg,pdf}`).
+Validated first on synthetic place cells (scratch, not kept). A planted
+post-ripple switch to fut1 gave I ≈ +4.5 z and J ≈ +2 to +3; with nothing
+planted, I and J were ~0 (session SD ~1); gate ≈ +5.
+
+Events: 59 sessions; 10,028 eligible ripples (median 96 per session) of
+95,456 in task (the other-ripple exclusion costs more than the 22% estimate
+implied); 402,628 control moments.
+
+| | n | I (ripple − matched) | gate: current square in still moments | J |
+|---|---|---|---|---|
+| **mPFC units** | 25 | **−0.04 z, t = −0.18, P = .86** | +0.44, P = .14 ✗ | +0.01, P = .96 |
+| **medial frontal HFB** | 42 | **+0.07 z, t = +0.57, P = .57** | −0.01, P = .95 ✗ | +0.10, P = .53 |
+| HC units | 50 | +0.05, P = .67 | **+0.64, t = +4.10, P = .00016** ✓ | +0.03, P = .84 |
+| mOFC units | 21 | +0.05, P = .79 | +0.37, P = .09 | +0.23, P = .41 |
+| visual HFB | 30 | −0.18, P = .27 | +0.30, P = .13 | +0.10, P = .62 |
+
+- **Both primaries null, and both are UNINTERPRETABLE by the pre-registered
+  rule.** Neither mPFC units nor medial frontal HFB carry the current square
+  against same-block references in ordinary still moments, so 'more like the
+  future square than the current one' has nothing to measure.
+- **HC passes the gate and still shows no shift** (I +0.05, J +0.03). The
+  estimator works on real data, and in hippocampus ripples do not move the
+  pattern along the route either.
+- 2 of 144 ripple − control cells reach P < .05 (≈7 expected by chance).
+  Nothing in the phase split (count-matched; mPFC has only 5 sessions with
+  >= 20 ripples in all three phases), `near4` matches `block`, per-unit
+  contributions are null (mPFC 136 units, P = .45), and there is no
+  ripple-evoked gain change (mPFC −0.026, P = .22).
+- **What this says about SK's premise.** The test needed a within-block,
+  lag-agnostic reference to exist in mPFC. It does not, at least in 250 ms
+  still windows. Together with 2026-10-02 (no cross-configuration transfer)
+  and the plan-reinstatement positive control (no layout-specific pattern at a
+  matched square), mPFC units here show no DETECTABLE square-indexed pattern
+  that survives cross-validation in real time, within or across layouts. The
+  per-lag result lives in time-WARPED space, so the next step is that space:
+  references indexed by warped phase rather than by occupied square.
+
+## 2026-10-07 — the chain, link by link: uncover → mOFC → ripple → mPFC. Null at every link
+
+`swr_hfb_ripple_coupling.py timeline` (new command; loaders factored into
+`load_inputs` / `session_data` / `session_ripples`, shared with `run`).
+Output `swr/hfb_ripple_coupling_timeline_2026-10-07/`: `timeline_ft_all.png`,
+`timeline_ft_reward.png`, `chain.png`, csv + json. ~6.5 min extraction, cached
+in `timeline_rows.pkl` (`--reuse=True` redraws only).
+
+**Timeline figures.** Single trials sorted by event → ripple latency, in two
+alignments (ripple-locked with the event marked; event-locked with the first
+ripple marked, and no-ripple events below). Raw z-scored HFB, every row
+baselined −750…−250 ms before its EVENT, no shifted null. First traversal:
+mOFC 18 sessions / 7318 events, mPFC 35 / 19790; 57–59% of events have a
+ripple within 2 s; median event → ripple latency 0.39 s (all events), 0.72 s
+(correct uncovers). Nothing is visible at single-trial level: the noise
+(±0.5 z) is ~50× the known ripple-locked effects (~0.01 z). Neither ROI has an
+event-locked response to correct uncovers -- consistent with 2026-09-29 (h)
+("medial frontal has no event-locked reward response in any window"), so not a
+bug in this extraction.
+
+**Tests** (pre-specified by SK before running: link 1 = mOFC, link 2 = mPFC,
+both on correct uncovers, uncorrected; everything else exploratory BH). Only
+ripples 0.5–2 s after the event count, so the ripple's own rise never enters
+the 0–500 ms response window.
+
+| link | test | n | effect | p |
+|---|---|---:|---|---:|
+| 1 | mOFC 0–500 ms response predicts a ripple (AUC − 0.5) | 18 | +0.002 ± 0.035 | 0.95 |
+| 2 | mPFC 0–250 ms after the ripple, minus no-ripple events at a matched pseudo-latency | 35 | −0.002 ± 0.011 | 0.88 |
+| chain | mOFC response × mPFC after the ripple (Δ Fisher z, ripple − no-ripple events) | 8 | −0.14 ± 0.12 | 0.28 |
+
+No exploratory cell (incorrect uncovers, navigation presses, the other ROI)
+reaches p < 0.19; all q = 0.87.
+
+**Reading.**
+- Link 1 has nothing to work with: mOFC does not respond to the uncover, so its
+  response cannot predict anything. lOFC is the one frontal ROI with an
+  event-locked reward response (+0.0175, p = 0.047; 2026-09-29 (h)); it is the
+  candidate sender, not mOFC. Not yet run.
+- Link 2 is underpowered rather than negative: SEM 0.011 against a known
+  ripple-locked mPFC effect of ~0.007 z (shifted-null estimate over all
+  ripples). Restricting to first-traversal correct uncovers keeps 1750 of the
+  ~90k ripples.
+- The chain test rests on 8 sessions.
+
+## 2026-10-06 — Fig 3d gradient brain: cells at exact positions, no jitter
+
+`scripts/cell_fMRI_angle_match.py`, brain panel only. The old render placed
+cells as 3D spheres **jittered ±3 mm on every axis**, under a perspective
+camera, behind an opaque backdrop on a 25%-transparent cortex. So the sites
+did not look like Fig 2c, and cells lateral of the medial wall were hidden by
+the gradient.
+
+**Now.** The fsaverage medial surface is rendered with an orthographic camera
+along x (see-through cortex at alpha 0.25 as in panel b, gradient backdrop at
+alpha 0.65). The cells, the split axis (white) and the median split (black)
+are drawn on top by matplotlib in MNI mm, so each cell sits at its exact
+(y, z). The panel is drawn at print size (2.1 × 3.0 cm per hemisphere):
+cells are 4.0 pt across with a 0.25 pt black rim and a 0.4 pt white ring. At
+the earlier 4.2 cm size, shrunk into the figure, the cells read as black or
+white blobs. That is the same
+projection as the sagittal glass-brain views of Fig 2c. Test spheres rendered
+at known (y, z) land within **0.07 mm** (sub-pixel) in both hemispheres. A
+side-by-side check against a Fig 2c-style glass brain of the same 158 cells
+shows the same site constellation. Co-located cells (one bundle) are drawn as
+one marker. Brains are now drawn only for `pc1_ventral_dorsal`
+(`BRAIN_SCHEMES`); the `_bars` duplicates and per-image colourbars are gone.
+
+Numbers unchanged: all five CSVs are byte-identical to `final_splits/`.
+Output: `cell_gradient_master/2026-08-28_15-19-35/final_splits_2026-10-06/`.
+Style sweep (backdrop alpha 1.0 / 0.65 / 0.4 × cell style edge / halo / sphere)
+plus the glass-brain QC:
+`final_splits/brain_medial_variants_2026-10-06/`.
+
+**Fig 2c coverage panel: new `scripts/plot_cell_coverage_glassbrain.py`.**
+Glass brain with right sagittal, left sagittal and axial views. One marker per
+recording site at its exact canonical coordinate, with no jitter. Uses the
+project ROI colours and is drawn at print size (5.0 × 4.5 cm, 3.2 pt markers
+with a darker rim, glass-brain outlines thinned ×0.5). It covers 924 cells,
+206 sites and 62 sessions: EC 35/10/8, HC_anterior 295/71/52, HC_mid 233/29/36,
+mPFC 158/43/33, mOFC 142/43/27, PCC 61/10/10 (cells/sites/sessions). Output:
+`group/cell_coverage_glassbrain/2026-10-06_18-04-25/`. The older sandbox
+`roi_brain_visualization.py` spreads co-located cells on a 0.7 mm ring and
+colours HC_anterior magenta, so it is not the source of the current Fig 2c
+(teal HC ant). That source was not found.
+
+## 2026-10-02 (b) — ripple-by-ripple mOFC → mPFC coupling: null
+
+`scripts/exploratory/swr_hfb_ripple_coupling.py`; output
+`swr/hfb_ripple_coupling_2026-10-02/` (`ripple_coupling.png`, per-session and
+group csv, `coupling_maps.npz`, `result.json`). New single-ripple pass over
+`bundle_v2` HFB (local, ~3 min).
+
+**The question.** SK's chain (mOFC "reward" → HC ripple → mPFC "for the plan")
+predicts that on the SAME ripple, mOFC-before predicts mPFC-after. Session
+averages cannot test that.
+
+**Statistic.** Per session with both ROIs: z(ρ(mOFC pre, mPFC post)) −
+z(ρ(mPFC pre, mOFC post)), Spearman across ripples, pre/post = the direction
+index windows on the flank-normalised epoch; the reverse direction cancels slow
+shared state. Real − mean of the 6 shifted-time nulls of the conditions run
+(seed 42), so a general OFC → PFC lead that is not about ripples cancels too.
+ROI epoch = mean over that ROI's different-shaft derivations clean for the
+whole ±1 s. Sign-flip over sessions. PRE-SPECIFIED primary: mOFC → mPFC, first
+traversal, uncorrected; everything else exploratory, BH.
+
+**Check.** The per-session direction index from this extraction matches the
+saved one for the same sessions (first traversal r = 0.95 mOFC, 0.84 mPFC).
+
+**Result.** Primary mOFC → mPFC, first traversal: +0.019 ± 0.023 Δz,
+p = 0.42 (11 sessions, 7 subjects, median 174 ripples). The components are
+both ≤ 0 (mOFC→mPFC −0.014, mPFC→mOFC −0.033), so there is no ripple-locked
+co-fluctuation between the two ROIs above the shifted baseline for an asymmetry
+to sit on; the cross-temporal maps are noise-like. Exploratory: all ripples
+−0.036 (p = 0.08) and after encoding −0.054 (p = 0.06), both in the REVERSE
+direction, q = 0.54. lOFC → mPFC (15 sessions): nothing (all p ≥ 0.23).
+Sensitivity: session SD ≈ 0.08 Δz, so a group effect of ~0.05 would have
+been visible; weaker coupling cannot be excluded.
+
+**Reading.** The session-average "mPFC later than mOFC" lean is not
+accompanied by ripple-by-ripple transfer from mOFC to mPFC. It fits two
+separate ROI responses better than a coupled chain, with 11 sessions as the
+limit.
+
+## 2026-10-02 — does mPFC HFB lock AFTER the ripple and mOFC BEFORE? Direction, not significant
+
+`scripts/exploratory/swr_hfb_direction.py`; output `swr/hfb_direction_2026-10-02/`
+(`direction_index.png`, `direction_curves.png`, `result.json`, per-session csv).
+
+**The question.** SK, from the per-ROI trace grid: mPFC HFB looks to peak
+slightly after the ripple, mOFC slightly before. Tested directly.
+
+**Index.** Per session, mean HFB (0, +250] − mean [−250, 0) ms, on the
+UNSMOOTHED real-minus-null curve (flank baseline cancels). + = later.
+Within ROI: sign-flip permutation vs 0. mPFC vs mOFC: ROI-label permutation,
+unpaired (35 vs 18 sessions, only 11 shared; paired-on-11 reported as a check),
+Holm over the 10 ripple sets. 10,000 perms, seed 42. Partition =
+`hfb_roi_partition_2026-09-28` (the exclusive partition has no mPFC/mOFC).
+Sets: a) all ripples (region run); b) all LABELLED ripples per phase
+(first_traversal / encoding / after_encoding; 76% of ripples carry a label;
+encoding contains first traversal); c) first traversal by preceding event,
+plus `still` and the − navigation contrasts.
+
+| set | mPFC − mOFC | p_perm | Holm |
+|---|---:|---:|---:|
+| a) all ripples | +0.0076 | 0.084 | 0.53 |
+| b) first traversal | +0.0151 | 0.030 | 0.27 |
+| b) encoding | +0.0147 | 0.021 | 0.21 |
+| b) after encoding | +0.0080 | 0.075 | 0.53 |
+| c) correct | +0.0168 | 0.18 | 0.92 |
+| c) incorrect | +0.0040 | 0.70 | 1.00 |
+| c) navigation | +0.0252 | 0.057 | 0.46 |
+| c) no press ±2 s (10/5 sess.) | +0.0215 | 0.35 | 1.00 |
+| c) correct − nav | −0.0029 | 0.87 | 1.00 |
+| c) incorrect − nav | −0.0197 | 0.26 | 1.00 |
+
+**Reading.** The sign matches the impression in 8 of 10 sets (mPFC later than
+mOFC), largest during first traversal / encoding, but nothing survives Holm and
+no single ROI differs from 0 after BH (best: mPFC encoding p = 0.047, q = 0.46;
+mPFC navigation p = 0.021, q = 0.30). The mOFC "before" lean is the bigger
+pre-ripple bump, which is where a preceding press/feedback response lands;
+mPFC vs mOFC cancels a SHARED press response, not an ROI-specific one. The
+− navigation contrasts show no ROI difference, so the effect is not specific
+to reward/error. Treat as a non-significant trend; do not report as a gradient.
+
+`swr_hfb_roi_conditions.py`: loader factored into `load_partitioned` (reused
+here); output unchanged.
+
+**Addendum (d): condition x phase grid, with lOFC.** Same index and tests,
+for correct / incorrect / navigation / no-press / the two − navigation
+contrasts in first_traversal, encoding and after_encoding, ROIs mPFC, mOFC,
+lOFC; pairs mPFC − mOFC, lOFC − mOFC, mPFC − lOFC. Uncorrected p reported,
+BH q in `grid_roi_pairs.csv`. Figures `direction_phase_condition.png` and
+`..._curves.png`.
+- Correct uncovers, encoding: mPFC +0.002, mOFC −0.016, lOFC −0.008;
+  mPFC − mOFC +0.018, p = 0.14. Same pattern as first traversal, n.s.
+- Incorrect uncovers, after encoding: errors are rare once the route is known
+  -- 10 / 5 / 3 sessions. mPFC − mOFC p = 0.62; lOFC untestable.
+- lOFC sits with mOFC, not mPFC: lOFC − mOFC never differs (all p > 0.4).
+  mPFC − lOFC is the best cell in the grid: navigation presses during
+  encoding, +0.031, p = 0.006 (q = 0.26).
+- 3 of the 48 tested pairs reach p < 0.05; about 2.4 are expected by chance.
+  None survive BH.
+
+## 2026-10-02 — why is the evidence negative? the template barely transfers
+
+`swr/cross_task_2026-10-02/`; figures 36-37.
+
+**The question.** mOFC gives ripple -0.544 (P = 0.028) but non-ripple +0.031
+(P = 0.75) for the SAME template. SK's hypothesis: the same square is visited
+at a different point in the sequence in different configurations, so a cell
+tuned to location x lag fires differently at that square across tasks, and the
+leave-one-out template ends up ANTI-correlated with the held-out layout.
+
+**Hypothesis NOT supported, but the puzzle sharpens.** Leave-one-out
+transferability of the place map (each configuration's rate map vs the mean of
+the others, per cell, then across sessions):
+
+| ROI | r | P |
+|---|---|---|
+| HC | +0.057 | 1.9e-5 * |
+| mPFC | -0.002 | 0.93 |
+| mOFC | +0.004 | 0.84 |
+
+The PFC templates are UNINFORMATIVE, not misleading -- so an anti-correlated
+template cannot be the mechanism. And since the template is IDENTICAL for
+ripple and non-ripple windows, nothing at the template or configuration level
+(including lag divergence) can produce a ripple/non-ripple sign flip. Whatever
+does it is a property of activity DURING ripples.
+
+**Lag divergence** (circular mean warped theta per square per configuration;
+divergence = mean circular distance): mPFC pooled r = -0.089 (P = 0.034) in
+the predicted direction, but within session r = -0.068 (P = 0.16). HC -0.064
+(P = 0.098), mOFC n.s. Pooling mixes between- and within-session variance, so
+the within-session test is the right one and it is null.
+⚠ Underpowered by design: ~28 pairs per session gives SE(r) ~ 0.19, so an r of
+-0.07 was never detectable this way. A mixed model over all pairs with session
+as a random effect would be the better test.
+
+**What HC's transferability IS.** Three task models over the same
+configuration pairs -- occupancy (time per square), reward overlap, trajectory
+(9x9 transitions) -- correlated with the neural matrices, within session then
+across:
+
+| ROI | occupancy | reward overlap | trajectory |
+|---|---|---|---|
+| HC | +0.113 (P = 8e-4) * | +0.077 (P = 0.025) * | +0.129 (P = 0.001) * |
+| mPFC | +0.067 | +0.076 | +0.052 (all n.s.) |
+| mOFC | -0.050 | +0.011 | +0.061 (all n.s.) |
+
+HC's cross-task similarity IS task similarity. mPFC and mOFC track NONE of the
+three despite having matrices of comparable magnitude -- their structure is not
+task structure.
+⚠ The three models intercorrelate, so HC's result is ONE effect seen three
+ways. ⚠ The trajectory model is nearly uniform (grid adjacency constrains all
+layouts to share transitions), so it has little dynamic range; occupancy is the
+only model with real variance. A partial regression is needed to say which HC
+actually tracks.
+
+**Ripple vs non-ripple transferability.** HC +0.0025 (P = 0.62) in ripple time
+vs +0.0173 (P = 0.0020) outside. Directionally a dissociation, but both are an
+order of magnitude below the pooled +0.057 because restricting to ripple time
+leaves very little data per square per configuration -- the ripple column is
+too attenuated to interpret.
+
+### Figure bug fixed
+fig36 panel b drew the pooled point with a 95% CI and the within-session point
+with a 1-SEM bar, making the latter look far tighter than it is. Both are now
+95% CIs, which is why a bar that appeared clear of zero had P = 0.16.
+
+### Still unexplained
+The mPFC flip at already-known correct uncovers (+0.471 outside ripples vs
+-0.600 inside, difference -1.071, P = 0.0011) is not accounted for by template
+transferability in either window (both ~0). ⚠ There is also an unresolved
+tension: if mPFC's template is uninformative, it is not obvious how the
+non-ripple value reaches +0.471. The population dot product and the per-cell
+map correlation are different measures -- a minority of well-transferring cells
+could carry the population match while the mean per-cell correlation sits at
+zero. Not yet checked; this is the next thing to look at.
+
+## 2026-10-01 — PRE-REGISTRATION: within-session plan reinstatement in cells (loading analogue)
+
+Written BEFORE running. Module `mc/analyse/plan_reinstatement.py`, runner
+`scripts/cells_plan_reinstatement.py`.
+
+**Why a new design.** The fMRI loading RSA cannot be ported: there is no
+instruction phase in sEEG, and the 8 shared configurations put 8 different
+locations at every state, so the position-locked plan RDM has zero variance
+(see 2026-09-15 (c)). `ripple_rsa` (cross-session pseudo-population) was
+underpowered (mPFC noise ceiling 0.00). This test needs NO shared layouts and NO
+cross-session pooling: it runs within each session, so all sessions with >=2
+mPFC cells enter.
+
+**Estimator.** Per session and ROI, spike counts in [t+0.05, t+1.0] s after every
+correct uncover, z-scored per cell over all of them. Template T(config, L) =
+mean z-vector over EXECUTE-phase correct uncovers at location L in that
+configuration (`grid_id`), always excluding the test event's own block
+(`grid_num`). For a test event at L in configuration c:
+
+    Δ = [x·T(c, L) − mean_{c' ≠ c, L rewarded in c'} x·T(c', L)] / n_cells
+
+Same location, same event type (correct uncover) in both terms; only the layout,
+and hence the future, differs. Blocks of different configurations are
+interleaved in time, so drift does not favour 'same'.
+
+**Primary test (mPFC).** Test events = the FIRST discovery of each state in each
+block (encode). The number of future rewards that are known at discovery is
+0/1/2/3 for A/B/C/D, so a plan predicts Δ_D > Δ_A. Confounds that are constant
+across states (state coding, reward response, location role) cancel in D − A.
+Per-session D − A, one-sample t across sessions, p from 10,000 sign flips of the
+per-session values (same function for empirical and flipped), one-sided.
+
+**Pre-declared secondaries** (reported, not corrected into the primary):
+1. Positive control: Δ for held-out EXECUTE uncovers > 0. If this fails the
+   approach has no power and a null on the primary is uninterpretable.
+2. Heading-free trend A < B < C (per-session slope over A, B, C). Needed because
+   execution pauses after a correct uncover are short (median 0.28 s), so the window
+   includes heading to the next goal, and only at D is the next goal (A) known.
+3. First run of each configuration only (later runs may be recalled).
+4. Same tests in HC_all, mOFC, PCC (PCC = confound detector).
+
+**Caveat fixed in advance.** At D the known set equals the whole plan, so this
+cannot separate plan from memory the way the fMRI forward/backward design does.
+A positive result means "layout-specific execution pattern is reinstated as
+rewards are discovered", not "plan, not memory".
+
+### RESULT (same day) — null in mPFC; positive control fails in mPFC, works in HC
+Results in `group/plan_reinstatement_2026-10-01/` (summary.csv, results.json,
+plan_reinstatement.jpeg). n = sessions; one-sided sign-flip P.
+
+| ROI | n | positive control (execute Δ) | PRIMARY D − A | slope A→C | first run D − A |
+|---|---|---|---|---|---|
+| mPFC | 26 | +0.0008, t = +0.28, P = .39 | −0.0086, t = −0.84, P = .79 | t = +0.93, P = .19 | t = −1.37, P = .91 |
+| HC_all | 51 | **+0.0049, t = +3.25, P = .0003** | t = −0.54, P = .71 | t = +0.59, P = .27 | t = −1.19, P = .87 |
+| mOFC | 22 | t = +1.50, P = .076 | t = −1.46, P = .92 | t = −1.25, P = .89 | t = −0.72, P = .76 |
+| PCC | 10 | t = +1.69, P = .059 | t = −0.27, P = .60 | t = −0.72, P = .75 | t = −0.64, P = .72 |
+
+Subject-level averaging (41 patients) changes nothing (mPFC D − A subj P = .82;
+HC control subj P = .0001).
+
+**Reading.** The primary test is null, but in mPFC it is UNINTERPRETABLE: mPFC
+shows no layout-specific execution pattern at a matched square even during
+execution, so there is nothing that could be reinstated. HC shows that pattern
+(so the estimator has power) but it does not build up over discovery. This
+readout is narrower than the published mPFC RSA (1 s after reward uncovers at
+the 4 reward squares only, vs. the whole loop in 12 phase bins over a
+pseudo-population), so it does not contradict that result.
+
+### ⚠ Deviation from the pre-registration: block-distance bias
+The pre-registered estimator (one template per layout, own block excluded) gave
+a NEGATIVE positive control in every ROI (mPFC t = −3.93). Cause: similarity
+falls steeply with block distance (mPFC +0.066 at 1 block → −0.044 at >12),
+and repeats of one layout are spaced further apart than other layouts (mean
+10.2 vs 8.1 blocks). Fixed by per-block templates and
+`dot ~ same + |offset| + |offset|² + offset` with an event fixed effect;
+Δ = coefficient on `same`. Tests, windows, events and inference unchanged.
+Set-aside versions kept for the record:
+- `plan_reinstatement_2026-10-01_v1_unmatched_biased/`: the pre-registered
+  estimator, biased negative.
+- `..._v2_exact_distance_match/`: same-layout blocks compared only with
+  other-layout blocks at identical distance. Unbiased but kept only 24% of
+  events, and the first-run test fell to 1–8 sessions. Its conclusions match:
+  HC control P = .018, mPFC control P = .13, mPFC D − A P = .74.
+
+### ⚠ TIMING BUG in the table above — events were locked to ARRIVAL, not reward
+On an uncover row of the step table (`swr_location`), `t_s` is when the subject
+ARRIVED on the square. The press, and the reward (`t_A`..`t_D`, to within 10 ms),
+is the NEXT row's `t_s`: a median 0.25 / 0.24 / 0.33 / 0.50 s later in s05 /
+s38 / s50 / s12. The results above therefore used windows starting at arrival.
+Fixed in `uncover_table`; the spike result is re-run below and the old folder
+kept as `plan_reinstatement_2026-10-01_v3_arrival_time`.
+⚠ Same convention in other modules that use `st.t_s[is_uncover]` as "the
+uncover" (e.g. `swr_explore/consolidation.py`, `intention_ripple.py`). NOT
+changed here; they need checking.
+
+### PRE-REGISTRATION: LFP version (written before running)
+Same estimator, events, windows, tests and inference. Features = one per bipolar
+derivation (mean signal in [t+0.05, t+1.0] s after the reward, z-scored per
+derivation; artifact-touching windows → 0), in place of one per cell. Clocks
+checked: step-table presses match `swr_behaviour.uncover_events` to ~10 ms.
+- **ROI.** `MedialFrontal` = mPFC + mOFC derivations with |MNI x| <= 20 mm, the
+  mask of the HFB ripple-locking analysis. Lateral OFC is NOT pooled in (40% of
+  'mOFC' contacts sit beyond |x| = 25 mm). HPC = comparison region, Visual =
+  confound detector.
+- **Signals.** hfb (70-150 Hz), theta (4-8 Hz), beta (13-30 Hz), ripple band
+  (80-120 Hz) envelopes, all as stored in `bundle_v2/hfb`. Four signals means
+  four primaries: MedialFrontal D − A is Bonferroni-judged at P < 0.0125.
+- Positive control must pass before a null on the primary is read.
+
+### RESULT: spikes (timing fixed) + LFP — null throughout
+Folders `group/plan_reinstatement_{spikes,hfb,theta,beta,ripple}_2026-10-01/`.
+One-sided sign-flip P, n = sessions. Contacts: MedialFrontal 179 derivations in
+53 sessions (44 with >= 2), HPC 181 / 61 (53), Visual 168 / 36 (30).
+
+| signal | ROI | positive control (execute) | PRIMARY D − A | slope A→C |
+|---|---|---|---|---|
+| spikes | mPFC (26) | t = −0.21, P = .58 | t = +0.51, P = .31 | t = −0.33, P = .62 |
+| spikes | HC (51) | **t = +3.13, P = .0010** | t = +1.17, P = .12 | t = +0.33, P = .38 |
+| hfb | MedialFrontal (44) | t = −0.17, P = .55 | t = −0.23, P = .59 | t = −1.10, P = .86 |
+| theta | MedialFrontal | t = +0.37, P = .36 | t = −1.23, P = .89 | t = −0.89, P = .80 |
+| beta | MedialFrontal | t = −2.24, P = .99 | t = −1.16, P = .87 | t = −0.03, P = .52 |
+| ripple band | MedialFrontal | t = +0.12, P = .45 | t = +1.63, P = .058 | t = +0.17, P = .44 |
+
+- The timing fix does not change the spike conclusion. HC still passes the
+  positive control; mPFC has no layout-specific execution pattern to reinstate.
+- **No LFP signal passes the positive control in MedialFrontal.** In HPC only
+  the ripple band does, weakly (t = +1.88, P = .036); HC spikes do (P = .001).
+  So the contact-level LFP readout does not carry the layout-specific pattern
+  that HC cells do.
+- No primary reaches the Bonferroni threshold of P < .0125. The one nominal
+  secondary hit is MedialFrontal ripple band, first run only, D − A:
+  t = +2.43, P = .0095, subject P = .017. It is one of ~90 secondary tests,
+  its signal's positive control fails, and the 80-120 Hz band overlaps HFB,
+  which is flat. ⚠ Do not read it as a finding.
+
+**Band-specificity figure** (`group/plan_reinstatement_figures_2026-10-01/`,
+`scripts/plan_reinstatement_figures.py`). The first-run ripple-band effect is
+not a separate 80-120 Hz phenomenon: per-session first-run D − A in ripple band
+and in HFB correlate r = +0.59 (n = 44, P = 2e-5), and HFB has the same shape
+across A-D (rise at D), only smaller (+0.006 vs +0.016 at D). It is also not
+region-specific: HPC (t = +1.01) and Visual (t = +1.12) point the same way,
+weaker. Positive control flat for every signal.
+
+### PRE-REGISTRATION: is the D effect heading? is it ripple-locked? (before running)
+Target = the first-run MedialFrontal D − A (ripple band, also HFB). Estimator,
+events and inference unchanged; only the samples entering each window change.
+Pause from reward to next move: discoveries median 1.2-1.7 s (D: 1.38 s),
+execution median 0.40 s (10th pct 0.24 s). So movement entered mainly the
+execution TEMPLATES, not the discovery windows.
+1. **premove**: window [t+0.05, min(t+1.0, first move after the reward)];
+   events with < 0.15 s left are dropped. Spikes become rates. Run for ripple
+   band, HFB, spikes. Heading predicts that D − A shrinks.
+2. **ripmask**: drop samples within ±0.2 s of every hippocampal ripple peak
+   (`bundle_v2/ripples.csv`, deduplicated at 50 ms) before averaging the
+   window. A window needs >= 5 samples (50 ms) left. **ripshift** = control: the
+   same mask with each session's ripple train shifted by a random ±2-5 s
+   (5 shifts, seed 42, per-session values averaged over shifts). Ripple-locked
+   predicts that ripmask loses the effect and ripshift keeps it.
+
+### RESULT: not ripple-locked; partly lost before the first move
+Figure + stats `group/plan_reinstatement_controls_2026-10-01/`
+(`scripts/plan_reinstatement_control_figures.py`). The refactored code
+reproduces the earlier ripple-band numbers exactly (max |Δt| = 0).
+MedialFrontal ripple band, first-run D − A (n = 44):
+
+| variant | mean | t | P (one-sided) |
+|---|---|---|---|
+| full | +0.0207 | +2.43 | .0095 |
+| premove | +0.0119 | +1.46 | .078 |
+| ripmask | +0.0206 | +1.86 | .033 |
+| ripshift (5-shift mean) | +0.0150 | +2.26 | .015 |
+| ripmask − ripshift | +0.0055 | +0.60 | P2 = .55 |
+
+- **Not ripple-locked.** Dropping every sample within ±0.2 s of a hippocampal
+  ripple leaves the mean unchanged (+0.0206 vs +0.0207); only the noise grows,
+  as it does with the shifted mask. The mask removes ~17-21% of each window and
+  is lowest at D (16.8%), so D is not ripple-rich either.
+  Why 80-120 Hz beats HFB is therefore NOT ripple-locked activity.
+- **Premove** roughly halves the effect (+0.0207 → +0.0119, P = .078); HFB
+  premove goes to 0. Ambiguous: premove also shortens the execution templates
+  to a median ~0.35 s (noisier), and it truncates mainly the discoveries where
+  the subject moves off early. Heading is neither excluded nor shown.
+- mPFC spikes: null either way (premove t = 0.00).
+
+**Conclusion.** The fMRI loading effect has no detectable analogue in this
+readout, in cells or LFP. The binding limit is upstream of loading: apart from
+HC cells, none of these signals shows a layout-specific pattern at a matched
+square even during execution.
+
+**Do not re-run as-is hoping for mPFC.** Next options if wanted: the same test
+on mPFC HFB across contacts (more sessions), or a readout over the whole loop
+(all squares, phase bins) instead of reward uncovers only.
+
+## 2026-10-01 — PFC ripple content: tests (a)(b)(c), loading, and lag tagging
+
+Results in `swr/{phase_contrast,goal_lag,warped_lag,loading,discovery_lag,
+intention_ripple,consolidation,discovery_locked,method_check,
+preferred_lag_firing,lag_group_ripple,storage_vs_planning}_2026-*`.
+Figures 20-33 in `swr/ripple_content_figures_2026-10-01/`.
+
+### THE METHOD IS SOUND -- validated
+`method_check` (fig31): the SAME estimator on tiled NON-ripple windows
+(>=1 s from any ripple), width and count matched to ripples.
+
+| | non-ripple | ripple |
+|---|---|---|
+| HC encode | +0.263 (P = 5.8e-4) | +0.558 (P = 2.0e-4) |
+| HC execute | **+0.145 (P = 0.043)** | +0.202 (P = 0.16) |
+
+**The published HC current-location result is recovered.** Every earlier
+statement that "current location is not encoded in execute" was about RIPPLE
+WINDOWS ONLY and was repeatedly phrased as if general -- corrected.
+
+### (a) current location in PFC
+mPFC null (+0.31, P = 0.13). mOFC significantly NEGATIVE (-0.49, P = 0.041),
+and `method_check` localises it: mOFC non-ripple +0.031 (P = 0.75) vs ripple
+-0.544 (P = 0.028), difference **-0.575, P = 0.037**. So mOFC's anti-location
+pattern is RIPPLE-SPECIFIC and confined to encode. Three analyses now point at
+it. Unexplained; the strongest ripple-specific effect in the project.
+
+### (b) goal sequence -- null
+3-way split + count matching dissolves it (~6 of 120 tests at P<0.05, chance).
+⚠ Framing error found by SK: the cycle has length 4, so '+3 ahead' IS '1 back'
+-- `goal3` was never a distant-future goal, it is the reward just collected.
+⚠ Knowability: on the first traversal goal0 is known 7.3% of the time, goal1
+25.3%, goal2 49.3%, goal3 75.5%; by state, goal3 is 0% knowable at state 1 and
+100% at states 2-4. Any goal-lag test must condition on this.
+⚠ fig25's encode panel is 82% first-traversal, so ~76% of its ripples score a
+square the subject cannot know.
+
+### (c) warped 12-lag -- a-priori lag hits but reverses
+mPFC 60 deg ripple-flank, first traversal +0.428 (P = 0.0099), held out of the
+per-lag fit (`TRIALS='all_minus_explore'` excludes 99.9% of first traversals
+and 100% of encode-rest). BUT the other held-out phase goes the other way:
+paired first_traversal - encode_rest = +0.936, t(16) = +3.30, P = 0.0045.
+16/216 tests significant vs ~11 expected; nothing survives Bonferroni.
+
+### L1 loading -- null; the sham control earned its keep
+Nothing positive. The one nominal hit (mPFC/goal0/execute -0.498, P = 0.030) is
+matched by its SHAM (-0.391, P = 0.057): within-subgoal drift, not ripples.
+
+### mPFC HOLDS A NEWLY DISCOVERED REWARD -- the one clean positive
+`consolidation` (fig29). Window t+50 ms to t+1 s, target = the square just
+uncovered:
+
+| | first discovery | repeat correct | incorrect |
+|---|---|---|---|
+| mPFC | **+0.770 (P = 5.6e-4)** | +0.000 | -0.027 |
+| HC | +0.54 | +0.33 | +0.62 |
+
+The subject stands on that square in ALL THREE, so current-location coding
+predicts all three equal -- and HC behaves exactly that way, which is an
+internal positive control. mPFC responds only when the reward is NEW.
+Paired: first discovery - repeat correct +0.770, P = 0.0035.
+⚠ NOT ripple-delivered: weaker WITH a ripple (repeat correct -1.071,
+P = 0.0011), and `discovery_locked` (fig30) finds no modulation around ripples
+-- though that analysis has ~104 events/session and is underpowered (HC's known
+effect also fails there; sqrt(n) predicts +0.375, observed +0.246).
+⚠ CONFOUND: a first discovery is usually also the first VISIT to that square.
+Needs a novel-place-without-reward control.
+
+### Intention: HC yes, mPFC no
+`intention_ripple`. Before an uncover, HC represents the square about to be
+uncovered (+0.591, P = 1.3e-4; STRICT, excluding the current square and the
+true goal, +0.319, P = 0.020). mPFC is null even unrestricted (-0.069,
+P = 0.75) -- which retrospectively guts the rho = -0.013 correlation reported
+earlier: it correlated ripple counts with a quantity that is itself zero.
+⚠ STRICT does not control spatial PROXIMITY; the next square is usually
+adjacent.
+
+### Lag tagging IS real -- but only WHERE, not WHEN
+Continuous `r_lag000_noctrl` predicts how selectively a cell fires at its
+cross-validated preferred square, during execute, in all three ROIs:
+HC r = +0.230 (P = 1.1e-7, n = 520), mPFC +0.223 (P = 0.0063, n = 148),
+mOFC +0.182 (P = 0.031, n = 141). Encode and ripple windows null.
+`storage_vs_planning`: lag tuning does NOT predict engagement at storage vs
+planning anywhere (18 tests, all n.s.). ⚠ the planning events may be wrong --
+all four subgoal onsets were used, but a plan is plausibly assembled only at
+the FIRST onset of a traversal.
+
+### Bugs found and fixed (all produced plausible-looking output)
+1. **Zero-count artefact.** Per-fold selectivity pinned to -1 whenever a
+   held-out configuration had no ripple spikes at the preferred square -- 56%
+   of folds -- giving a spurious -0.31. Rebuilt as a count model pooling
+   spikes and dwell across folds before any ratio.
+2. **`mod` shadowed `DataFrame.mod`**; attribute access returned the method.
+   Column renamed `ripmod`.
+3. **`cond_map` wants 0-based labels**; passing locations 1-9 made index 0 NaN,
+   every window non-finite, and the first `goal_lag` run returned zero rows
+   silently.
+4. **Shared RNG in `summarise`** made each curve's cluster p depend on which
+   curves ran before it (0.048 then 0.051 on identical data). Seeded per
+   (ROI, curve).
+5. **`suff` used but never defined** in the phase panels -- a NameError that
+   killed the figure job silently, so "regenerated with matched levels" was
+   false for one round.
+
+### Cell matching between pipelines (verified, not assumed)
+`per_cell_ALL_ROIs.csv` (subject_id, cell_idx) -> ripple pipeline
+(session, cell) via **cell_idx - 1**. ELECTRODE names agree for 97.9% of 955
+cells; the 20 exceptions are a parsing artefact of anatomical labels containing
+hyphens. 64 ROI disagreements are relabelling (58 flagged `roi_changed`), not
+misalignment. mPFC: 148 of 155 cells enter (2 of 63 sessions have no ripples).
+
+⚠ Preferred lag by argmax is near-uniform (64-94 cells per bin, 80 by chance)
+and discards ~94% of cells to form the lag-0 group. Use the CONTINUOUS
+strength instead; it recovers the effect in mPFC where the split could not.
+
+## 2026-09-30 (b) — goal-lag 3-way split: null on the target, coherent in the confusion
+
+`swr/goal_lag_2026-09-30/` (`per_session.csv`, `summary.csv`, `confusion.csv`).
+Phases are now mutually exclusive: first_traversal / encode_rest (= encode
+minus first traversal) / execute, all count-matched to the common minimum with
+1000 draws, levels and pairwise contrasts from the same subsamples.
+
+**⚠ This substantially weakens the earlier 2-way result.**
+
+| ROI | effect | raw | matched |
+|---|---|---|---|
+| mPFC | lag 0, first traversal | +0.476, P = 0.026 | +0.216, P = 0.19 |
+| HC | lag 2, first traversal | -0.527, P = 0.001 | -0.253, P = 0.047 |
+| HC | lag 2, rest of encode | - | -0.155, P = 0.42 |
+
+The lag-2 effect reported yesterday across all of "encode" (-0.52, P = 0.002)
+was driven almost entirely by the FIRST TRAVERSAL and halves once counts are
+matched. ~6 of 120 tests reach P < 0.05, which is the chance expectation. On
+the target-only tests **(b) is null**.
+
+**The confusion matrices are the informative part** (fig23). Role-collapsed:
+rows = which lag's template, columns = the role the scored square plays. Rows
+sum to ~0 by construction, so this shows the DISTRIBUTION of evidence.
+
+HC, first traversal: evidence lands on **current** (+0.065*, +0.069*) and
+**goal 3, the just-collected reward** (+0.093*) -- never on a future goal. That
+is the manuscript's HC claim ("current location along with a trace of the
+recent past") recovered from an independent analysis, and it explains the lag-2
+negative: evidence concentrates on current/goal3, so the most distant future
+goal absorbs the negative.
+
+mPFC, first traversal: one starred cell, **goal 0 under the lag-0 template**
+(+0.090*) -- the predicted one, and the only positive in mPFC.
+
+mOFC, first traversal: the largest cells are the **current** column at lags 1
+and 2, but not significant. If real this would conflict with the significant
+NEGATIVE current-location result in test (a) -- unresolved, do not report
+either without resolving it.
+
+⚠ 72 cells per panel-row at P < 0.05 uncorrected, so 3-4 stars per row are
+expected by chance. The HC pattern is worth something because it is COHERENT
+(stars in the roles the hypothesis names, none elsewhere), not because any
+single cell is significant.
+
+### Retracted
+The claim that the HC lag-2 negative is "the arithmetic shadow of the
+current-location code" was tested and FAILED: across sessions, current-location
+z does not predict lag-2 z (r = -0.086, P = 0.55 for HC_all; r = -0.245,
+P = 0.20 for HC_mid). The confusion matrices now offer a better account (the
+evidence goes to current + just-collected), but the shadow claim as stated was
+unsupported and has been withdrawn from the figure and text.
+
+### Per-phase levels are now count-matched
+`swr_phase_contrast` previously recorded per-phase z from ALL ripples in each
+phase while only the contrast used matched draws. Since z carries a sqrt(n)
+term and execute has ~2x the ripples, every phase panel drawn before this
+understated the gap. Now records `z_<phase>_matched` from the same draws as the
+contrast; figures prefer it automatically.
+
+## 2026-09-30 — PFC ripple content: tests (a) and (b)
+
+### (a) current location in PFC — `swr_phase_contrast`, ROI_SETS extended
+`swr/phase_contrast_2026-09-30/`
+
+| ROI | encode | P | ripple - flank (enc) | P |
+|---|---|---|---|---|
+| HC pooled | +0.57 | 2.0e-4 | +0.23 | 0.115 |
+| mPFC | +0.31 | 0.134 | +0.04 | 0.850 |
+| mOFC | **-0.49** | **0.041** | -0.30 | 0.134 |
+
+mPFC null for current location, as the manuscript predicts -- but numerically
+POSITIVE, 95% CI [-0.10, +0.73], so this is failure-to-detect, not evidence of
+absence. A dissociation claim needs the HC-vs-mPFC difference tested directly.
+
+mOFC significantly NEGATIVE (and ripple-flank during execute -0.46, P = 0.025).
+Replicates the -0.49, P = 0.056 seen earlier in the all-ripples time course.
+
+### (b) goal-sequence content — `mc/analyse/swr_explore/goal_lag.py`
+`swr/goal_lag_2026-09-30/`. goal_lag[g] = rew[(state-1+g) mod 4]; g=0 is the
+reward being sought now, g=3 the one just collected.
+
+| ROI | lag | test | n | z | P |
+|---|---|---|---|---|---|
+| mPFC | 0 | encode | 26 | **+0.386** | 0.075 |
+| mPFC | 1 | encode | 26 | -0.314 | 0.177 |
+| HC_mid | 2 | encode | 29 | **-0.626** | **0.0084** |
+| HC_mid | 2 | ripple - flank, enc | 29 | **-0.677** | **0.0022** |
+| HC_all | 2 | encode | 51 | -0.522 | 0.0021 |
+| mOFC | any | any | 22 | all null | >= 0.05 |
+
+**⚠ The HC lag-2 negative is NOT an independent finding.** Templates are
+z-scored to sum to zero across the nine locations, so sum_L E(L) = 0 exactly
+and the statistic is (9/8) * E(target). Coding ANY one location therefore
+forces every other location's score negative. Measured at ripple times during
+encoding, lag 2 is the spatially furthest from the current square (mean grid
+distance 1.88, identity 7.3% -- below the 11% chance), so it carries the
+largest negative shadow of HC's current-location code. Its ripple-specificity
+follows for the same reason: the current-location code is itself stronger in
+ripples.
+
+**mPFC lag 0 is NOT current-location leakage.** The reward being sought
+coincides with the current square only 9.4% of the time at ripple times (chance
+= 11%; mean grid distance 1.81). So the +0.386 trend is about where the subject
+is heading, independent of where they are. At P = 0.075 it is a trend, not a
+result.
+
+Overlap table (ripple times, encoding): identity / mean grid distance by lag --
+lag0 9.4% / 1.81, lag1 10.1% / 1.82, lag2 7.3% / 1.88, lag3 28.8% / 1.34.
+Lag 3 (the reward just collected) is often still underfoot, so it is the one
+lag that IS contaminated by current location.
+
+### Bug fixed
+First run of (b) returned zero rows: locations 1-9 were passed to `cond_map`,
+which wants 0-based labels, so index 0 was always NaN, every window was
+non-finite and everything was dropped. `cond_map` silently produces a NaN
+column rather than erroring -- worth knowing.
+
+### New: `mc/analyse/swr_warp.py`
+The real-time <-> warped-theta bridge for test (c). theta(t) from `state` +
+`t_A..t_D`, the same boundary set as `save_humanABCDneurons_normalised.m`.
+Smoke-tested: 100% of steps get a finite theta.
+
+Two measurements that constrain (c):
+- one physical step spans ~18 deg of warped angle (p90 = 47.5 deg), so 30 deg
+  is ~1.7 steps;
+- P(location at lag g == location at lag 0): 30 deg 32.8%, 60 deg 12.3%,
+  90 deg 6.4%, 180 deg 7.7% (chance 11%). So 60 deg and beyond are clean, but
+  **30 deg is a third redundant with the current location** -- a positive there
+  alone could be current-location bleed. The a-priori mPFC window is 30-60 deg,
+  so 60 deg is the interpretable end of it.
+
 ## 2026-09-29 (r) — Deferring to the swr_main / swr_archive split
 
 SK had already built the consolidation in parallel: `scripts/swr_main.py` for
@@ -12680,3 +15789,135 @@ the flag and used `phase3` (= exclusive), and
 `ripple_hfb_conditions_exclusive_2026-09-28/` passed it explicitly. Only
 `ripple_hfb_conditions_incl_2026-09-27/` is on the inclusive split, and it is
 labelled as the sensitivity run.
+
+## 2026-10-02 — Position in sequence on phase- and ramp-residualised data
+
+Replaces the earlier "two formats" (sustained vs phasic) framing. Goal progress
+and the per-loop monotone ramp are both treated as signals of no interest and
+removed from the traces before either analysis, so the population RSA and the
+single-cell GLM are protected identically.
+
+Runs (both `phase_residualise=cosine`, `drift_residualise=linear`):
+- RSA  `DSR_RSA_simple_ROI/2026-10-02_13-57-52`, combo `S_P_ctrl`
+  (phase is pruned from the combo because it is already out of the data,
+  leaving state + location + l2_norm + dsr_fmri), 1000 permutations.
+- GLM  `encoding_state_sustained_cv/2026-10-02_13-54-14`, 10000 permutations,
+  924 cells.
+- No-residualisation reference for the preferred-position comparison:
+  `encoding_state_sustained_cv/2026-09-24_18-35-23`.
+
+FDR is Benjamini-Hochberg across the 5 (RSA) or 6 (GLM) ROIs within each
+sub-model. Figures + results JSON in
+`group/position_index_2026-10-02/` (`scripts/plot_position_code_figures.py`).
+
+**RSA, position-in-sequence (`split_halves_z`):** mOFC .089 q=.0025 (n=74),
+HC_mid .051 q=.0033 (145), HC_ant .046 q=.0025 (171), mPFC .028 q=.033 (65),
+PCC .010 q=.21 (51). EC is not testable at the population level: it has cells
+in 1 of 28 RSA-eligible subjects, below `MIN_RSA_SUBJECTS=3`.
+
+**GLM, held-out r for the position block** (Hodges-Lehmann + distribution-free
+CI, the estimator the Wilcoxon signed-rank test actually tests -- a mean CI
+crossed zero for HC_mid while the test was significant, which is what motivated
+the switch): EC .0215 [.0071,.0352] q=.0029 (35); mOFC .0134 [.0059,.0208]
+q=.0014 (142); mPFC .0100 [.0040,.0156] q=.0019 (158); HC_ant .0091
+[.0035,.0141] q=.0019 (295); HC_mid .0091 [.0025,.0154] q=.0050 (233);
+PCC .0026 [-.0100,.0149] q=.32 (61).
+
+Every ROI the RSA finds is positive in the cells, and PCC is the only null in
+both. EC and mOFC are the strongest (EC leads in cells, mOFC in the RSA).
+
+**Cost of the ramp control (the honest caveat).** Preference for position 1 or 4
+shares 60% of its variance with a full-loop ramp; positions 2/3 share 7%. Among
+position-coding cells the preferred position is uniform without residualisation
+(27/21/25/28%, n=206, chi2 p=.53) but position 4 is depleted after it
+(26/30/30/13%, n=204, chi2 p=.00065) -- worst in mOFC (3% prefer position 4) and
+HC_mid (5%). The count of position cells is unchanged (206 -> 204), so this is a
+redistribution, not a loss.
+
+**Ramp-robust subset (cells preferring position 2 or 3 only):** mPFC .0110
+q=.0040 (99) and HC_mid .0131 q=.0040 (159) survive; EC .0197 q=.054 (20) and
+mOFC .0084 q=.054 (91) sit at threshold with much reduced n; **HC_anterior does
+not survive** (.0024 q=.29, 196 cells) -- its effect lives almost entirely in the
+first/last positions (A/D cells: .0205 q=.0001), exactly where a residual drift
+could produce it. HC_ant is therefore the least secure of the five results.
+
+Failed/abandoned: windowing the trend fit to bins 0:270 instead of 0:360 does not
+rescue identifiability -- it just moves the confound onto position 3 (67%
+shared variance) instead of position 4.
+
+### 2026-10-02 (addendum) — the ROIs do not differ from each other
+
+`scripts/position_roi_differences.py` -> `group/position_index_2026-10-02/`
+(`fig4_roi_differences`, `roi_differences_summary.json`).
+
+Each ROI being individually significant is not the same as the ROIs differing.
+Tested directly on the per-cell position effect (run `2026-10-02_13-54-14`):
+
+- Kruskal-Wallis omnibus **H = 5.16, p_perm = .40** (10,000 ROI-label shuffles;
+  null median H = 4.35, 95th pct = 10.91). Nowhere near significant.
+- No pairwise contrast survives FDR across the 15 pairs; smallest q = .459
+  (EC vs PCC, uncorrected p = .059).
+- Planned one-sided contrasts vs the pooled rest: EC +.0119 [-.0025, +.0269]
+  p = .053, q = .107; mOFC +.0046 [-.0033, +.0126] p = .124, q = .124.
+
+So the ranking EC > mOFC > mPFC > HC is a description of point estimates only.
+Between-cell spread within an ROI dwarfs any between-ROI difference. Claims of
+regional concentration must rest on the fMRI, not the cells.
+
+Note the two-sample shift CI must be the **Moses** interval (order statistics of
+the pairwise differences indexed by the Mann-Whitney distribution). Taking the
+2.5/97.5 percentiles of the raw pairwise differences is not a CI -- it is the
+spread of the differences, and gave intervals ~10x too wide (+-0.1 vs +-0.015).
+
+Also: mean+CI and the Wilcoxon p disagree for HC_mid (mean .0064 CI
+[-.0009,+.0137] vs p = .0042). The HL estimate and its interval agree with the
+test everywhere, which is why they are what is reported.
+
+### 2026-10-02 (addendum 2) — RSA: mOFC beats mPFC and PCC, not hippocampus
+
+`scripts/rsa_roi_bootstrap.py` -> `group/position_index_2026-10-02/`
+(`fig5_rsa_roi_bootstrap`, `rsa_roi_bootstrap_summary.json`).
+
+The RSA gives one beta per ROI, so there is no group to test. The regression's
+own SE cannot be used for between-ROI contrasts: the 4560 RDM entries are not
+independent (each of 96 conditions enters ~95 pairs), which is the same reason
+the pipeline reports p_perm and not p_param. Uncertainty was therefore taken
+over the unit that actually varies -- which cells were recorded. Cells are
+resampled with replacement WITHIN each ROI (never across), the pseudo-population
+RDM rebuilt and the combo refitted, 1000 draws, seed 42.
+
+Fitting code is AST-extracted verbatim from `RSA_DSR_ROIs_simple.py`, and the
+full-sample refit is asserted against the published beta before resampling
+(reproduces to <=8.5e-17 for all five ROIs; the script exits otherwise).
+
+**Significant after FDR:** mOFC > PCC (+.079 [.055,.140], q=.020); mOFC > mPFC
+(+.061 [.032,.117], q=.030); HC_ant > PCC (+.036, q=.035); HC_mid > PCC (+.040,
+q=.035). **Not significant:** mOFC vs HC_ant (+.044, q=.084), mOFC vs HC_mid
+(+.039, q=.175), and all remaining pairs. So mOFC and hippocampus form an upper
+tier and PCC the lower one; mOFC does NOT stand alone.
+
+Note this contrasts with the per-cell GLM, where no ROI differs from any other
+(H = 5.16, p_perm = .40). Not a contradiction: the RSA pools cells into one
+population estimate per ROI, so it is not limited by between-cell variance,
+which is what swamps the cell-level comparison.
+
+**Gotcha: raw percentile bootstrap CIs are biased low here.** A resample holds
+only ~63% distinct cells, and an RDM built with duplicates is less informative,
+so every bootstrap beta is attenuated -- and proportionally to beta itself
+(mOFC -.0228, mPFC -.0074, PCC -.0023). Reported intervals are therefore basic
+(reverse-percentile), and the pairwise p-values use null-centred draws, which is
+insensitive to that bias. Do not read the percentile interval as a CI on beta.
+
+**Also verified (all five ROIs):** the combo permutation nulls are 0-centred.
+Null beta means +.00019/+.00005/+.00034/-.00066/-.00050 against sd ~.0139;
+null t means within +-.044 with sd ~0.93. Refitting the cached permuted data
+RDMs reproduces every published p_perm exactly.
+
+**Why the mOFC t is so much larger:** nothing but beta. The residual SE is
+effectively constant across ROIs (.01482-.01488, a 0.4% spread), so
+t = beta/.0148. t and beta carry identical information and the same ranking.
+
+`RSA_DSR_ROIs_simple.py` gained two env-gated hooks (defaults unchanged):
+`RSA_NO_PERM=1` skips the permutation loop, `RSA_DUMP_MAT=<dir>` writes each
+ROI's stacked neuron x condition matrix. Safe because z-scoring there is per
+neuron, so row subsets score identically to the full set.

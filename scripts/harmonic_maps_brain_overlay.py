@@ -837,8 +837,9 @@ def render_one(ds, map_name, mask_name, nii_path, amp_path, mode,
 # the split geometry come from cell_fMRI_angle_match.
 CELL_PANEL_SPLITS_CSV = Path(
     '/Users/xpsy1114/Documents/projects/multiple_clocks/data/ephys_humans'
-    '/derivatives/group/cell_gradient_master/2026-08-28_15-19-35'
-    '/final_splits/final_splits_per_cell.csv')
+    '/derivatives/group/cell_gradient_master/2026-11-23_14-22-23_per_repeat_execute'
+    '/final_splits/final_splits_per_cell.csv')   # per-repeat maps; groups and
+    # angles identical to the published 2026-08-28_15-19-35 run
 CELL_PANEL_SCHEME = 'pc1_ventral_dorsal'   # the split reported in the paper
 CELL_PANEL_DATASET = 'quarters'
 # Unit-vector maps (one equal vote per subject) rather than the
